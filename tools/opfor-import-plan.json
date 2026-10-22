@@ -1,0 +1,87 @@
+[
+  {
+    "source": "bfbc2-ai-behavior-simulator",
+    "destination": "bf1943-ai-behavior-simulator",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-auto-navkit",
+    "destination": "bf1943-auto-navkit",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-automated-map-and-bot-test-harness",
+    "destination": "bf1943-automated-map-and-bot-test-harness",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-bot-ai-debugger",
+    "destination": "bf1943-bot-ai-debugger",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-console-readers",
+    "destination": "bf1943-console-readers",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-dbx-tools",
+    "destination": "bf1943-dbx-tools",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-diff-workbench",
+    "destination": "bf1943-diff-workbench",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-fbrb-tool",
+    "destination": "bf1943-fbrb-tool",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-map-inspector",
+    "destination": "bf1943-map-inspector",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-navigation-studio",
+    "destination": "bf1943-navigation-studio",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "bfbc2-tactical-map-authoring-tool",
+    "destination": "bf1943-tactical-map-authoring-tool",
+    "note": "verbatim copy; adapted for BF1943 in later commits"
+  },
+  {
+    "source": "core",
+    "destination": "core",
+    "note": "shared core, verbatim"
+  },
+  {
+    "source": "tests",
+    "destination": "tests",
+    "note": "suite tests, verbatim"
+  },
+  {
+    "source": "run_tests.py",
+    "destination": "run_tests.py",
+    "note": "test runner, verbatim"
+  },
+  {
+    "source": "BFBC2 Tool Suite.pyw",
+    "destination": "BF1943 Tool Suite.pyw",
+    "note": "suite launcher, verbatim content"
+  },
+  {
+    "source": "DESIGN.md",
+    "destination": "docs/opfor-bfbc2/DESIGN.md",
+    "note": "OPFOR BFBC2 design, kept as reference"
+  },
+  {
+    "source": "README.md",
+    "destination": "docs/opfor-bfbc2/README.md",
+    "note": "OPFOR BFBC2 README, kept as reference"
+  }
+]

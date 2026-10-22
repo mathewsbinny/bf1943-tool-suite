@@ -1,4 +1,817 @@
 {
   "source_suite": "C:/Games/Project OPFOR Toolkit/bfbc2-tool-suite",
-  "imports": []
+  "imports": [
+    {
+      "commit": "fab30c0f91a9d58c3dbdf5dab684ba39b29e680b",
+      "imported": "2026-10-22T16:38:20-04:00",
+      "source_uncommitted_not_copied": [
+        "bfbc2-auto-navkit/tools/navwalk.py"
+      ],
+      "items": [
+        {
+          "source": "bfbc2-ai-behavior-simulator",
+          "destination": "bf1943-ai-behavior-simulator",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 59,
+              "git_blob": "c8108609f04550d0a3e2a0fdcfbea640b4b1c8a9",
+              "sha256": "1d1f083e89057981130d11677225aa759304fb480b9f4fac4e2ba9bd0b91b7ca"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-auto-navkit",
+          "destination": "bf1943-auto-navkit",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": ".gitignore",
+              "bytes": 125,
+              "git_blob": "0e97a4dd417d179bf0238afb645dfb603f5d6d5f",
+              "sha256": "f3ba34d964abeb63c5c81fed30a0c79802870c1c8e055e2f0b3d5d576c3978a6"
+            },
+            {
+              "path": "QUICKSTART.md",
+              "bytes": 12728,
+              "git_blob": "5e1278c6660d07701441f1d36110b837f384bccb",
+              "sha256": "6f5274e66228b4dfd74e182e0b3bf6fd6fc1e0be6559a05bf92ae7afdf6d2227"
+            },
+            {
+              "path": "README.md",
+              "bytes": 25916,
+              "git_blob": "899a58544cb19268873c7b1fe5fb3afd707eaae7",
+              "sha256": "3e70c328958103ea213c712efdb40e436c14ed2b330158cd60a81712ad4700a2"
+            },
+            {
+              "path": "navkit.py",
+              "bytes": 40484,
+              "git_blob": "e1d79bda12a125ed17cab29d928ec1ee481d4e96",
+              "sha256": "de2f7001522f9339ba05c094dd741d21092d13e80177101d19c7527ace9487ed"
+            },
+            {
+              "path": "navkitGUI.pyw",
+              "bytes": 12810,
+              "git_blob": "2fdef22202cb5a47f0b93d4ca3d0118e14e96922",
+              "sha256": "54eb13d3675e7c7dec1f3c4b4a7fa14dc2b2d80e388cf46ea064e714b71b0136"
+            },
+            {
+              "path": "research/KYNAPSE_SPEC.md",
+              "bytes": 74297,
+              "git_blob": "9d3cb9e76df638fa8c8f7dde477e053066bd196e",
+              "sha256": "0a1d0be49eba3a98adc1abd3b44d70a4ed3f59da44bdd0b10abf1b38e12b91cb"
+            },
+            {
+              "path": "research/img/sp02_infantry_0104.png",
+              "bytes": 71443,
+              "git_blob": "2d89dd84b2ba579c329d9bcbaa4eebc160a9ed6b",
+              "sha256": "7bbbde3d931b98ff35d0ba27ea6e3019e054f7185d1272266b7367fad3598c48"
+            },
+            {
+              "path": "research/img/sp02_infantry_0705.png",
+              "bytes": 320087,
+              "git_blob": "5f3553a6c8d6039b776d9470a297af9c17826327",
+              "sha256": "74efcba966922cd275e68a25365fc91f07b21f7a35a9d01688bcb5b97036a024"
+            },
+            {
+              "path": "src/.gitkeep",
+              "bytes": 1,
+              "git_blob": "8b137891791fe96927ad78e64b0aad7bded08bdc",
+              "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+            },
+            {
+              "path": "tests/.gitkeep",
+              "bytes": 1,
+              "git_blob": "8b137891791fe96927ad78e64b0aad7bded08bdc",
+              "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+            },
+            {
+              "path": "tests/test_apply.py",
+              "bytes": 6813,
+              "git_blob": "397612b7664ba44daea9d74c12601461195b57da",
+              "sha256": "0c5187c55c484000f98df093369f48332737a5e4bf34c5a759d0e87040f03f86"
+            },
+            {
+              "path": "tests/test_area_link.py",
+              "bytes": 3674,
+              "git_blob": "abbafd1bab9e4226f823647690681ef7785b8949",
+              "sha256": "4368b922db29f9815076b16c128c100f966366b79cfd841d5f278a94aa2d50c0"
+            },
+            {
+              "path": "tests/test_characters.py",
+              "bytes": 4080,
+              "git_blob": "6a5e66576cc86ce9883b3fe9b69dbbc79b9ba20e",
+              "sha256": "d345307ad7b282dd66f187c191550fba550141870c75a27ceb0df4812ce9969b"
+            },
+            {
+              "path": "tests/test_headroom.py",
+              "bytes": 3214,
+              "git_blob": "f57fdad30082eac63d43dd785087e8c3382c88e9",
+              "sha256": "eedc0653d78021b1d86cdcd601f5841281738bc57ea3a595e548008625a18378"
+            },
+            {
+              "path": "tests/test_links.py",
+              "bytes": 7820,
+              "git_blob": "5b0ea9dcdd074f90b717ffd054e56510cbe0bb8b",
+              "sha256": "bf64b3fbdc8f1e3d0e89925771d89a78d1eaf3fc3524b50136d755b397d13741"
+            },
+            {
+              "path": "tests/test_navboundary.py",
+              "bytes": 4444,
+              "git_blob": "76583fab7d954a921a569d5f699da860b859bdb4",
+              "sha256": "66810be25eca5d451c577ba1744318bfe630b32c97ec728bce007f6d45e3f62c"
+            },
+            {
+              "path": "tests/test_navedits.py",
+              "bytes": 3829,
+              "git_blob": "8e0be7dcedc6022ccbb4c63ea614c8068550a99e",
+              "sha256": "20a4e732813b00226619323e20881b0837379c1ed1a8bd594b9586381db7cef4"
+            },
+            {
+              "path": "tests/test_portal_symmetry.py",
+              "bytes": 6448,
+              "git_blob": "bd2d99fcd457fb6c136eccc8ffd0c24fbb2db4fa",
+              "sha256": "6e0da8367754f34b05e39a7640f2ca6adef8173f0a2383d5b1d8f5d38d5ba08d"
+            },
+            {
+              "path": "tests/test_reference_clip.py",
+              "bytes": 3539,
+              "git_blob": "4b8408460ac08f57961889b1908cfaa3d877f76a",
+              "sha256": "9895eb6fa2126fb6247b93f9ffc7172c21a799d613893b195ff68fbef8743664"
+            },
+            {
+              "path": "tests/test_regress_progress.py",
+              "bytes": 2384,
+              "git_blob": "fee6eb78cd85c46187cdf787598db0c71cf7eb5e",
+              "sha256": "30826ee1e29b3e80306bd4c611ac0cf68a26f2c2cf6e3f3d9ac8c4d1dd960969"
+            },
+            {
+              "path": "tests/test_traversal.py",
+              "bytes": 5894,
+              "git_blob": "6bf6056452ea23dcddbd2b813b4a8f34fb017a6a",
+              "sha256": "1106737dd66e53f6d9cc9cd673f402affa038206a90543209f972648d3e5eda1"
+            },
+            {
+              "path": "tests/test_water_rule.py",
+              "bytes": 3048,
+              "git_blob": "93648bf9ddb832030d1f39173896e7bfab518d16",
+              "sha256": "e0a29d33f8ff99d034273662893eb05f37e1cb52d47dfc2f811a1b76c83a5079"
+            },
+            {
+              "path": "tools/detailed.py",
+              "bytes": 5469,
+              "git_blob": "c6422a0e62e275d05a9eb8d135097940769c02d9",
+              "sha256": "3d6436e39eddbc7942ab8040bfb0f4380f841aba36e925f93bfc2c47a0c4ed95"
+            },
+            {
+              "path": "tools/graphstats.py",
+              "bytes": 911,
+              "git_blob": "8415a95c61a8813b750401442a9828ec13451185",
+              "sha256": "2f5ba2cfe02ba90732d21e72a873dff6318217c24bf42d3302a6c88917f6a315"
+            },
+            {
+              "path": "tools/hkpack.py",
+              "bytes": 9673,
+              "git_blob": "6dbd084e25fddd6342f1dadb1b30fde6ba172907",
+              "sha256": "8e1bd8980a960c9ee2aaa580fb5f0fff50e9eb423fc91549abfed983d445c068"
+            },
+            {
+              "path": "tools/hpdtool.py",
+              "bytes": 13545,
+              "git_blob": "e4f6d6675ab7161071689f6b721a9356e3813c25",
+              "sha256": "3e218aae7ef0fefaf609cf5f7d342fd5212cf339ef4aa2429c88534ff9760983"
+            },
+            {
+              "path": "tools/hpdview.py",
+              "bytes": 4644,
+              "git_blob": "c003d208066328d6d9646781fe56f94a4bd53a7c",
+              "sha256": "20425abccc3a9fd453d0f21a991482f13136f3fdd6b465bcb3836640740ed53b"
+            },
+            {
+              "path": "tools/kymesh.py",
+              "bytes": 11627,
+              "git_blob": "2c0be9178246a57fb0a55aecd9869810e549a37c",
+              "sha256": "9ae2e8ff9d8a148adb45bb8d3997a6f548c740203b236b9ccf287e36c8ae22f9"
+            },
+            {
+              "path": "tools/ladders.py",
+              "bytes": 2405,
+              "git_blob": "df77f1a233d145158508ede15b0caa868da0f817",
+              "sha256": "77ccf26aac72932155bfcbd142685b9005fbd799a6924ad811f3bc0caf9d31e4"
+            },
+            {
+              "path": "tools/levelobjects.py",
+              "bytes": 13507,
+              "git_blob": "8c43999e5ba770eee4dca8931a85ac4c4afb9070",
+              "sha256": "4a3e7f2e9e7a688a8c2f10a99e3ede47274655f2193c0beed51e3f66405a64f2"
+            },
+            {
+              "path": "tools/navboundary.py",
+              "bytes": 17376,
+              "git_blob": "616316d493177949874e72eba5623fd34454ef0c",
+              "sha256": "ad22e50fa940733189601358197e2dc57a36f0ba0d85fc89523fc4a684b5f843"
+            },
+            {
+              "path": "tools/navbuild.py",
+              "bytes": 82496,
+              "git_blob": "782f852f2d2982e97b4eeae1118d692bbd80c4fa",
+              "sha256": "333fb4840dd4f818487f895d232edddcd0b630a6d0be7e5cada3aa542e53425c"
+            },
+            {
+              "path": "tools/navcompare.py",
+              "bytes": 4426,
+              "git_blob": "d2f38c823307c90c6c4d7acf448167d4762370b3",
+              "sha256": "cf55bec4a7d062e9ab500d7f13af2af9bbd8de34e0b39244d48d30a33bbade9c"
+            },
+            {
+              "path": "tools/navdiff.py",
+              "bytes": 18511,
+              "git_blob": "56c57ebda8a009d47980bb078cc75ce754d817fd",
+              "sha256": "08173a2f74198a1d0e1405a228fde3ef1f9cad9afcdc0bc336ef1bb1a97b9e18"
+            },
+            {
+              "path": "tools/navedits.py",
+              "bytes": 2847,
+              "git_blob": "eb6849a0744f4f5065cca63d1dad36ba333b3083",
+              "sha256": "0299e403d19116f8a048dfd9c087407c3e44fcbb9664a36b119ae7a26d07d95b"
+            },
+            {
+              "path": "tools/navlinks.py",
+              "bytes": 5208,
+              "git_blob": "fab1cc2cb048a4a383ddce79ef03813884f5ad46",
+              "sha256": "398324f1b5e176cbabcfc666021f11858cd1325073d3acdc48326e383e4bb4d5"
+            },
+            {
+              "path": "tools/navparity.py",
+              "bytes": 15020,
+              "git_blob": "5cca23193224cef271068b8af6898e5daf76bf7e",
+              "sha256": "34e4730d1ff656dca852af0fac02024c6f87be96728c0e621e25ce6b62b3d867"
+            },
+            {
+              "path": "tools/navregress.py",
+              "bytes": 13384,
+              "git_blob": "87877eebc91ca81e6575f47944b0235a5f92c31f",
+              "sha256": "2c9cfe350518c857f994c758faf2ce3fb97e95635acb11e9aa15d3943e9414fa"
+            },
+            {
+              "path": "tools/navsample.py",
+              "bytes": 11950,
+              "git_blob": "6c124dcf0c57d81a393650e85bd3d4b9c75f0238",
+              "sha256": "850d620b21bee5290da369edff272599d295561a44b1f2ab1d4baa143f902d1c"
+            },
+            {
+              "path": "tools/navtraversal.py",
+              "bytes": 4445,
+              "git_blob": "bf34fb17fc46913790bd2197124e600c9af37f73",
+              "sha256": "989a093999ee891278031bb02b5c928eaa370cbf021b90e8d8db8758def07426"
+            },
+            {
+              "path": "tools/navwalk.py",
+              "bytes": 42112,
+              "git_blob": "232b99f6526799fba650553060c9a8ddc519618e",
+              "sha256": "e030938e1d6ce783448232a1d5008c0807592870886783b225d2dfe6d41e1177"
+            },
+            {
+              "path": "tools/navwater.py",
+              "bytes": 10164,
+              "git_blob": "6e93c0b66e9cd3e032245e9496caa4a1557c4913",
+              "sha256": "a2bdb1771452813692f241b517eb9bc01be63b8abdfac4e2ce4bf2d2e07af38b"
+            },
+            {
+              "path": "tools/ordercheck.py",
+              "bytes": 9606,
+              "git_blob": "a6bcc6df41be4c883ba0b2a881c70993e460dcea",
+              "sha256": "eede398b443b6fd96d777de19f0135de1a7ae29d4c77331e99497b8dddbc6248"
+            },
+            {
+              "path": "tools/sample_all.py",
+              "bytes": 3211,
+              "git_blob": "b3f00123ec1e026e75055faeef1d614d0e430b7c",
+              "sha256": "823c8b8e091d4d924c064ef3cdbb127e113b00aaf177092c864720798376ac08"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-automated-map-and-bot-test-harness",
+          "destination": "bf1943-automated-map-and-bot-test-harness",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 1155,
+              "git_blob": "cf1861b3a8c2d574a5344eb8486f89b99adfe832",
+              "sha256": "fa05a33077735237c1f5c0eb1690a1734f586b59bbc684a130c0e0db1c2f37e2"
+            },
+            {
+              "path": "crash-reader/.gitignore",
+              "bytes": 19,
+              "git_blob": "7a60b85e148f80966a550e5ab6a762a907c69ca6",
+              "sha256": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793"
+            },
+            {
+              "path": "crash-reader/README.md",
+              "bytes": 2926,
+              "git_blob": "ce6e35205a7e157f60f72fa44dc97868d26d5dc9",
+              "sha256": "0dfae261642f2a60eb54894c91e99d57de8861aad174279f8b45e4b5badb67ff"
+            },
+            {
+              "path": "crash-reader/crashreader.py",
+              "bytes": 12007,
+              "git_blob": "97c0aca86d1bbc2414e5156a6979e6a8c613f5fb",
+              "sha256": "a7b15b76a8d94270578b37f7bcbe72284c90253a40a04b6e432952d1b7e5a83e"
+            },
+            {
+              "path": "crash-reader/symbols_795745.txt",
+              "bytes": 3143,
+              "git_blob": "b75b31ffb01e7283c8734a8115df14c2e0d8a06e",
+              "sha256": "6a84138c0451ff9a5275ef82842e484ce0c12ba53e7c888b26237e21ae369be8"
+            },
+            {
+              "path": "crash-reader/tests/test_crashreader.py",
+              "bytes": 8187,
+              "git_blob": "e652df57de318f8e16d91f6afaf5a183e3be98fd",
+              "sha256": "bacf8c43ae06115099a89d094075889985a6f1c88e5c98eb97fd4bccd297d5f2"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-bot-ai-debugger",
+          "destination": "bf1943-bot-ai-debugger",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 53,
+              "git_blob": "e450c7a152e7db388fae977533df7f8f9a5bdf86",
+              "sha256": "1820d247bbb884ab704408ef244dcb837509e7618f88a639bd34db2ab9a1bd7b"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-console-readers",
+          "destination": "bf1943-console-readers",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": ".gitignore",
+              "bytes": 19,
+              "git_blob": "7a60b85e148f80966a550e5ab6a762a907c69ca6",
+              "sha256": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793"
+            },
+            {
+              "path": "README.md",
+              "bytes": 1343,
+              "git_blob": "11e2e25c34480cbfc4a48d351c3b7eb31bf14573",
+              "sha256": "a3d46a32b5aa81a7623a755854521fe2f9a623c1e864c94037007cd44acfc3f0"
+            },
+            {
+              "path": "stfs/stfs.py",
+              "bytes": 5783,
+              "git_blob": "fcdd04fa0e76d096ef935fdb2dcdd5b80dc444f0",
+              "sha256": "d94239d379e2ca42cbca27a2f96ae8e8178138d3516f68722416439d12d39500"
+            },
+            {
+              "path": "tests/test_console_readers.py",
+              "bytes": 13397,
+              "git_blob": "9cd1f0d539d4f8509fc8476b022c219f9311266c",
+              "sha256": "b2b35a18e8ecd5076a9d4645723c2de648d43daa62d578a2104df20596f77459"
+            },
+            {
+              "path": "xiso/xiso.py",
+              "bytes": 3259,
+              "git_blob": "c68e2ed0eb494e5f90dca5f653d2ad9bbf5fbe14",
+              "sha256": "bd8e29827eccb4b8d5bc3621447582205d3817a4521476af66ef899ae1608c06"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-dbx-tools",
+          "destination": "bf1943-dbx-tools",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": ".gitignore",
+              "bytes": 12,
+              "git_blob": "9b26ab6cc4408d6a26b525a2971819f8fe22314d",
+              "sha256": "0e748663b21a069851675914c609efa93b64c767a05a4872588a73477a0c55fc"
+            },
+            {
+              "path": "DbxEdit.cs",
+              "bytes": 85330,
+              "git_blob": "5048803f3b650f6c0866665d966bb9ce2055e7eb",
+              "sha256": "e005366e70c4fc6cc598750c2b46430e970d3bc5345a217530b0f7af9f0b8b7b"
+            },
+            {
+              "path": "DbxEditGUI.cs",
+              "bytes": 42370,
+              "git_blob": "2ae3dbcdccebadbcc3606705b7e19e017ce6bf19",
+              "sha256": "6325bc1dfcabdf17797217056cea3edfa70e14c9cad5ecc729e6e6859379d2f1"
+            },
+            {
+              "path": "FORMAT.md",
+              "bytes": 11584,
+              "git_blob": "78b6d11c73c8d6d0cc8dfcce3adacc0297eb8806",
+              "sha256": "403813410636cca81591c4a3d53d242791c5b6eaf8a14a6fdff82c3d8bffc3c9"
+            },
+            {
+              "path": "README.md",
+              "bytes": 10839,
+              "git_blob": "c60f182d5bb0a29c9552bbe00e8493552761b102",
+              "sha256": "ee24361855c94aba1f9d2cff9d9ff28e1dbe74d2e96f9d4d25988af0cac484af"
+            },
+            {
+              "path": "build.bat",
+              "bytes": 650,
+              "git_blob": "05ccb390376bd5ddc10e6e896cae9e97715922dc",
+              "sha256": "ea9e7d79ef7deb91481c900588503fe08c7329d9a9382599496db125c38dfc97"
+            },
+            {
+              "path": "tests/DbxTests.cs",
+              "bytes": 42824,
+              "git_blob": "872a15a81520f0fbefd12d81a564f095a0810d3c",
+              "sha256": "e4909e24ae57cef7814483ec004cbdcd6dbba9d02a984ab5682355d1f5d61bcc"
+            },
+            {
+              "path": "tests/fingerprints_795745.txt",
+              "bytes": 2728905,
+              "git_blob": "aa57afcbb5a9e0a4893859a966f33308189bb787",
+              "sha256": "6e5cf5cca54be6c0e230fccf7276b522ef7de75dc19e65a8bd749d5896205b3b"
+            },
+            {
+              "path": "tests/run_tests.bat",
+              "bytes": 1071,
+              "git_blob": "85d33a3d33550ea49564a06affb146b1dd6c193e",
+              "sha256": "73f5dc8ab8c5f7e73748a54f01661c4bd8c2abb02f0e98c8e2a22838370da331"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-diff-workbench",
+          "destination": "bf1943-diff-workbench",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 52,
+              "git_blob": "0123429a8e4b9860ef22fb89a6b9b2191ad8b701",
+              "sha256": "27d7e6b86962610f43b37eb56588818fad05c4c51d8669fd3713106c008f4133"
+            },
+            {
+              "path": "level-diff/.gitignore",
+              "bytes": 19,
+              "git_blob": "14d70e5648107f123fe7a971fc558dbabc1e619b",
+              "sha256": "a91dc9cbf5cec1935ba7b34a0769f61c29f6c640e1c30f2b1925c2b4e8c3cd03"
+            },
+            {
+              "path": "level-diff/LevelDiff.cs",
+              "bytes": 14429,
+              "git_blob": "3537ed76b6b45f38b716a518908eb719689515c7",
+              "sha256": "96ea0422c4677172db84343c933a3fc7d3ff8fe1bd1d9cd7f9976a7b20b62929"
+            },
+            {
+              "path": "level-diff/README.md",
+              "bytes": 2552,
+              "git_blob": "2df9746dfa914d67c546cb46e531144e8c6a4439",
+              "sha256": "a8e198f8b5df74ef1b3d9f58c73bd1ed0538db68c0b818db3298b3a99bd1d125"
+            },
+            {
+              "path": "level-diff/build.bat",
+              "bytes": 767,
+              "git_blob": "4c53fe0c063ba8945ecb96a6edda8fa19a475a9b",
+              "sha256": "a5385a9b01030b19f18477a168a448d7d82c471bb5d664a634f4d396f2710c12"
+            },
+            {
+              "path": "level-diff/tests/test_leveldiff.py",
+              "bytes": 9084,
+              "git_blob": "071ccebf8be3b0ebcb34e5a625f129e60d480eb4",
+              "sha256": "faf7dd51148c5cf2b78266252c557ab203cea9743155f4b56cb27f82b2f04c13"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-fbrb-tool",
+          "destination": "bf1943-fbrb-tool",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": ".gitignore",
+              "bytes": 12,
+              "git_blob": "9b26ab6cc4408d6a26b525a2971819f8fe22314d",
+              "sha256": "0e748663b21a069851675914c609efa93b64c767a05a4872588a73477a0c55fc"
+            },
+            {
+              "path": "FbrbTool.cs",
+              "bytes": 15615,
+              "git_blob": "7fffc3098d687cf74deef5677458082c447815bd",
+              "sha256": "b0c03915249fbe493e7788ee999301d1c398d187d1c203a98990bd4a2afb8016"
+            },
+            {
+              "path": "README.md",
+              "bytes": 1861,
+              "git_blob": "8313ad126ea2f68093fdcbd940780a2f47f09053",
+              "sha256": "0a0bf4def3402a56a9b8d859d9a3809a8d236d575a54cc7f3a3efbf9dee80c7b"
+            },
+            {
+              "path": "build.bat",
+              "bytes": 373,
+              "git_blob": "6fdd9d54d2a62f4286fe080f79f9a3e8711abc22",
+              "sha256": "eb0430b8250a7bb8f37bb4c20e884da2c251432a787a28b4c4ce3ab99968511d"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-map-inspector",
+          "destination": "bf1943-map-inspector",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 3361,
+              "git_blob": "1f67d0614abe9924d77b44b588fdae05824de3b3",
+              "sha256": "1921e5a4b292711fe9c369f3a595f1445447b330bd4be57aa7f99766aa598417"
+            },
+            {
+              "path": "inspector.py",
+              "bytes": 20767,
+              "git_blob": "6f1f112d6ee298af969b3175269ebee3ff3fad93",
+              "sha256": "b69f89830c0e5e00a990caf5e418a1b2cf9284174808d3fdfdb65aa154f32b46"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-navigation-studio",
+          "destination": "bf1943-navigation-studio",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 10214,
+              "git_blob": "263f807a88b0d6e37099adba5a12cf26138162e5",
+              "sha256": "4ff158d94c9312282a083d9c7b755da40bb4a418804e0a01e7fbbb75d9ebd3b3"
+            },
+            {
+              "path": "editing.py",
+              "bytes": 18329,
+              "git_blob": "cb360ce8311fef59d3252640c57b59e8e350457c",
+              "sha256": "424e7d3e5a0207403bc15543565e24b6febc2d6ccce69f104d6ae173002cd43b"
+            },
+            {
+              "path": "overlay.py",
+              "bytes": 15834,
+              "git_blob": "7aec2efb9503d687e0bcb998fcd913b9f92cf1f0",
+              "sha256": "d575bc93405dab225ddfca04054b9b555b25c250f88ea8ba45fe6d8211c4bf34"
+            },
+            {
+              "path": "studio.py",
+              "bytes": 43536,
+              "git_blob": "aca4873d9cacdf2a2b9b07f9e72090fed2276dab",
+              "sha256": "23be7fa60d05ae11c4bea4e870300057560f4969df7ff2e864120b77de09fd72"
+            },
+            {
+              "path": "tests/test_editing.py",
+              "bytes": 6618,
+              "git_blob": "8bb53025d48b252b20219f7126fd0e8de2e73d05",
+              "sha256": "ed1ed320f601ffff9b7a4d1c0780d5f1268da5ff530f4ae9d57b4ec3677c1326"
+            }
+          ]
+        },
+        {
+          "source": "bfbc2-tactical-map-authoring-tool",
+          "destination": "bf1943-tactical-map-authoring-tool",
+          "note": "verbatim copy; adapted for BF1943 in later commits",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 65,
+              "git_blob": "fdfa315a60f6fa18071afd5b6c2d2d33f52478e4",
+              "sha256": "5e3fc7e6cbae87cd83a9a37c6f304e5ac0b52c9389ddf4dd951cf902f0cef271"
+            }
+          ]
+        },
+        {
+          "source": "core",
+          "destination": "core",
+          "note": "shared core, verbatim",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 3203,
+              "git_blob": "d3538e6b3cc9472449851f5d91ef0fbc2ca04eba",
+              "sha256": "85540c890bea3e8e08b9175ca4759c19b20c85936bf61914d5899f18ccd37739"
+            },
+            {
+              "path": "bfbc2core/__init__.py",
+              "bytes": 97,
+              "git_blob": "c477f6d9430c038b7f2c60c7e49b89a5581b1672",
+              "sha256": "146c1121d059a19bb6bb9ceb39ce34a31db653b45e0ae8b95977c597c669a9f5"
+            },
+            {
+              "path": "bfbc2core/dbx.py",
+              "bytes": 9998,
+              "git_blob": "332e3e655cb4ea8bed449b1b9ae7130ce7a989fe",
+              "sha256": "34fbaa41003b2f17fd48efdd3aa33957218f13e854abd4083c0294ae6cdda99c"
+            },
+            {
+              "path": "bfbc2core/errors.py",
+              "bytes": 6883,
+              "git_blob": "ca870ffe81c19042c02c096c072c88b4310b7ee6",
+              "sha256": "fa08d037df323b39fbe5a19db0a77e4432201014c9fba9e970e05423fa4846dc"
+            },
+            {
+              "path": "bfbc2core/level.py",
+              "bytes": 20703,
+              "git_blob": "3483974b9c21a4f5d6a77ee827698d0050f837ec",
+              "sha256": "36247c419f1c19473400d4940097eef8f9a7519c80d713352036707fc8191d36"
+            },
+            {
+              "path": "bfbc2core/navdata.py",
+              "bytes": 13643,
+              "git_blob": "e603a683cc0747049dc20a0e50fcae253be57edc",
+              "sha256": "af9c1789cda56524478cac7dbf3dec45997d0dd2642b53ad5632b79181f61cd6"
+            },
+            {
+              "path": "bfbc2core/navpath.py",
+              "bytes": 5643,
+              "git_blob": "69a29cc8200909f3ddb2c1f318e5e6e893d9e3fe",
+              "sha256": "f5e6771ace4a81280caa027617dd4b3ea4b91d592a299688a52a5aa7b0f4991b"
+            },
+            {
+              "path": "bfbc2core/navtune.py",
+              "bytes": 8468,
+              "git_blob": "3b1fd937907053c95e5d0af29153e6422a359029",
+              "sha256": "e2d421091077fd4c9651f1f6eb2bfea22dabb5d47154c7f2ee5e538693a07b3a"
+            },
+            {
+              "path": "bfbc2core/pick.py",
+              "bytes": 2436,
+              "git_blob": "c8da01b88b42a34bd3d2968709f339e101993e57",
+              "sha256": "a5193488cf1739b06cc918a252b9953cb11e2211c990bd5d1f8aa189e17edf67"
+            },
+            {
+              "path": "bfbc2core/terrain.py",
+              "bytes": 3728,
+              "git_blob": "fd970fe87bb7edcb61c0838e8c71206af8428b58",
+              "sha256": "9d0c731e04bc2d0dc5f5831163b23e0c596fb96f13246ca82481d28f1d854b72"
+            },
+            {
+              "path": "bfbc2core/viewer.py",
+              "bytes": 27210,
+              "git_blob": "25690123ebd3414b2899c6493062ed1d8b7010d5",
+              "sha256": "a95f959e56800fbec89401366d24116da2fddad60677f9744a69c197659dd57b"
+            },
+            {
+              "path": "bfbc2core/water.py",
+              "bytes": 4665,
+              "git_blob": "085624940471b1a93d21d6eabcac499139a8ab8b",
+              "sha256": "466659300d91cbabae6fda408ae506b5b76c7bf664f072be8784a3a7bc604962"
+            },
+            {
+              "path": "bfbc2core/xmlinst.py",
+              "bytes": 1796,
+              "git_blob": "15995dee96a62235272584e520726e1b5cc639be",
+              "sha256": "8b9778a21ed8f192c3122cff0c5ba9265668c42abb0ffd4c8ec447db04e96d00"
+            },
+            {
+              "path": "tests/level_snapshot.json",
+              "bytes": 4779,
+              "git_blob": "3a1b2de741ed67945561201d9607740f8910cdce",
+              "sha256": "63163f49849a732b021447cb8e9983de165ad5291263e94a56ae096e1fac7850"
+            },
+            {
+              "path": "tests/test_dbx.py",
+              "bytes": 2184,
+              "git_blob": "7f95a7dbd7e30ae698d9399fc7bba769f32d4906",
+              "sha256": "cc1d149cf1df484bd03d1aa6bbb62ccdfa0118013a64fd98c6d2dbe90bb1c9c0"
+            },
+            {
+              "path": "tests/test_errors.py",
+              "bytes": 5397,
+              "git_blob": "cc2e13402396404edee079b104673a57ddaef71d",
+              "sha256": "329fcf8ad7f36d6e128f38afe3c5144e6f6cacb78e645bd5eeda1552dc9c0242"
+            },
+            {
+              "path": "tests/test_fbrb.py",
+              "bytes": 6158,
+              "git_blob": "f0af29ad2512e53329f5e2cd3029bce2b9857825",
+              "sha256": "65f4c35a075c71f07132edfdc2eeccec542af2d5e8672d8ce3cb480efc2bca30"
+            },
+            {
+              "path": "tests/test_level.py",
+              "bytes": 3398,
+              "git_blob": "6ee43b26387c60757e6b08da3337c8ea5d2b2045",
+              "sha256": "df820ebf3e6405611e7feb3d3077f3738cb89d77a3caf638d95fb6ef2948db04"
+            },
+            {
+              "path": "tests/test_navdata.py",
+              "bytes": 3750,
+              "git_blob": "cf847fe576a2e3319136ad129cdf8d3688feeb06",
+              "sha256": "6c63d27197dadeaed5778d2cef5526d8690b07cabd046a389f2392465e2ca26a"
+            },
+            {
+              "path": "tests/test_navtune.py",
+              "bytes": 5188,
+              "git_blob": "56c0a66830b5c8c43763d7d6e871e149694740e5",
+              "sha256": "827f68e76d6b6fa339c15b46792305093702564e4d7ea756d2fc4b8e16431393"
+            },
+            {
+              "path": "tests/test_terrain.py",
+              "bytes": 2508,
+              "git_blob": "91aeeeccee7abe9cb0910941805f7b503eaa0676",
+              "sha256": "a72a746dc33d0ba14838239533f112b974f04c820911565e92d10594094fb5a2"
+            },
+            {
+              "path": "tests/test_water.py",
+              "bytes": 3067,
+              "git_blob": "57d5dd98552ca7bb29b7ffd22d9d8ba3356e6f7f",
+              "sha256": "916543a36dba9100f66515cb2e0cc42d502fd0de5b00b5902223329da6207b81"
+            }
+          ]
+        },
+        {
+          "source": "tests",
+          "destination": "tests",
+          "note": "suite tests, verbatim",
+          "files": [
+            {
+              "path": "test_cli_errors.py",
+              "bytes": 4012,
+              "git_blob": "977d47e285f01e81f38879a8622a6d54f54d524a",
+              "sha256": "a820cf92e869d1a714590c1d8693e28bf74bdf482b067a1032b13d5657aceff6"
+            },
+            {
+              "path": "test_hub.py",
+              "bytes": 6259,
+              "git_blob": "3bfcda606c1322d672ea12b02a122cc580ca84ce",
+              "sha256": "b4fc6b82c9af5ab07aaffcdb2731dd2e18c800136047f0fd3979af900178b0dd"
+            },
+            {
+              "path": "test_repo.py",
+              "bytes": 4196,
+              "git_blob": "46735e5ba541f0a2d1ea2cf97c02d558f4e414f0",
+              "sha256": "653073c57eed5ebfaebd7e0ad6a2bf5821290e3b0991d291b053cbaa523a9b42"
+            },
+            {
+              "path": "test_viewers.py",
+              "bytes": 2282,
+              "git_blob": "6edd46c30f51a4e285ba6628f773096c1800ed2d",
+              "sha256": "fc6b8b4858d2b7a75c600fee8f26410aee8e9f3c357b6085a1cf29896aed72e6"
+            }
+          ]
+        },
+        {
+          "source": "run_tests.py",
+          "destination": "run_tests.py",
+          "note": "test runner, verbatim",
+          "files": [
+            {
+              "path": "run_tests.py",
+              "bytes": 9938,
+              "git_blob": "c75bd6e64e7255cc6735265b0dc1828905674180",
+              "sha256": "2ce1b27de4a240459ab0e8b044d8f9924b34aaca0f27f6e85023b4f0c24cd249"
+            }
+          ]
+        },
+        {
+          "source": "BFBC2 Tool Suite.pyw",
+          "destination": "BF1943 Tool Suite.pyw",
+          "note": "suite launcher, verbatim content",
+          "files": [
+            {
+              "path": "BFBC2 Tool Suite.pyw",
+              "bytes": 28289,
+              "git_blob": "2baf8eb3443fd0d8e071906e075582929cee9564",
+              "sha256": "91bade948135380ee08cd05fd634cd60f6fd32813d63717fe9b9ed61dd76e342"
+            }
+          ]
+        },
+        {
+          "source": "DESIGN.md",
+          "destination": "docs/opfor-bfbc2/DESIGN.md",
+          "note": "OPFOR BFBC2 design, kept as reference",
+          "files": [
+            {
+              "path": "DESIGN.md",
+              "bytes": 27169,
+              "git_blob": "8260409797f026092a7f18c43e1f7926698577d1",
+              "sha256": "6fb76f1de638e9248611856fbf9a731358fd88053814575b1638c4d7297acb71"
+            }
+          ]
+        },
+        {
+          "source": "README.md",
+          "destination": "docs/opfor-bfbc2/README.md",
+          "note": "OPFOR BFBC2 README, kept as reference",
+          "files": [
+            {
+              "path": "README.md",
+              "bytes": 13518,
+              "git_blob": "59e4615bddb307ec560307ffb92547f42622cc8d",
+              "sha256": "0021e511347066227a14797ae1a20960528606242babc81bc333a7f6e574e218"
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }
