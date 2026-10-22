@@ -1,0 +1,477 @@
+{
+ "game": {
+  "title": "Battlefield 1943",
+  "title_id": "5841097E",
+  "package_name": "945CD965D6B2B2584A9C06CE16F38A075A6D390558",
+  "package_sha256": "36f96e27f65c10fb227eaf96e887887d4bcb983ee9e964e447339e19b5bb6550",
+  "package_size": 586448896,
+  "display_name": "Battlefield 1943",
+  "module_hash": "872BBE31C0FBA21B",
+  "files": [
+   {
+    "path": "ArcadeInfo.xml",
+    "size": 4976,
+    "sha256": "958aec089c5a9eb7da0631a6e4f2556c965c68cbcdf8f314b0e9eaf009671dfa"
+   },
+   {
+    "path": "default.xex",
+    "size": 4800512,
+    "sha256": "5d75898fe98f29279c6f2595bd405e9c9a240d96d5339dfd31c693c3020d3a37"
+   },
+   {
+    "path": "game.png",
+    "size": 8346,
+    "sha256": "4a3d9c894687d8550f60837ee7b37a36e2bd4e84d29d8cdf65e04cd9b4fac614"
+   },
+   {
+    "path": "kmrb_93.png",
+    "size": 4294,
+    "sha256": "7c2bb14f588e2d40aed1737559df7e8e83d153f6557263b5fdc088a1e7db839f"
+   },
+   {
+    "path": "dist/xenon/build_overlay-00.fbrb",
+    "size": 32127275,
+    "sha256": "20bbb4a6efc4ce24e05b069691b284537aaa0568e3e4e8d3e0acfe74eca26ed9"
+   },
+   {
+    "path": "dist/xenon/config.zz",
+    "size": 44690,
+    "sha256": "0f188cdeea2a30f2d1269a9580095118ace5e34bd647bcac40296d6b32bc7a2f"
+   },
+   {
+    "path": "dist/xenon/logomusic-00.fbrb",
+    "size": 936533,
+    "sha256": "5db31835650ff16da73a630f482a0027c60ee2dc77bc4d2370877a1afbf857f1"
+   },
+   {
+    "path": "dist/xenon/streaming_sounds-00.fbrb",
+    "size": 136745111,
+    "sha256": "ea763aded1bf35cf4e2e6e479bbf547c13c1ba5f6839c763335110dd8b070fe0"
+   },
+   {
+    "path": "dist/xenon/vo-00.fbrb",
+    "size": 60149,
+    "sha256": "8a7c32d6c5f869d503d65c6d50f3a268f7e58cba2c35d143c8e9221657fe62e5"
+   },
+   {
+    "path": "dist/xenon/async/ondemand_awards-00.fbrb",
+    "size": 8491164,
+    "sha256": "cc526f780e4a30bf5b46e5f84ce8426f8d5a37c578e99565747c6662ad747d11"
+   },
+   {
+    "path": "dist/xenon/async/ondemand_sounds-00.fbrb",
+    "size": 4950164,
+    "sha256": "aee50b44230897308a830a0614af40496cbfbcccc5d212a62f14a03863ac6dd6"
+   },
+   {
+    "path": "dist/xenon/async/startup-00.fbrb",
+    "size": 558688,
+    "sha256": "6c09cb7a84de8d1af79aadf15eeafc1b753403909f7bc335e40c1863bbfa1f43"
+   },
+   {
+    "path": "dist/xenon/async/weapon/expack-00.fbrb",
+    "size": 194395,
+    "sha256": "bbfefc4c667310905126e7c4838917bf1f7fa687cb27f88c9a18380f83cb8ee8"
+   },
+   {
+    "path": "dist/xenon/async/weapon/expack_jap-00.fbrb",
+    "size": 194395,
+    "sha256": "bbfefc4c667310905126e7c4838917bf1f7fa687cb27f88c9a18380f83cb8ee8"
+   },
+   {
+    "path": "dist/xenon/async/weapon/jap_shingunto_knife-00.fbrb",
+    "size": 107630,
+    "sha256": "458882e97f2e74f248948657979a5807563c5b170c7b57e88c743f337616d8cf"
+   },
+   {
+    "path": "dist/xenon/async/weapon/jap_type97_gren-00.fbrb",
+    "size": 116203,
+    "sha256": "77020d539a0e1f8c1ad382e08a33a1802bf56f2d536a7c3bc007d3bcfb4d74c7"
+   },
+   {
+    "path": "dist/xenon/async/weapon/k98-00.fbrb",
+    "size": 159361,
+    "sha256": "6033c17f412da7f5d9a8a86d1ca7fb4377a4df5c3ff6309a14b57b2e06184679"
+   },
+   {
+    "path": "dist/xenon/async/weapon/m18-00.fbrb",
+    "size": 143286,
+    "sha256": "597a3411b10e9922e63caa8552ee404cb1b7cb11a7c9abb3b2b8f6f02ae0496f"
+   },
+   {
+    "path": "dist/xenon/async/weapon/m18_jap-00.fbrb",
+    "size": 143286,
+    "sha256": "597a3411b10e9922e63caa8552ee404cb1b7cb11a7c9abb3b2b8f6f02ae0496f"
+   },
+   {
+    "path": "dist/xenon/async/weapon/m1911a1-00.fbrb",
+    "size": 197050,
+    "sha256": "82e1981c733a0abf857fe8be38f1a03dfda6747be7e96e1a73669ce828e7fdcf"
+   },
+   {
+    "path": "dist/xenon/async/weapon/m1garand-00.fbrb",
+    "size": 118616,
+    "sha256": "d663b8686688f0d5bd6a41066946e34ad2db29beb75408473179e78695e86b38"
+   },
+   {
+    "path": "dist/xenon/async/weapon/m1garand_bayonet-00.fbrb",
+    "size": 76707,
+    "sha256": "02b1aa68dc3000257e4db511d80b44016b4a9524366c160dc8483b11abf87faf"
+   },
+   {
+    "path": "dist/xenon/async/weapon/m1garand_rgl-00.fbrb",
+    "size": 133112,
+    "sha256": "1e457f6d4975227b0bb48f9391b6cfb6787aee95c5e000cbc19e56eb5738c935"
+   },
+   {
+    "path": "dist/xenon/async/weapon/nambu100-00.fbrb",
+    "size": 309973,
+    "sha256": "e6f7b29df18f2ab72e0066aac142acf43610f0b0978e5a23ffb58c78bdb245e5"
+   },
+   {
+    "path": "dist/xenon/async/weapon/nambu_pistol-00.fbrb",
+    "size": 91261,
+    "sha256": "885c0eb76fcfbb35bfa51eb25e36d27f68d563a6dcd2c663c3eb470fb64b26db"
+   },
+   {
+    "path": "dist/xenon/async/weapon/springfield1903-00.fbrb",
+    "size": 226259,
+    "sha256": "ab30d5c159ad42333c852fadda9dc48b1b77375986f9e5e8c5576d7d3451e53b"
+   },
+   {
+    "path": "dist/xenon/async/weapon/thompson-00.fbrb",
+    "size": 118516,
+    "sha256": "2191eee0cb917b8238d255f50182111bb215fd8f727a168a0c3cacbaa55639ac"
+   },
+   {
+    "path": "dist/xenon/async/weapon/type5-00.fbrb",
+    "size": 120828,
+    "sha256": "d873ce2f4e0b5b4c475743f4b0bf9d23e919784de0e685a886e5185c949593fb"
+   },
+   {
+    "path": "dist/xenon/async/weapon/type5_bayonet-00.fbrb",
+    "size": 76707,
+    "sha256": "02b1aa68dc3000257e4db511d80b44016b4a9524366c160dc8483b11abf87faf"
+   },
+   {
+    "path": "dist/xenon/async/weapon/type5_rgl-00.fbrb",
+    "size": 133112,
+    "sha256": "1e457f6d4975227b0bb48f9391b6cfb6787aee95c5e000cbc19e56eb5738c935"
+   },
+   {
+    "path": "dist/xenon/async/weapon/us_longknife_knife-00.fbrb",
+    "size": 101049,
+    "sha256": "4d73e60d918d199101d34bc949f1b85ca91d15d6df9452d5bd95009c51641ec5"
+   },
+   {
+    "path": "dist/xenon/async/weapon/us_pineapple_gren-00.fbrb",
+    "size": 100944,
+    "sha256": "147f34958a732783aa5c5741bb4e9c9a52071ab4a56076104706d6335b2b0d0c"
+   },
+   {
+    "path": "dist/xenon/async/weapon/wrench-00.fbrb",
+    "size": 184175,
+    "sha256": "cd2c08c83560fda540f7dd104d42605a54f0f7dde12a507888e8a1c39e2753a9"
+   },
+   {
+    "path": "dist/xenon/async/weapon/wrench_jap-00.fbrb",
+    "size": 184175,
+    "sha256": "cd2c08c83560fda540f7dd104d42605a54f0f7dde12a507888e8a1c39e2753a9"
+   },
+   {
+    "path": "dist/xenon/levels/levels-common-00.fbrb",
+    "size": 88838586,
+    "sha256": "868157d16877952cba8fff073e16ba68bc083541df89ec6bfe0a937de7a82797"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/reduced-level-00.fbrb",
+    "size": 15702330,
+    "sha256": "31a14c318167f963552259758d0cf46691bea4d3a058f2e137024c2a87688261"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/terrain-00.fbrb",
+    "size": 5159848,
+    "sha256": "22c0bcf2e8ee6812f214490797252bf5da988bdb9b9f02f54b37dedf7f054afb"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/ui/multiplayer-00.fbrb",
+    "size": 10997872,
+    "sha256": "d1d926347b49effd6c3cf0044d60d4933306f7af2a99c5423a52b5e1fd0dd2ce"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/vo/de-00.fbrb",
+    "size": 6324,
+    "sha256": "f42ce71944277018f38ca6726562ddd5229b28f71d287085c5cda6d4dd6568f5"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/vo/en-00.fbrb",
+    "size": 8450,
+    "sha256": "e7cc2a347cb22a4949fcca8d4993a826d5f60b0515ae4859f6234ba6758b5767"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/vo/es-00.fbrb",
+    "size": 6326,
+    "sha256": "36eeab4ba2bd6d70f21c059dec666299f9d72f41297678c8ea4bdfe3b72addd5"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/vo/fr-00.fbrb",
+    "size": 6349,
+    "sha256": "ee283429ce1c7891a8bf606c315adade194326da4cbf1317f3716529349f8e87"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/vo/it-00.fbrb",
+    "size": 6274,
+    "sha256": "db7bfce6fa229b3380f42c56de303b472c47aa828d31e698199d27b7820cfe76"
+   },
+   {
+    "path": "dist/xenon/levels/coral_sea/vo/jp-00.fbrb",
+    "size": 6277,
+    "sha256": "129131e18ba6ed294ca965a784c0b0147cd1b4e1605aade6cc4a147516237db7"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/reduced-level-00.fbrb",
+    "size": 47753235,
+    "sha256": "756561305f5ba0d241d7178cb160bdedfbe5ddf1f11c2644eac09ae2d19256ec"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/terrain-00.fbrb",
+    "size": 4409716,
+    "sha256": "f86846499229565fc61f29f2c30d33e557a9718b6f1c4b502161f17f0a268632"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/ui/multiplayer-00.fbrb",
+    "size": 11011673,
+    "sha256": "0116d6056dd0160ea71e0f77f2bc715879cdb070ec1f94c133458d546d4e0dbf"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/vo/de-00.fbrb",
+    "size": 6324,
+    "sha256": "f42ce71944277018f38ca6726562ddd5229b28f71d287085c5cda6d4dd6568f5"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/vo/en-00.fbrb",
+    "size": 8450,
+    "sha256": "e7cc2a347cb22a4949fcca8d4993a826d5f60b0515ae4859f6234ba6758b5767"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/vo/es-00.fbrb",
+    "size": 6326,
+    "sha256": "36eeab4ba2bd6d70f21c059dec666299f9d72f41297678c8ea4bdfe3b72addd5"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/vo/fr-00.fbrb",
+    "size": 6349,
+    "sha256": "ee283429ce1c7891a8bf606c315adade194326da4cbf1317f3716529349f8e87"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/vo/it-00.fbrb",
+    "size": 6274,
+    "sha256": "db7bfce6fa229b3380f42c56de303b472c47aa828d31e698199d27b7820cfe76"
+   },
+   {
+    "path": "dist/xenon/levels/guadal_canal/vo/jp-00.fbrb",
+    "size": 6277,
+    "sha256": "129131e18ba6ed294ca965a784c0b0147cd1b4e1605aade6cc4a147516237db7"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/reduced-level-00.fbrb",
+    "size": 52067247,
+    "sha256": "7bdc51f032a317f890771a8c698cb5c9280f5aa1475668ee0a1b0cc0241dd807"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/terrain-00.fbrb",
+    "size": 1047830,
+    "sha256": "b14cdd72a8e8287d7e4ef69e1c0b4a38bb5bf34950921359a6dfed99d0534b8c"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/ui/multiplayer-00.fbrb",
+    "size": 11038987,
+    "sha256": "f6414d8d2e04494b57547460b2febc1f267307508a1054b26d894d3978253d41"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/vo/de-00.fbrb",
+    "size": 6324,
+    "sha256": "f42ce71944277018f38ca6726562ddd5229b28f71d287085c5cda6d4dd6568f5"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/vo/en-00.fbrb",
+    "size": 8450,
+    "sha256": "e7cc2a347cb22a4949fcca8d4993a826d5f60b0515ae4859f6234ba6758b5767"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/vo/es-00.fbrb",
+    "size": 6326,
+    "sha256": "36eeab4ba2bd6d70f21c059dec666299f9d72f41297678c8ea4bdfe3b72addd5"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/vo/fr-00.fbrb",
+    "size": 6349,
+    "sha256": "ee283429ce1c7891a8bf606c315adade194326da4cbf1317f3716529349f8e87"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/vo/it-00.fbrb",
+    "size": 6274,
+    "sha256": "db7bfce6fa229b3380f42c56de303b472c47aa828d31e698199d27b7820cfe76"
+   },
+   {
+    "path": "dist/xenon/levels/iwo_jima_s/vo/jp-00.fbrb",
+    "size": 6277,
+    "sha256": "129131e18ba6ed294ca965a784c0b0147cd1b4e1605aade6cc4a147516237db7"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/reduced-level-00.fbrb",
+    "size": 51742194,
+    "sha256": "22ae168b020299deb6375fc6dee1f0edf1b68a65ee4f28c935e9bf8dc796caf8"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/terrain-00.fbrb",
+    "size": 3415652,
+    "sha256": "184c5687fbcaceae119cd5ca8c1aba4b00e7af370402203d5840c91dd1b97470"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/ui/multiplayer-00.fbrb",
+    "size": 11086018,
+    "sha256": "09bd5dcb9d3541a793d7e244d67125942d766211d4cfca0d8cf8cbc2f8eca93c"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/vo/de-00.fbrb",
+    "size": 6324,
+    "sha256": "f42ce71944277018f38ca6726562ddd5229b28f71d287085c5cda6d4dd6568f5"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/vo/en-00.fbrb",
+    "size": 8450,
+    "sha256": "e7cc2a347cb22a4949fcca8d4993a826d5f60b0515ae4859f6234ba6758b5767"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/vo/es-00.fbrb",
+    "size": 6326,
+    "sha256": "36eeab4ba2bd6d70f21c059dec666299f9d72f41297678c8ea4bdfe3b72addd5"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/vo/fr-00.fbrb",
+    "size": 6349,
+    "sha256": "ee283429ce1c7891a8bf606c315adade194326da4cbf1317f3716529349f8e87"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/vo/it-00.fbrb",
+    "size": 6274,
+    "sha256": "db7bfce6fa229b3380f42c56de303b472c47aa828d31e698199d27b7820cfe76"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_s/vo/jp-00.fbrb",
+    "size": 6277,
+    "sha256": "129131e18ba6ed294ca965a784c0b0147cd1b4e1605aade6cc4a147516237db7"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/reduced-level-00.fbrb",
+    "size": 50734283,
+    "sha256": "1e3504d37793068fe10f93daf1933396f6329745a73a085e3adcc8a394205428"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/terrain-00.fbrb",
+    "size": 3415652,
+    "sha256": "184c5687fbcaceae119cd5ca8c1aba4b00e7af370402203d5840c91dd1b97470"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/ui/multiplayer-00.fbrb",
+    "size": 11085556,
+    "sha256": "a80a2bbb87861ff90070b35e80485c739e07a875c523d451fc49da54fd59f611"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/vo/de-00.fbrb",
+    "size": 6324,
+    "sha256": "f42ce71944277018f38ca6726562ddd5229b28f71d287085c5cda6d4dd6568f5"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/vo/en-00.fbrb",
+    "size": 8450,
+    "sha256": "e7cc2a347cb22a4949fcca8d4993a826d5f60b0515ae4859f6234ba6758b5767"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/vo/es-00.fbrb",
+    "size": 6326,
+    "sha256": "36eeab4ba2bd6d70f21c059dec666299f9d72f41297678c8ea4bdfe3b72addd5"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/vo/fr-00.fbrb",
+    "size": 6349,
+    "sha256": "ee283429ce1c7891a8bf606c315adade194326da4cbf1317f3716529349f8e87"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/vo/it-00.fbrb",
+    "size": 6274,
+    "sha256": "db7bfce6fa229b3380f42c56de303b472c47aa828d31e698199d27b7820cfe76"
+   },
+   {
+    "path": "dist/xenon/levels/wake_island_tutorial/vo/jp-00.fbrb",
+    "size": 6277,
+    "sha256": "129131e18ba6ed294ca965a784c0b0147cd1b4e1605aade6cc4a147516237db7"
+   },
+   {
+    "path": "dist/xenon/menu/hud/hud_multiplayer-00.fbrb",
+    "size": 1351464,
+    "sha256": "9340adfdf03dae8e42eb1656800c2e43f3829796d35a8a31a75e34fc3f46d1cf"
+   },
+   {
+    "path": "dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb",
+    "size": 2239522,
+    "sha256": "52b6243f95888b4421bb44b591657f8f3d33ccd1d779a3330cfd92210d33f221"
+   },
+   {
+    "path": "dist/xenon/menu/hud/hud_singleplayer-00.fbrb",
+    "size": 1315600,
+    "sha256": "86fdfb29095bdeb358d7b4bbc27d46fa759da4d299250d56fd826bf76a052f9b"
+   },
+   {
+    "path": "dist/xenon/menu/main/mainmenu-00.fbrb",
+    "size": 5760476,
+    "sha256": "9610ca4f6a29349c10abbfe4926c078559d2b1fd90287ebe388bb34b61740d53"
+   },
+   {
+    "path": "dist/xenon/menu/shared/fonts_de-00.fbrb",
+    "size": 43399,
+    "sha256": "5a5510cbeebc65e6e822de60d6c67738825d8bf0850c004e13db184e80365397"
+   },
+   {
+    "path": "dist/xenon/menu/shared/fonts_es-00.fbrb",
+    "size": 66412,
+    "sha256": "3c08ccf4fc409160a1b420ac98302a739fc193d5c84facc81b2156f1ceba00c2"
+   },
+   {
+    "path": "dist/xenon/menu/shared/fonts_fr-00.fbrb",
+    "size": 63295,
+    "sha256": "fa368dcb521f96db18fff666f37ba4b2b1a4373dab5fad9c4ecfeeb5250b6a40"
+   },
+   {
+    "path": "dist/xenon/menu/shared/fonts_it-00.fbrb",
+    "size": 65877,
+    "sha256": "964ae35119be2ceead21ce5d226ff708b6d99eebab2b30ab3bd93a20861f9f88"
+   },
+   {
+    "path": "dist/xenon/menu/shared/fonts_jp-00.fbrb",
+    "size": 136616,
+    "sha256": "a3de89c6f92702ffe3bbb5f0c99fc2e742055dcd57378a5a14264ca2135f6d96"
+   },
+   {
+    "path": "dist/xenon/menu/shared/fonts_us-00.fbrb",
+    "size": 42514,
+    "sha256": "3900a4c1d3e0dcd94c6e381e95e488884b695f324abd4a2c08d8844d0bdd0da6"
+   }
+  ]
+ },
+ "xenia": {
+  "build": "xenia-canary e6cd2e4bc (Windows)",
+  "exe": "xenia_canary.exe",
+  "exe_sha256": "732cb7d50c66e516801a6f6dc7c1ca6958bf3e1ec28c86feb9071b8291c9885a",
+  "netfix_sha256": "de89829d338a5dd22573bd42330548521ba0c5c5a839c71c7e6c9c1d2fb920b9"
+ },
+ "patch": {
+  "file": "5841097E - Battlefield 1943.patch.toml",
+  "sha256": "da5b37330c3d48660f083d594f6c2c7b2f93cbc89476b4f7773dd825944a745a"
+ },
+ "expected": {
+  "main_nav_res_sha256": "0dc2b6cd344d6a317ccdd9ced1d6a9f0ab821246010c932cae3bc144cdf92f40",
+  "game_settings_cfg_sha256": "ebaa008b7938da15d0e22cdee1b811dcf1764cf3e1f49731f496f2d8a6191790"
+ }
+}

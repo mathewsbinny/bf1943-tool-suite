@@ -18,7 +18,7 @@ build them here with each tool's `build.bat`.
 
 ## Layout
 
-Mirrors the BFBC2 suite: one shared core and a folder per tool. `bf1943-xenia-probe/` and `bf1943-converter/` are new and not created yet.
+Mirrors the BFBC2 suite: one shared core and a folder per tool. `bf1943-converter/` (the native PC conversion) is new and not created yet.
 
 | Folder | Tool | Starting point |
 |---|---|---|
@@ -28,7 +28,8 @@ Mirrors the BFBC2 suite: one shared core and a folder per tool. `bf1943-xenia-pr
 | `bf1943-console-readers/` | read-only STFS package and XEX readers | OPFOR console readers |
 | `bf1943-auto-navkit/` | navigation data for BF1943 levels | OPFOR NavKit |
 | `bf1943-map-inspector/`, `bf1943-navigation-studio/` | 3D views of levels and navigation data | OPFOR tools of the same names |
-| `bf1943-xenia-probe/` | reference traces and offline patches in Xenia (research use) | rising-sun `src/xeniaprobe` |
+| `bf1943-xenia-kit/` | **ready:** turns your own BF1943 package into a Xenia setup with offline Quick Match and local matches (`xeniakit.py build`) | new; findings from rising-sun `src/xeniaprobe`, `src/uiresearch` |
+| `bf1943-apt-tools/` | **ready:** menu movie (APT) reader, disassembler and rewriter | rising-sun `src/uiresearch/apt.py` |
 | `bf1943-converter/` | the end-user toolkit: verify the user's copy, convert it to the PC build | new |
 
 ## Rules
