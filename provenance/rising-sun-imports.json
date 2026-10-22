@@ -1,0 +1,20 @@
+{
+  "imports": [
+    {
+      "source_repo": "operation-rising-sun",
+      "imported": "2026-10-22T17:52:37-04:00",
+      "files": [
+        {
+          "source": "src/uiresearch/apt.py",
+          "destination": "bf1943-apt-tools/apt.py",
+          "sha256": "eed6759665cda2c21163f6e7430a650f91b4b3b305203e4fa6d615690117adcc"
+        },
+        {
+          "source": "src/assetresearch/fbrb.py",
+          "destination": "bf1943-fbrb-tool/fbrb1943.py",
+          "sha256": "0c48e1f388e5106d32b477508611708748c49eaf8b1abd1e421e90442608df1a"
+        }
+      ]
+    }
+  ]
+}

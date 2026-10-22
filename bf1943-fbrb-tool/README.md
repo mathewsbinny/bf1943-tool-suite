@@ -36,3 +36,7 @@ a read-only folder - what to do, and where the details are; exit code 1.
 
 The format follows **Frankelstner**'s fbrb script and **Heico**'s BFBC2 Toolkit. Developed for
 Project OPFOR. Battlefield: Bad Company 2 is © Electronic Arts / DICE.
+
+## BF1943 bundles (Python)
+
+`fbrb1943.py` reads and writes BF1943 Xenon FbRB bundles (directory version 2): `Bundle(raw).data(name)`, and `build({name: bytes})` to replace entries. An unchanged rebuild reproduces the decompressed directory and payload byte-for-byte for 82 of the 85 bundles in BF1943. It refuses the other three (two async bundles and build_overlay), whose layout differs. Source and provenance: `operation-rising-sun/src/assetresearch/fbrb.py`, `provenance/rising-sun-imports.json`.
