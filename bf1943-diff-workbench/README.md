@@ -1,3 +1,3 @@
-# bfbc2-diff-workbench
+# bf1943-diff-workbench
 
 Planned - see ../DESIGN.md.

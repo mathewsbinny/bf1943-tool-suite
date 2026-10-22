@@ -1,6 +1,6 @@
 """A Kynapse path-data file (pathdata.hpd) as the suite's 3D tools draw it: walkable cells, area boundaries, the
-route graph and its islands. Read with NavKit's byte-exact reader (bfbc2-auto-navkit/tools: hpdtool, kymesh,
-navdiff); the format is in bfbc2-auto-navkit/research/KYNAPSE_SPEC.md.
+route graph and its islands. Read with NavKit's byte-exact reader (bf1943-auto-navkit/tools: hpdtool, kymesh,
+navdiff); the format is in bf1943-auto-navkit/research/KYNAPSE_SPEC.md.
 
     nav = load(path, heightfield=None, cache_dir=None)
     nav.areas[k]                 NavArea: sector, tile, layer, pitch, boundary pieces, island
@@ -26,7 +26,7 @@ from typing import List
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', '..', 'bfbc2-auto-navkit', 'tools'))
+sys.path.insert(0, os.path.join(HERE, '..', '..', 'bf1943-auto-navkit', 'tools'))
 import hpdtool  # noqa: E402
 import kymesh  # noqa: E402
 import navdiff  # noqa: E402

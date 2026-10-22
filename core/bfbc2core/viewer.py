@@ -566,11 +566,11 @@ class Viewer:
         p.callbacks.custom_background = self._background
         p.callbacks.show_gui = self._gui
         p.fps_idling.enable_idling = False
-        # window layout: one file per tool in %APPDATA%\bfbc2-tool-suite, not in the current folder
+        # window layout: one file per tool in %APPDATA%\bf1943-tool-suite, not in the current folder
         os.makedirs(os.path.join(hello_imgui.ini_folder_location(hello_imgui.IniFolderType.app_user_config_folder),
-                                 'bfbc2-tool-suite'), exist_ok=True)
+                                 'bf1943-tool-suite'), exist_ok=True)
         p.ini_folder_type = hello_imgui.IniFolderType.app_user_config_folder
-        p.ini_filename = 'bfbc2-tool-suite/' + ''.join(ch if ch.isalnum() else '_' for ch in self.title.split(' - ')[0]) + '.ini'
+        p.ini_filename = 'bf1943-tool-suite/' + ''.join(ch if ch.isalnum() else '_' for ch in self.title.split(' - ')[0]) + '.ini'
         p.imgui_window_params.default_imgui_window_type = hello_imgui.DefaultImGuiWindowType.no_default_window
         immapp.run(p)
         if self.exit_after is not None:

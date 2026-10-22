@@ -2,7 +2,7 @@
 
   python core\\tests\\test_dbx.py <folder or list.txt> [...]
 
-Uses bfbc2-dbx-tools\\tests\\fingerprints_795745.txt (SHA-1 of DbxEdit's XML per input file); every input
+Uses bf1943-dbx-tools\\tests\\fingerprints_795745.txt (SHA-1 of DbxEdit's XML per input file); every input
 file found under the folders is checked, then every other binary .dbx is parsed (it must not fail).
 """
 import hashlib
@@ -29,7 +29,7 @@ def files(roots):
 
 def main(argv):
     golden = {}
-    for line in open(os.path.join(SUITE, 'bfbc2-dbx-tools', 'tests', 'fingerprints_795745.txt')):
+    for line in open(os.path.join(SUITE, 'bf1943-dbx-tools', 'tests', 'fingerprints_795745.txt')):
         p = line.split()
         if len(p) >= 3 and p[0] == 'xml':
             golden[p[1]] = p[2]

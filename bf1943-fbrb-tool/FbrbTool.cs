@@ -250,7 +250,7 @@ static class FbrbTool
 }
 
 // Logging and error reports (a copy of DbxEdit.cs's ToolLog: FbrbTool builds on its own), as the suite's Python tools keep them (core/bfbc2core/errors.py): a log per tool
-// in %LOCALAPPDATA%\bfbc2-tool-suite\logs\<tool>-<date>.log (the 20 newest kept), and errors explained in
+// in %LOCALAPPDATA%\bf1943-tool-suite\logs\<tool>-<date>.log (the 20 newest kept), and errors explained in
 // words - the likely cause and what to do - with the log's path.
 static class ToolLog
 {
@@ -268,7 +268,7 @@ static class ToolLog
                 string local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
                 if (string.IsNullOrEmpty(local)) local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string dir = Path.Combine(Path.Combine(local,
-                                                   "bfbc2-tool-suite"), "logs");
+                                                   "bf1943-tool-suite"), "logs");
             Directory.CreateDirectory(dir);
             path = Path.Combine(dir, name + "-" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log");
             foreach (string old in Directory.GetFiles(dir, name + "-*.log").OrderByDescending(p => p, StringComparer.OrdinalIgnoreCase).Skip(Keep))

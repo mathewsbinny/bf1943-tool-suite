@@ -9,11 +9,16 @@ This suite holds **new BF1943 tools** and **modified copies of OPFOR tools**. OP
 tools are copied out of it with `tools\import_opfor.py`, which records every source file's hash in
 [provenance/opfor-imports.json](provenance/opfor-imports.json), and are changed only here.
 
-**Status: set up.** No tools imported yet.
+**Status:** every OPFOR tool is copied (from `bfbc2-tool-suite` commit `fab30c0`, 114 files) and rewired to the
+`bf1943-*` folder names; logs and window layouts go to `%LOCALAPPDATA%\bf1943-tool-suite` and
+`%APPDATA%\bf1943-tool-suite`. The tools are still BFBC2 tools inside: they read Project OPFOR's BFBC2 copy and
+BFBC2's formats until each is adapted to BF1943. OPFOR's own README and design are kept in
+[docs/opfor-bfbc2](docs/opfor-bfbc2/) as reference. Built `.exe` files are not copied (OPFOR does not commit them);
+build them here with each tool's `build.bat`.
 
-## Planned layout
+## Layout
 
-Mirrors the BFBC2 suite: one shared core and a folder per tool.
+Mirrors the BFBC2 suite: one shared core and a folder per tool. `bf1943-xenia-probe/` and `bf1943-converter/` are new and not created yet.
 
 | Folder | Tool | Starting point |
 |---|---|---|
@@ -33,10 +38,13 @@ Mirrors the BFBC2 suite: one shared core and a folder per tool.
 - Copies from operation-rising-sun stay in place there too, so the evidence paths remain valid.
 - No network traffic.
 
-## Importing an OPFOR tool
+## Importing from OPFOR
 
 ```
-python -B tools\import_opfor.py bfbc2-dbx-tools bf1943-dbx-tools --note "base for BF1943 DbxEdit"
+python -B tools\import_opfor.py <path in bfbc2-tool-suite> <path here> --note "why"
+python -B tools\import_opfor.py --plan tools\opfor-import-plan.json
 ```
 
-The copy skips `__pycache__`, `.pyc` and per-user `.ini` files. It refuses to overwrite an existing folder.
+Files come from OPFOR's committed state (HEAD) through read-only git commands, so uncommitted work there and
+ignored build outputs are never copied. It refuses to overwrite. To take a later OPFOR change, diff OPFOR's
+commit against the recorded one and apply it here by hand.

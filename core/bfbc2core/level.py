@@ -25,7 +25,7 @@ from . import dbx, terrain, water
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
-NAVKIT = os.path.join(SUITE, 'bfbc2-auto-navkit')
+NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit')
 sys.path.insert(0, NAVKIT)
 sys.path.insert(0, os.path.join(NAVKIT, 'tools'))
 
@@ -396,7 +396,7 @@ def heightfield_of(root, lv, log=print, name=None):
         if bundle is None:
             return None
         log(f'{lv}: unpacking {os.path.relpath(bundle, root)}')
-        tool = navkit.find_tool(root, 'FbrbTool.exe', 'bfbc2-fbrb-tool')
+        tool = navkit.find_tool(root, 'FbrbTool.exe', 'bf1943-fbrb-tool')
         subprocess.run([tool, 'unpack', bundle, dest], check=True, capture_output=True)
         path = terrain.find(dest, name)
         if path is None:

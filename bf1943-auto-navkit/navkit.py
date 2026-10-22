@@ -28,7 +28,7 @@ Options: --box minX,minZ,maxX,maxZ and --y bottom,top (prepare / sample: overrid
          --opfor <Project OPFOR folder> (default: OPFOR_ROOT, else "Project OPFOR" next to the toolkit).
 
 NavKit works on Project OPFOR's game copy and uses its in-game sampler. FbrbTool / DbxEdit come from the
-toolkit (..\\bfbc2-fbrb-tool, ..\\bfbc2-dbx-tools, built with their build.bat) or from OPFOR's tools\\ folder.
+toolkit (..\\bf1943-fbrb-tool, ..\\bf1943-dbx-tools, built with their build.bat) or from OPFOR's tools\\ folder.
 
 Files (in the OPFOR folder): work\\levels\\<level>\\ (unpacked level, objects), work\\navkit\\<level>\\
 (settings, pathdata.hpd, check report), work\\navsample\\<level>_navkit*.bin (samples, written by OPFOR's
@@ -93,8 +93,8 @@ class Project:
         self.log_path = os.path.join(self.game, 'logs', 'opfor.log')
         if not os.path.isfile(os.path.join(self.game, 'BFBC2Game.exe')):
             raise NavKitError(f'no game copy in {self.game} (run OPFOR\'s setup_game.bat first)')
-        self.fbrbtool = find_tool(self.root, 'FbrbTool.exe', 'bfbc2-fbrb-tool')
-        self.dbxedit = find_tool(self.root, 'DbxEdit.exe', 'bfbc2-dbx-tools')
+        self.fbrbtool = find_tool(self.root, 'FbrbTool.exe', 'bf1943-fbrb-tool')
+        self.dbxedit = find_tool(self.root, 'DbxEdit.exe', 'bf1943-dbx-tools')
 
     # --- levels --------------------------------------------------------------------------------------
     def level_dirs(self):

@@ -5,7 +5,7 @@ is told what happened, the likely cause and what to do, in words rather than a t
     with errors.guard('navigation-studio'):          # around main(): a crash is logged and shown, exit code 1
         ...
 
-Logs: %LOCALAPPDATA%\\bfbc2-tool-suite\\logs\\<tool>-<date>.log (the 20 newest per tool are kept). Uncaught errors in
+Logs: %LOCALAPPDATA%\\bf1943-tool-suite\\logs\\<tool>-<date>.log (the 20 newest per tool are kept). Uncaught errors in
 any thread, Python warnings and each tool's own messages go there; errors also show a window (GUI tools) or a
 short message (command line) naming the log.
 """
@@ -52,7 +52,7 @@ PIP_NAMES = {'imgui_bundle': 'imgui-bundle', 'PIL': 'pillow', 'capstone': 'capst
 
 def log_dir():
     base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
-    d = os.path.join(base, 'bfbc2-tool-suite', 'logs')
+    d = os.path.join(base, 'bf1943-tool-suite', 'logs')
     os.makedirs(d, exist_ok=True)
     return d
 

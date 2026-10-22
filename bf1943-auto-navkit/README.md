@@ -2,7 +2,7 @@
 
 Standalone tooling to create AI navigation data (`pathdata.hpd`) for Battlefield: Bad Company 2
 levels – including multiplayer maps that never shipped with any – so the game's own AI can move on
-them. Developed for Project OPFOR and published for other modders as `bfbc2-auto-navkit`, the automated
+them. Developed for Project OPFOR and published for other modders as `bf1943-auto-navkit`, the automated
 navigation-data generator of the BFBC2 suite. It measures levels through Project OPFOR's in-game sampler,
 so it needs an OPFOR install, plus the suite's FbrbTool and DbxEdit.
 

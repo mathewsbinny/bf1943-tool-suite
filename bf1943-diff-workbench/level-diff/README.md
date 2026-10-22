@@ -10,7 +10,7 @@ removed, and which fields changed. It works on levels and on any other partition
 ## Build
 
 Run `build.bat`. It compiles `LevelDiff.exe` with the C# compiler that ships with Windows. It reads files
-with the suite's DbxEdit code (`..\..\bfbc2-dbx-tools`; or set `DBX_TOOLS` to
+with the suite's DbxEdit code (`..\..\bf1943-dbx-tools`; or set `DBX_TOOLS` to
 that folder).
 
 ## Use
@@ -47,7 +47,7 @@ ReferenceObjectData    C3A93730-7A4B-488D-A41A-8ACE4F7D3695
 
 ## Errors and logs
 
-LevelDiff keeps a log in `%LOCALAPPDATA%\bfbc2-tool-suite\logs\` like the suite's other tools (`ToolLog`, shared
+LevelDiff keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools (`ToolLog`, shared
 with DbxEdit). When it cannot do something it prints the cause, what to do and the log's path, and exits with
 code 1. Tests: `tests\test_leveldiff.py` (quick and game tiers of the suite's `run_tests.py`).
 

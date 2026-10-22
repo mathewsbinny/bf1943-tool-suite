@@ -1,4 +1,4 @@
-# bfbc2-navigation-studio
+# bf1943-navigation-studio
 
 View a level's AI navigation data (Kynapse `pathdata.hpd`) in 3D: NavKit's build and DICE's original
 side by side, over the level's terrain, water and objects. Milestone M3 (viewing); editing, the path test

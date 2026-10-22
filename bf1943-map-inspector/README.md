@@ -1,4 +1,4 @@
-# bfbc2-map-inspector
+# bf1943-map-inspector
 
 Browse a Battlefield: Bad Company 2 level in 3D and inspect every object: where it is, what it is, which
 file it comes from, its full property tree, and how it links to other objects.
@@ -45,7 +45,7 @@ to its start is an area (drawn with its height as a prism), an open one is a rou
   the path total, and the last point's height above the terrain. Esc clears.
 - Hovering shows what is under the mouse and where.
 
-Window layout is kept in `%APPDATA%\bfbc2-tool-suite\`.
+Window layout is kept in `%APPDATA%\bf1943-tool-suite\`.
 
 For tests: `inspector.py <level> --screenshot out.png [--frames N] [--select <guid>] [--measure "x,y,z;x,y,z"]`
 draws, saves a screenshot and exits.

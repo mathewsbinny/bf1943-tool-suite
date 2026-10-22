@@ -18,7 +18,7 @@ python stfs\stfs.py extract "D:\Update3" out levels/ons_mp_008
 
 ## Errors and logs
 
-Both readers keep a log in `%LOCALAPPDATA%\bfbc2-tool-suite\logs\` like the suite's other tools; on an error
+Both readers keep a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools; on an error
 they print the cause, what to do and the log's path (exit code 1). Tests: `tests\test_console_readers.py`
 (built images in the quick tier; with your Xbox 360 files in the game tier).
 

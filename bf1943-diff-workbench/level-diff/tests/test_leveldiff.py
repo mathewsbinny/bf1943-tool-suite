@@ -15,8 +15,8 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
-LD = os.path.join(SUITE, 'bfbc2-diff-workbench', 'level-diff', 'LevelDiff.exe')
-DBX = os.path.join(SUITE, 'bfbc2-dbx-tools', 'DbxEdit.exe')
+LD = os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'LevelDiff.exe')
+DBX = os.path.join(SUITE, 'bf1943-dbx-tools', 'DbxEdit.exe')
 
 
 def g(n):
@@ -85,8 +85,8 @@ def guids(items):
 
 
 def build_tools():
-    for exe, bat in ((DBX, os.path.join(SUITE, 'bfbc2-dbx-tools', 'build.bat')),
-                     (LD, os.path.join(SUITE, 'bfbc2-diff-workbench', 'level-diff', 'build.bat'))):
+    for exe, bat in ((DBX, os.path.join(SUITE, 'bf1943-dbx-tools', 'build.bat')),
+                     (LD, os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'build.bat'))):
         if not os.path.isfile(exe):
             subprocess.run(['cmd', '/c', bat], check=True, capture_output=True)
 
@@ -148,7 +148,7 @@ def main(argv):
         c.check(r.returncode == 2 and 'usage' in (r.stdout + r.stderr), 'one file only: exit 2 with the usage line')
 
         if '--game' in argv:
-            sys.path.insert(0, os.path.join(SUITE, 'bfbc2-auto-navkit'))
+            sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit'))
             import navkit
             lv = os.path.join(navkit.find_opfor(None), 'work', 'levels', 'mp_005')
             dist, pkg = os.path.join(lv, 'dist', 'levels', 'MP_005.dbx'), os.path.join(lv, 'pkg', 'levels', 'MP_005.dbx')

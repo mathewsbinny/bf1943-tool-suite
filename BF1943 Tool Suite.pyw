@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 SUITE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(SUITE, 'bfbc2-auto-navkit'))
+sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit'))
 sys.path.insert(0, os.path.join(SUITE, 'core'))
 from bfbc2core import errors  # noqa: E402
 
@@ -30,19 +30,19 @@ if not os.path.isfile(PYTHON):
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 TOOLS = {
-    'fbrb': (os.path.join(SUITE, 'bfbc2-fbrb-tool', 'FbrbTool.exe'), os.path.join(SUITE, 'bfbc2-fbrb-tool', 'build.bat')),
-    'leveldiff': (os.path.join(SUITE, 'bfbc2-diff-workbench', 'level-diff', 'LevelDiff.exe'),
-                  os.path.join(SUITE, 'bfbc2-diff-workbench', 'level-diff', 'build.bat')),
-    'dbxgui': (os.path.join(SUITE, 'bfbc2-dbx-tools', 'DbxEditGUI.exe'), os.path.join(SUITE, 'bfbc2-dbx-tools', 'build.bat')),
+    'fbrb': (os.path.join(SUITE, 'bf1943-fbrb-tool', 'FbrbTool.exe'), os.path.join(SUITE, 'bf1943-fbrb-tool', 'build.bat')),
+    'leveldiff': (os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'LevelDiff.exe'),
+                  os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'build.bat')),
+    'dbxgui': (os.path.join(SUITE, 'bf1943-dbx-tools', 'DbxEditGUI.exe'), os.path.join(SUITE, 'bf1943-dbx-tools', 'build.bat')),
 }
 SCRIPTS = {
-    'inspector': os.path.join(SUITE, 'bfbc2-map-inspector', 'inspector.py'),
-    'studio': os.path.join(SUITE, 'bfbc2-navigation-studio', 'studio.py'),
-    'navkit': os.path.join(SUITE, 'bfbc2-auto-navkit', 'navkit.py'),
-    'navkitgui': os.path.join(SUITE, 'bfbc2-auto-navkit', 'navkitGUI.pyw'),
-    'crash': os.path.join(SUITE, 'bfbc2-automated-map-and-bot-test-harness', 'crash-reader', 'crashreader.py'),
-    'stfs': os.path.join(SUITE, 'bfbc2-console-readers', 'stfs', 'stfs.py'),
-    'xiso': os.path.join(SUITE, 'bfbc2-console-readers', 'xiso', 'xiso.py'),
+    'inspector': os.path.join(SUITE, 'bf1943-map-inspector', 'inspector.py'),
+    'studio': os.path.join(SUITE, 'bf1943-navigation-studio', 'studio.py'),
+    'navkit': os.path.join(SUITE, 'bf1943-auto-navkit', 'navkit.py'),
+    'navkitgui': os.path.join(SUITE, 'bf1943-auto-navkit', 'navkitGUI.pyw'),
+    'crash': os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'crash-reader', 'crashreader.py'),
+    'stfs': os.path.join(SUITE, 'bf1943-console-readers', 'stfs', 'stfs.py'),
+    'xiso': os.path.join(SUITE, 'bf1943-console-readers', 'xiso', 'xiso.py'),
     'tests': os.path.join(SUITE, 'run_tests.py'),
 }
 

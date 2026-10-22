@@ -14,7 +14,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..'))
-sys.path.insert(0, os.path.join(HERE, '..', '..', 'bfbc2-auto-navkit'))
+sys.path.insert(0, os.path.join(HERE, '..', '..', 'bf1943-auto-navkit'))
 from bfbc2core import navdata, navpath  # noqa: E402
 import navkit  # noqa: E402
 

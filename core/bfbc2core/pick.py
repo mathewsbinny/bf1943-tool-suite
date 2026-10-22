@@ -8,7 +8,7 @@ import sys
 
 
 def levels():
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'bfbc2-auto-navkit'))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'bf1943-auto-navkit'))
     import navkit
     pr = navkit.Project()
     out = []

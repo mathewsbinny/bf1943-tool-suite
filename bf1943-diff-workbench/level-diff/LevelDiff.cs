@@ -1,6 +1,6 @@
 // LevelDiff - compares two Battlefield: Bad Company 2 binary .dbx files (levels, or any partition) instance by
 // instance: what was added, removed or changed, field by field. Reads files with the toolkit's DbxEdit code
-// (..\..\bfbc2-dbx-tools\DbxEdit.cs in the suite, compiled in by build.bat).
+// (..\..\bf1943-dbx-tools\DbxEdit.cs in the suite, compiled in by build.bat).
 //
 // usage: LevelDiff <a.dbx> <b.dbx> [options]
 //   --match-objects     also pair placed objects (ReferenceObjectData) whose GUIDs differ by blueprint + position

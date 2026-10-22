@@ -28,7 +28,7 @@ to the original's. Folders unpacked by older versions, which hold the markers as
 
 ## Errors and logs
 
-FbrbTool keeps a log in `%LOCALAPPDATA%\bfbc2-tool-suite\logs\` like the suite's other tools. When it cannot do
+FbrbTool keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools. When it cannot do
 a job it says why in words - a file that is not an FbRB bundle or is damaged, a file in use, a missing file,
 a read-only folder - what to do, and where the details are; exit code 1.
 

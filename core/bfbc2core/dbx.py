@@ -1,4 +1,4 @@
-"""Binary DBX reader for the BFBC2 suite, written from bfbc2-dbx-tools/FORMAT.md.
+"""Binary DBX reader for the BFBC2 suite, written from bf1943-dbx-tools/FORMAT.md.
 
     f = read('Levels/MP_005.dbx')            # or parse(bytes)
     f.instances                              # list of Element (tag 'instance')

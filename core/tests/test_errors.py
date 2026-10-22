@@ -48,8 +48,8 @@ def main(argv):
 
         errors.setup('test-tool', gui=False)
         path = errors._state['path']
-        check(os.path.isfile(path) and os.path.dirname(path) == os.path.join(tmp, 'bfbc2-tool-suite', 'logs'),
-              'the log file is in %LOCALAPPDATA%\\bfbc2-tool-suite\\logs')
+        check(os.path.isfile(path) and os.path.dirname(path) == os.path.join(tmp, 'bf1943-tool-suite', 'logs'),
+              'the log file is in %LOCALAPPDATA%\\bf1943-tool-suite\\logs')
         try:
             {}['missing key']
         except KeyError as ex:
@@ -82,7 +82,7 @@ def main(argv):
             code = ex.code
         check(code == 130, 'guard: Ctrl+C exits with 130')
 
-        logs = os.path.join(tmp, 'bfbc2-tool-suite', 'logs')
+        logs = os.path.join(tmp, 'bf1943-tool-suite', 'logs')
         for k in range(30):
             open(os.path.join(logs, f'old-tool-2020-01-{k + 1:02d}.log'), 'w').close()
         errors._prune('old-tool')

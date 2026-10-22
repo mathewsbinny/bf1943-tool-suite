@@ -103,7 +103,7 @@ class Editor:
         import sys
         import threading
         self.tune.save(self.path)
-        navkit_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bfbc2-auto-navkit', 'navkit.py')
+        navkit_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bf1943-auto-navkit', 'navkit.py')
         cmd = [sys.executable, '-u', navkit_py, 'apply', self.lv, '--navtune', self.path, '--out', self.job_out, '--opfor', self.root]
         self.job_log = ['saved the side file; building with its edits (a full rebuild: about 1-8 minutes) ...']
         self.job = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace',
@@ -118,7 +118,7 @@ class Editor:
         """navkit.py install / restore (quick): runs to the end, its last line shown in the panel."""
         import subprocess
         import sys
-        navkit_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bfbc2-auto-navkit', 'navkit.py')
+        navkit_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bf1943-auto-navkit', 'navkit.py')
         r = subprocess.run([sys.executable, navkit_py, *args, '--opfor', self.root], capture_output=True, text=True,
                            errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         out = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip()]

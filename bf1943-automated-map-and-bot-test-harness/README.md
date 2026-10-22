@@ -1,4 +1,4 @@
-# bfbc2-automated-map-and-bot-test-harness
+# bf1943-automated-map-and-bot-test-harness
 
 Repeatable tests of maps and bots, with results compared between builds (`../DESIGN.md` section 4.5).
 

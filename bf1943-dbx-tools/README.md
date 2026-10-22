@@ -134,7 +134,7 @@ now-unused strings stay in the file.
 ## Errors and logs
 
 DbxEdit, DbxEditGUI and LevelDiff (which builds on `DbxEdit.cs`) keep a log in
-`%LOCALAPPDATA%\bfbc2-tool-suite\logs\` (`ToolLog` in `DbxEdit.cs`), as all the suite's tools do. An unexpected
+`%LOCALAPPDATA%\bf1943-tool-suite\logs\` (`ToolLog` in `DbxEdit.cs`), as all the suite's tools do. An unexpected
 error is explained - the likely cause (a file in use, read-only, missing, not a binary .dbx or damaged, out of
 memory) and what to do - with the log's path: on the command line with exit code 1, in DbxEditGUI in a window
 (the window keeps running). Files skipped in a folder conversion are logged as warnings.

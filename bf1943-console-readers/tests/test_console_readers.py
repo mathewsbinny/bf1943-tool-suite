@@ -209,11 +209,11 @@ def game_checks(c, xbox):
         if len(got) == 2:
             c.check(os.path.getsize(got['3']) == 1872532, 'Nelson Bay infantry path data: 1,872,532 bytes, as documented')
             c.check(sha(got['2']) == sha(got['3']), 'Update #2 and #3 give the same Nelson Bay path data')
-            sys.path.insert(0, os.path.join(SUITE, 'bfbc2-auto-navkit', 'tools'))
+            sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit', 'tools'))
             import hpdtool
             data = open(got['3'], 'rb').read()
             c.check(hpdtool.write(hpdtool.parse(data)) == data, 'it is valid path data (hpdtool reads and writes it back exactly)')
-        sys.path.insert(0, os.path.join(SUITE, 'bfbc2-auto-navkit'))
+        sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit'))
         import navkit
         game = os.path.join(navkit.find_opfor(None), 'game', 'Output', 'win32', 'ai', 'levels')
         compared = 0

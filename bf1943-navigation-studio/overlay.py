@@ -26,7 +26,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..'))
-sys.path[:0] = [os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bfbc2-auto-navkit', 'tools')]
+sys.path[:0] = [os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-auto-navkit', 'tools')]
 
 from bfbc2core import navdata, xmlinst  # noqa: E402
 
