@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+work/
+logs/
+# hello_imgui window layout, per user
+BF1943_*.ini
