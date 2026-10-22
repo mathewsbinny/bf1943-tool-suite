@@ -11,8 +11,11 @@ bf1943-xenia-kit\output\ by default, is never committed: everything in it is mad
 build:
  1. checks the package against the known release (SHA-256), extracts it verifying every data block's SHA-1,
     and checks each of the 90 files against the known hashes;
- 2. edits two files of that copy: the main menu (Quick Match opens a browser of locally hosted maps) and
-    GameSettings.cfg (network ports above 1024);
+ 2. edits three files of that copy (each result checked against known.json):
+    - menu/main/mainmenu-00.fbrb: the main menu (Local Match opens a browser of locally hosted maps;
+      Leaderboards removed; no EA Online check when the menu opens; no autosave-icon notice at startup);
+    - menu/hud/hud_multiplayer_cq-00.fbrb: the in-game menu (CHOOSE YOUR SIDE before the first deploy);
+    - config.zz: GameSettings.cfg network ports above 1024;
  3. installs the patch file (signed in to Xbox LIVE offline, no network) into Xenia's patches folder;
  4. writes xenia_canary_netfix.exe next to xenia_canary.exe (Xenia's UDP address bug fixed; the original
     is only read);
@@ -34,6 +37,7 @@ SUITE = os.path.dirname(KIT)
 sys.path[:0] = [KIT, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-console-readers', 'stfs')]
 from bfbc2core import errors
 import config_edits
+import igm_edits
 import menu_edits
 import netfix
 from stfs import Package
@@ -125,14 +129,23 @@ def build(args):
     say('3/5 editing the main menu and the network ports')
     replaced = {}
     menu_path = safe_join(title, menu_edits.BUNDLE)
-    new_bundle, new_res, menu_log = menu_edits.build(open(menu_path, 'rb').read())
-    if sha256(new_res) != KNOWN['expected']['main_nav_res_sha256']:
-        raise ValueError('the edited menu movie differs from the verified result')
+    new_bundle, new_res, menu_log, new_root = menu_edits.build(open(menu_path, 'rb').read())
+    if (sha256(new_res) != KNOWN['expected']['main_nav_res_sha256']
+            or sha256(new_root) != KNOWN['expected'].get('main_root_res_sha256')):
+        raise ValueError('the edited menu movies differ from the verified result')
     cfg_path = safe_join(title, config_edits.ARCHIVE)
     new_cfg, settings, cfg_log = config_edits.build(open(cfg_path, 'rb').read())
     if sha256(settings) != KNOWN['expected']['game_settings_cfg_sha256']:
         raise ValueError('the edited GameSettings.cfg differs from the verified result')
-    for rel, data, changes in ((menu_edits.BUNDLE, new_bundle, menu_log), (config_edits.ARCHIVE, new_cfg, cfg_log)):
+    say('    and the in-game menu: CHOOSE YOUR SIDE before the first deploy'
+        if not args.experiment_team else f'    experiment: the deploy screen asks for team {args.experiment_team}')
+    igm_path = safe_join(title, igm_edits.BUNDLE)
+    new_igm, new_igm_res, igm_log = igm_edits.build(open(igm_path, 'rb').read(), args.experiment_team)
+    if not args.experiment_team and sha256(new_igm_res) != KNOWN['expected']['igm_mp_cq_res_sha256']:
+        raise ValueError('the edited in-game menu differs from the verified result')
+    edited = [(menu_edits.BUNDLE, new_bundle, menu_log), (config_edits.ARCHIVE, new_cfg, cfg_log),
+              (igm_edits.BUNDLE, new_igm, igm_log)]
+    for rel, data, changes in edited:
         path = safe_join(title, rel)
         with open(path, 'wb') as f:
             f.write(data)
@@ -165,7 +178,8 @@ def build(args):
                     package=os.path.abspath(args.package), package_sha256=package_hash,
                     xenia=os.path.abspath(args.xenia), xenia_sha256=KNOWN['xenia']['exe_sha256'],
                     netfix=fixed_path, netfix_sha256=sha256(fixed), netfix_changes=fix_log,
-                    patch=patch_dst, patch_sha256=KNOWN['patch']['sha256'], title=title, edits=replaced)
+                    patch=patch_dst, patch_sha256=KNOWN['patch']['sha256'], title=title, edits=replaced,
+                    experiment_team=args.experiment_team)
     with open(os.path.join(out, 'kit-manifest.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(manifest, f, indent=1)
     write_launcher(out, manifest, args.gpu)
@@ -178,9 +192,9 @@ def launch_args(manifest, gpu):
 
 def write_launcher(out, manifest, gpu):
     cmd = ' '.join(f'"{a}"' if ' ' in a or a.endswith('.exe') or a.endswith('.xex') else a for a in launch_args(manifest, gpu))
-    with open(os.path.join(out, 'launch.cmd'), 'w', encoding='utf-8', newline='\r\n') as f:
-        f.write('@echo off\r\nrem Made by bf1943-xenia-kit: Battlefield 1943 in Xenia with offline Quick Match.\r\n'
-                f'cd /d "{os.path.dirname(manifest["netfix"])}"\r\nstart "" {cmd}\r\n')
+    with open(os.path.join(out, 'launch.cmd'), 'w', encoding='utf-8', newline='\r\n') as f:  # each '\n' written as CRLF
+        f.write('@echo off\nrem Made by bf1943-xenia-kit: Battlefield 1943 in Xenia, offline with Local Match.\n'
+                f'cd /d "{os.path.dirname(manifest["netfix"])}"\nstart "" {cmd}\n')
 
 
 def load(out):
@@ -219,6 +233,7 @@ def main(argv):
     b.add_argument('package')
     b.add_argument('xenia')
     b.add_argument('--replace-patch', action='store_true')
+    b.add_argument('--experiment-team', type=int, choices=[1, 2], help='experiment: the deploy screen requests this team')
     for s in (b, sub.add_parser('verify'), sub.add_parser('launch')):
         s.add_argument('--out', default=DEFAULT_OUT)
         s.add_argument('--gpu', default='vulkan', choices=['vulkan', 'd3d12'])

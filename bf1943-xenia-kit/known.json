@@ -471,7 +471,9 @@
   "sha256": "da5b37330c3d48660f083d594f6c2c7b2f93cbc89476b4f7773dd825944a745a"
  },
  "expected": {
-  "main_nav_res_sha256": "0dc2b6cd344d6a317ccdd9ced1d6a9f0ab821246010c932cae3bc144cdf92f40",
-  "game_settings_cfg_sha256": "ebaa008b7938da15d0e22cdee1b811dcf1764cf3e1f49731f496f2d8a6191790"
+  "main_nav_res_sha256": "f3f36e69089739f29db0e9c71b185bd0b3a07c66bbdbbe1acf2d1fb52db4c79d",
+  "game_settings_cfg_sha256": "ebaa008b7938da15d0e22cdee1b811dcf1764cf3e1f49731f496f2d8a6191790",
+  "main_root_res_sha256": "d116defce391f9803a1e4d55c6b55053322b7e47db34af316215686fcb044ac8",
+  "igm_mp_cq_res_sha256": "c2ee07c4de07b77f453018dd761b1e154088171a7fc0fc87ede34b01dd08a830"
  }
 }

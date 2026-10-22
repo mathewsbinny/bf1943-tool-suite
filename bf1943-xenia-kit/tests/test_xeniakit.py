@@ -118,8 +118,9 @@ def full_build():
         r = subprocess.run(py + ['verify', '--out', tmp], capture_output=True, text=True)
         check(r.returncode == 0, 'verify accepts the fresh build')
         m = json.load(open(os.path.join(tmp, 'title', 'title-manifest.json'), encoding='utf-8'))
-        check(sorted(f['path'] for f in m['files'] if f['replaced']) == ['dist/xenon/config.zz', 'dist/xenon/menu/main/mainmenu-00.fbrb'],
-              'exactly the menu bundle and config.zz are edited')
+        check(sorted(f['path'] for f in m['files'] if f['replaced']) == ['dist/xenon/config.zz', 'dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb',
+                                                                         'dist/xenon/menu/main/mainmenu-00.fbrb'],
+              'exactly the main menu, in-game menu and config.zz are edited')
         with open(os.path.join(tmp, 'title', 'default.xex'), 'ab') as f:
             f.write(b'x')
         r = subprocess.run(py + ['verify', '--out', tmp], capture_output=True, text=True)

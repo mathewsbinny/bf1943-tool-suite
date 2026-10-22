@@ -160,6 +160,19 @@ class Apt:
         m = self.movie
         return [self.u(self.u(m + 24) + 4 * i) for i in range(self.u(m + 20))]
 
+    def imports(self):
+        """(movie, symbol, character id) for each import (count at movie +40, table at +44, 16-byte rows)."""
+        m, out = self.movie, []
+        for i in range(self.u(m + 40)):
+            row = self.u(m + 44) + 16 * i
+            out.append((self.s(self.u(row)), self.s(self.u(row + 4)), self.u(row + 8)))
+        return out
+
+    def exports(self):
+        """(symbol, character id) for each export (count at movie +48, table at +52, 8-byte rows)."""
+        m = self.movie
+        return [(self.s(self.u(self.u(m + 52) + 8 * i)), self.u(self.u(m + 52) + 8 * i + 4)) for i in range(self.u(m + 48))]
+
     def frames(self, char):
         """[(frame index, [(item address, item type)])] of a Movie or Sprite character."""
         count, table = self.u(char + 8), self.u(char + 12)
@@ -373,6 +386,8 @@ class Rewriter:
             raise ValueError('a block ends with its only End')
         if any(i.op == 0x8F for i in ins):
             raise ValueError('Try blocks are not rewritten')
+        if len({id(i) for i in ins}) != len(ins):
+            raise ValueError('the block holds one instruction object more than once (build each use fresh)')
         # pass 1: positions (alignment depends on the absolute offset)
         start = self.alloc(b'', 4)
         pc, at = start, {}
@@ -406,7 +421,7 @@ class Rewriter:
             elif layout == 'P':
                 out += struct.pack('>I', self.string(a['string']) if 'ptr' not in a else a['ptr'])
             elif layout == 'PP':
-                out += struct.pack('>II', *a['ptrs'])
+                out += struct.pack('>II', *(a['ptrs'] if 'ptrs' in a else [self.string(s) for s in a['strings']]))
             elif layout == 'F':
                 out += a['raw'] if 'raw' in a else struct.pack('>f', a['value'])
             elif layout == 'B':
