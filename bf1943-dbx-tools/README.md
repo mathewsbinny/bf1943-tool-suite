@@ -1,4 +1,10 @@
-# DBX tools
+# BF1943 DBX tools (DbxEdit)
+
+Part of the BF1943 Tool Suite. **BF1943 status: not adapted yet** - this is OPFOR's BFBC2 DbxEdit, and
+everything below describes it on BFBC2 data. BF1943 uses the same binary DBX format (operation-rising-sun
+`research/BFBC2_LEVEL_COMPARISON.md`), and the suite's Python reader (`core/bfbc2core/dbx.py`, written from
+[FORMAT.md](FORMAT.md)) already reads BF1943 level partitions for the spawn map, but DbxEdit itself is not
+tested on BF1943 files, and its level checks (`check`, `fixslots`) are BFBC2 rules.
 
 **DbxEdit** reads, converts, checks and edits Battlefield: Bad Company 2's binary `.dbx` files (Frostbite 1
 data as a tokenised XML tree), from the command line or in a window (**DbxEditGUI**). The format is the
@@ -141,25 +147,12 @@ memory) and what to do - with the log's path: on the command line with exit code
 
 ## Tests
 
-```
-tests\run_tests.bat                          unit tests: small files built in memory, no game data needed
-tests\run_tests.bat <unpacked folder> [...]  + every binary .dbx in the folders, and the fingerprints
-```
+None in this suite yet: DbxEdit's tests were BFBC2's (its unit tests, the PC game's files and their fingerprints)
+and were removed with the suite's other BFBC2 tests. BF1943's `.dbx` partitions are checked by the Python reader
+(`tests\test_bf1943_data.py dbx`); DbxEdit gets BF1943 tests when it is adapted. The original tests are in OPFOR's
+`bfbc2-tool-suite` and in this repository's history.
 
-- **Unit tests** cover the format, the XML export and import (including the XML reader's handling of
-  duplicate attributes, entities, CDATA and line breaks), every edit command, the level check, the slot
-  fixer, the command line (messages and exit codes) and the window.
-- **With game folders** (FbrbTool-unpacked bundles), every binary file must:
-  - round-trip byte for byte;
-  - come back exactly through `xml`, then `import`;
-  - take simulated edits exactly, with every type kept;
-  - without the original file, differ only where a guess was reported.
-- **Fingerprints:** `tests\fingerprints_795745.txt` holds SHA-1s of the XML output and of edit-command
-  results (output file, messages, exit code) for the PC game's files. They were recorded with the version
-  proven identical to the earlier tools, so any later change in behaviour shows up. The file holds only
-  hashes, no game data. Files you don't have are skipped.
-
-## Tested
+## Tested (BFBC2, in OPFOR)
 
 On 43,290 unique `.dbx` files (PC, Xbox 360 and Linux server data, plus edited levels):
 

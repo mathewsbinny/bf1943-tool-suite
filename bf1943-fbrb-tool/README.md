@@ -1,7 +1,12 @@
-# FbrbTool
+# BF1943 bundle tools: fbrb1943.py and FbrbTool
 
-A command-line tool to unpack and repack Battlefield: Bad Company 2's `.fbrb` bundles (Frostbite 1
-archives: the game's levels, menus and shared data).
+Part of the BF1943 Tool Suite. **BF1943 status: ready for BF1943 bundles through `fbrb1943.py`** (see
+[BF1943 bundles](#bf1943-bundles-python) below; used by the Xenia kit, the spawn map and NavKit's big-endian
+variant). `FbrbTool.exe` is OPFOR's BFBC2 tool, not adapted yet: it reads Battlefield: Bad Company 2's PC
+`.fbrb` bundles and is not tested on BF1943's Xenon bundles.
+
+**FbrbTool** is a command-line tool to unpack and repack Battlefield: Bad Company 2's `.fbrb` bundles
+(Frostbite 1 archives: the game's levels, menus and shared data). The counts below are BFBC2's.
 
 ## Build
 

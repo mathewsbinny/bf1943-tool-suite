@@ -1,8 +1,12 @@
-# Console readers
+# BF1943 console readers
 
-Read-only Python readers for Xbox 360 data. Use them to take Battlefield: Bad Company 2 content from your
-own console discs and downloads. Both only read standard file-system structures: there is no
-decryption, and no keys are involved.
+Part of the BF1943 Tool Suite. **BF1943 status: ready** - the STFS reader extracts your own BF1943 (XBLA)
+content package; `bf1943-xenia-kit` uses it (`stfs.Package`). The disc image reader is for discs such as
+BFBC2's (BF1943 is download-only) and has no tests here; the examples below use BFBC2's files.
+
+Read-only Python readers for Xbox 360 data: content packages and game disc images, from your own console
+downloads and discs. Both only read standard file-system structures: there is no decryption, and no keys
+are involved.
 
 | Folder | Reads | Commands |
 |---|---|---|
@@ -20,7 +24,8 @@ python stfs\stfs.py extract "D:\Update3" out levels/ons_mp_008
 
 Both readers keep a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools; on an error
 they print the cause, what to do and the log's path (exit code 1). Tests: `tests\test_console_readers.py`
-(built images in the quick tier; with your Xbox 360 files in the game tier).
+(the STFS reader on packages it builds, quick tier); your own BF1943 package is read by the Xenia kit's full
+build test (bf1943 tier).
 
 Format notes are in each script's header (STFS follows the public Free60 documentation).
 

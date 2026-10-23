@@ -1,4 +1,6 @@
-# bf1943-spawn-map
+# BF1943 spawn map (bf1943-spawn-map)
+
+Part of the BF1943 Tool Suite. **BF1943 status: ready** - a new BF1943 tool; it reads BF1943's Xbox 360 level bundles (from the Xenia kit's extracted copy) through `fbrb1943.py` and `core/bfbc2core/dbx.py`.
 
 Lists each BF1943 level's objectives (the two bases and the flags) with the soldier and vehicle spawns each one owns, read from the level's own data. Bots use it to choose where to spawn and what to attack or defend.
 

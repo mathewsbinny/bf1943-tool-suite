@@ -1,4 +1,4 @@
-"""BFBC2 Tool Suite - one window for every tool (double-click to start; needs Python 3 with numpy, and for the 3D
+"""BF1943 Tool Suite - one window for every tool (double-click to start; needs Python 3 with numpy, and for the 3D
 tools moderngl, glfw and imgui-bundle).
 
 Tabs: Levels (open a level in the Map Inspector or the Navigation Studio), Bundles (FbrbTool), Level diff
@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 SUITE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit'))
+sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian'))
 sys.path.insert(0, os.path.join(SUITE, 'core'))
 from bfbc2core import errors  # noqa: E402
 
@@ -38,8 +38,8 @@ TOOLS = {
 SCRIPTS = {
     'inspector': os.path.join(SUITE, 'bf1943-map-inspector', 'inspector.py'),
     'studio': os.path.join(SUITE, 'bf1943-navigation-studio', 'studio.py'),
-    'navkit': os.path.join(SUITE, 'bf1943-auto-navkit', 'navkit.py'),
-    'navkitgui': os.path.join(SUITE, 'bf1943-auto-navkit', 'navkitGUI.pyw'),
+    'navkit': os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'navkit.py'),
+    'navkitgui': os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'navkitGUI.pyw'),
     'crash': os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'crash-reader', 'crashreader.py'),
     'stfs': os.path.join(SUITE, 'bf1943-console-readers', 'stfs', 'stfs.py'),
     'xiso': os.path.join(SUITE, 'bf1943-console-readers', 'xiso', 'xiso.py'),
@@ -64,7 +64,7 @@ class Hub:
         self.root = root
         self.lines = queue.Queue()
         self.proc = None                       # the tab's running tool (one at a time)
-        root.title('BFBC2 Tool Suite')
+        root.title('BF1943 Tool Suite')
         root.minsize(900, 640)
         try:
             ttk.Style().theme_use('vista')
@@ -122,14 +122,14 @@ class Hub:
         lines = '\n'.join(f'  {n} - for {used}' for n, used in missing)
         errors.warn(f'libraries not installed: {", ".join(n for n, _ in missing)}')
         self.write(f'Missing libraries:\n{lines}\nInstall them with: pip install {pip}\n')
-        self.notify('warning', 'BFBC2 Tool Suite', f'Some libraries the tools use are not installed:\n\n{lines}\n\n'
+        self.notify('warning', 'BF1943 Tool Suite', f'Some libraries the tools use are not installed:\n\n{lines}\n\n'
                                                    f'Install them with:\npip install {pip}')
 
     # --- running tools ------------------------------------------------------------------------------
     def run(self, args, label, cwd=None):
         """One tool in the background (the tab's), its output streamed to the pane."""
         if self.proc is not None and self.proc.poll() is None:
-            messagebox.showinfo('BFBC2 Tool Suite', 'A tool is still running - wait for it or press Stop.')
+            messagebox.showinfo('BF1943 Tool Suite', 'A tool is still running - wait for it or press Stop.')
             return
         self.write(f'\n> {label}\n')
         errors.logger().info(f'run: {label}: {subprocess.list2cmdline([str(a) for a in args])}')
@@ -227,7 +227,7 @@ class Hub:
             self.write(f'{label} closed with an error - see its message, and the log for details.\n')
             return
         said = '\n'.join(tail[-8:]) or '(no output)'
-        self.notify('warning', 'BFBC2 Tool Suite', f'{label} did not finish (exit code {code}).\n\nIt said last:\n{said}\n\n'
+        self.notify('warning', 'BF1943 Tool Suite', f'{label} did not finish (exit code {code}).\n\nIt said last:\n{said}\n\n'
                                                    f'The whole output is in the pane below; the suite\'s log:\n{errors._state.get("path")}')
 
     def stop(self):
@@ -267,7 +267,7 @@ class Hub:
     def need(*values):
         missing = [name for name, v in values if not v.get().strip()]
         if missing:
-            messagebox.showwarning('BFBC2 Tool Suite', 'Choose ' + ' and '.join(missing) + ' first.')
+            messagebox.showwarning('BF1943 Tool Suite', 'Choose ' + ' and '.join(missing) + ' first.')
             return False
         return True
 
@@ -326,7 +326,7 @@ class Hub:
     def chosen_level(self):
         sel = self.tree.selection()
         if not sel or self.pr is None:
-            messagebox.showinfo('BFBC2 Tool Suite', 'Choose a level in the list first.')
+            messagebox.showinfo('BF1943 Tool Suite', 'Choose a level in the list first.')
             return None
         return sel[0]
 

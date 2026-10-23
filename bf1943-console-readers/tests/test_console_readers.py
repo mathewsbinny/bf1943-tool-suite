@@ -1,37 +1,21 @@
-r"""The console readers on images built here:
+r"""The STFS reader (stfs.py) on packages built here: both kinds (read-only: one hash table per level; others:
+two), with a consecutive file, a fragmented file (hash-entry chain), a folder; info, list and extract, with a
+filter. Your own BF1943 package is read by the Xenia kit's full build test (run_tests.py bf1943).
 
-- xiso.py: XDVDFS discs with the partition at offset 0 and at the XGD3 offset; a directory tree (binary
-  tree entries, a nested folder, an empty folder); list and extract, with a filter; no volume found;
-- stfs.py: STFS packages of both kinds (read-only: one hash table per level; others: two), with a
-  consecutive file, a fragmented file (hash-entry chain), a folder; info, list and extract, with a filter.
-
-With --game, also the user's own Xbox 360 files when they are on this PC (else skipped): the disc image
-(the XGD2 game partition, default.xex) and the three Update packages: Onslaught path data from Update #2
-and #3 identical, of the documented size, and identical to Napisal's PC files where the game copy has
-them - an independent check of the block mapping in large packages (level-1 hash tables).
-
-  python test_console_readers.py [--game] [--xbox <folder>]
+  python test_console_readers.py
 """
 import contextlib
-import hashlib
 import io
 import os
 import shutil
 import struct
-import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..'))
-SUITE = os.path.abspath(os.path.join(ROOT, '..'))
 sys.path.insert(0, os.path.join(ROOT, 'stfs'))
-sys.path.insert(0, os.path.join(ROOT, 'xiso'))
 import stfs  # noqa: E402
-import xiso  # noqa: E402
-
-XBOX_DEFAULT = r'C:\Games\Battlefield Bad Company 2 Limited Edition (XBOX 360)'
-SECTOR = 2048
 
 
 class Checks:
@@ -41,64 +25,6 @@ class Checks:
     def check(self, ok, what, detail=''):
         self.failed += not ok
         print(f'{"ok  " if ok else "FAIL"} {what}' + (f'  ({detail})' if detail and not ok else ''))
-
-
-# ------------------------------------------------------------------------------------------------ XDVDFS
-
-def dir_table(entries):
-    """A directory table: entries (name, sector, size, attr) as a binary tree, root node first."""
-    entries = sorted(entries, key=lambda e: e[0].lower())
-    order, links = [], {}
-
-    def place(lo, hi):
-        if lo >= hi:
-            return None
-        mid = (lo + hi) // 2
-        k = len(order)
-        order.append(entries[mid])
-        left = place(lo, mid)
-        right = place(mid + 1, hi)
-        links[k] = (left, right)
-        return k
-
-    place(0, len(entries))
-    offsets, pos = [], 0
-    for name, *_ in order:
-        offsets.append(pos)
-        pos += (14 + len(name) + 3) & ~3
-    out = bytearray()
-    for k, (name, sec, size, attr) in enumerate(order):
-        left, right = links[k]
-        e = struct.pack('<HHIIBB', offsets[left] // 4 if left is not None else 0, offsets[right] // 4 if right is not None else 0,
-                        sec, size, attr, len(name)) + name.encode('latin-1')
-        out += e + b'\xff' * (((len(e) + 3) & ~3) - len(e))
-    return bytes(out)
-
-
-def build_xiso(path, base):
-    """Root: default.xex, Levels/MP_005/level-00.fbrb, Levels/readme.txt, Empty/ (size 0)."""
-    data = {'default.xex': os.urandom(3000), 'Levels/MP_005/level-00.fbrb': os.urandom(5000), 'Levels/readme.txt': b'hello'}
-    sectors = {'default.xex': 40, 'Levels/MP_005/level-00.fbrb': 42, 'Levels/readme.txt': 46}
-    mp = dir_table([('level-00.fbrb', 42, 5000, 0x80)])
-    levels = dir_table([('MP_005', 35, len(mp), 0x10), ('readme.txt', 46, 5, 0x80)])
-    root = dir_table([('default.xex', 40, 3000, 0x80), ('Levels', 34, len(levels), 0x10), ('Empty', 0, 0, 0x10)])
-    with open(path, 'wb') as f:
-        def at(sector, blob):
-            f.seek(base + sector * SECTOR)
-            f.write(blob)
-        at(32, xiso.MAGIC + struct.pack('<II', 33, len(root)))
-        at(33, root)
-        at(34, levels)
-        at(35, mp)
-        for name, s in sectors.items():
-            at(s, data[name])
-        f.seek(base + 48 * SECTOR - 1)
-        f.write(b'\0')
-    return data
-
-
-def xiso_cli(*args):
-    return subprocess.run([sys.executable, os.path.join(ROOT, 'xiso', 'xiso.py'), *args], capture_output=True, text=True)
 
 
 # ------------------------------------------------------------------------------------------------ STFS
@@ -156,105 +82,10 @@ def stfs_cli(*args):
     return code, buf.getvalue()
 
 
-# ------------------------------------------------------------------------------------------------ user files
-
-def sha(path):
-    return hashlib.sha1(open(path, 'rb').read()).hexdigest()
-
-
-def game_checks(c, xbox):
-    iso = os.path.join(xbox, 'Battlefield Bad Company 2 Limited Edition (XBOX 360).iso')
-    if os.path.isfile(iso):
-        with open(iso, 'rb') as f:
-            base = xiso.find_partition(f)
-            f.seek(base + 32 * SECTOR + 20)
-            root_sec, root_size = struct.unpack('<II', f.read(8))
-            files = list(xiso.walk(f, base, root_sec, root_size))
-        c.check(base == 0xFD90000, 'disc image: the XGD2 game partition at 0xFD90000')
-        names = {p.lower() for p, _, _ in files}
-        c.check(len(files) == 693 and 'default.xex' in names, f'disc image: all 693 files listed, default.xex among them',
-                f'{len(files)} files')
-    else:
-        print(f'skip disc image (not found: {iso})')
-    folder = os.path.join(xbox, 'Battlefield Bad Company 2 (3 DLCs Pack prototype)', '454108A8', '00000002')
-    if not os.path.isdir(folder):
-        print(f'skip Update packages (not found: {folder})')
-        return
-    pkgs = {}
-    for f in sorted(os.listdir(folder)):
-        try:
-            p = stfs.Package(os.path.join(folder, f))
-        except Exception as e:
-            c.check(False, f'package {f} opens', str(e))
-            continue
-        pkgs[p.name] = p
-    c.check(all(p.magic == b'LIVE' for p in pkgs.values()) and len(pkgs) == 3, f'three LIVE packages: {sorted(pkgs)}')
-    u2 = next((p for n, p in pkgs.items() if n.endswith('Update #2')), None)
-    u3 = next((p for n, p in pkgs.items() if n.endswith('Update #3')), None)
-    if not (u2 and u3):
-        c.check(False, 'Update #2 and #3 found by name')
-        return
-    work = tempfile.mkdtemp(prefix='stfs_game_')
-    try:
-        want = 'ai/levels/ons_mp_008/infantry/pathdata.hpd'
-        got = {}
-        for label, p in (('2', u2), ('3', u3)):
-            e = next((x for x in p.entries if x['path'].lower().endswith(want)), None)
-            if e is None:
-                c.check(False, f'Update #{label} has {want}')
-                continue
-            out = os.path.join(work, f'u{label}.hpd')
-            open(out, 'wb').write(p.read(e))
-            got[label] = out
-        if len(got) == 2:
-            c.check(os.path.getsize(got['3']) == 1872532, 'Nelson Bay infantry path data: 1,872,532 bytes, as documented')
-            c.check(sha(got['2']) == sha(got['3']), 'Update #2 and #3 give the same Nelson Bay path data')
-            sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit', 'tools'))
-            import hpdtool
-            data = open(got['3'], 'rb').read()
-            c.check(hpdtool.write(hpdtool.parse(data)) == data, 'it is valid path data (hpdtool reads and writes it back exactly)')
-        sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit'))
-        import navkit
-        game = os.path.join(navkit.find_opfor(None), 'game', 'Output', 'win32', 'ai', 'levels')
-        compared = 0
-        for lv in ('ons_mp_002', 'ons_mp_004'):
-            pc = os.path.join(game, lv, 'infantry', 'pathdata.hpd')
-            e = next((x for x in u3.entries if x['path'].lower().endswith(f'ai/levels/{lv}/infantry/pathdata.hpd')), None)
-            if os.path.isfile(pc) and e is not None:
-                compared += 1
-                c.check(hashlib.sha1(u3.read(e)).hexdigest() == sha(pc), f'{lv}: Update #3 path data identical to Napisal\'s PC file')
-        if not compared:
-            print('skip comparison with Napisal\'s PC files (not installed in the game copy)')
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
 def main(argv):
     c = Checks()
     work = tempfile.mkdtemp(prefix='console_test_')
     try:
-        for base, label in ((0, 'plain image'), (0x2080000, 'XGD3 offset')):
-            iso = os.path.join(work, f'disc_{base:x}.iso')
-            data = build_xiso(iso, base)
-            with open(iso, 'rb') as f:
-                c.check(xiso.find_partition(f) == base, f'xiso: partition found ({label})')
-            r = xiso_cli('list', iso)
-            listed = {l.split(None, 1)[1]: int(l.split(None, 1)[0]) for l in r.stdout.splitlines()[1:] if l.strip()}
-            c.check(listed == {k: len(v) for k, v in data.items()}, f'xiso: list - every file with its size, nested and empty folders ({label})',
-                    str(listed))
-            out = os.path.join(work, f'x_{base:x}')
-            xiso_cli('extract', iso, out)
-            same = all(open(os.path.join(out, *k.split('/')), 'rb').read() == v for k, v in data.items())
-            c.check(same, f'xiso: extract - every file\'s bytes ({label})')
-        out = os.path.join(work, 'filtered')
-        r = xiso_cli('extract', iso, out, 'readme')
-        c.check(r.returncode == 0 and 'extracted 1 files' in r.stdout and os.path.isfile(os.path.join(out, 'Levels', 'readme.txt')),
-                'xiso: extract with a filter')
-        blank = os.path.join(work, 'blank.iso')
-        open(blank, 'wb').write(b'\0' * (40 * SECTOR))
-        r = xiso_cli('list', blank)
-        c.check(r.returncode != 0 and 'no XDVDFS volume' in (r.stdout + r.stderr), 'xiso: an image without a volume is refused')
-
         for read_only in (True, False):
             label = 'read-only package' if read_only else 'package with two hash tables'
             path = os.path.join(work, f'pkg_{int(read_only)}')
@@ -273,10 +104,6 @@ def main(argv):
             c.check(all(open(os.path.join(dest, *k.split('/')), 'rb').read() == v for k, v in files.items()), f'stfs: extract ({label})')
             code, out = stfs_cli('info', path)
             c.check(code == 0 and '4 entries' in out, f'stfs: info ({label})')
-
-        if '--game' in argv:
-            xbox = argv[argv.index('--xbox') + 1] if '--xbox' in argv else XBOX_DEFAULT
-            game_checks(c, xbox)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print('all passed' if not c.failed else f'{c.failed} check(s) failed')

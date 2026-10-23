@@ -1,5 +1,7 @@
 # BF1943 APT tools
 
+Part of the BF1943 Tool Suite. **BF1943 status: ready** - reads BF1943's own menu movies; the Xenia kit uses it for its menu edits.
+
 Reader, disassembler and block rewriter for BF1943's menu movies (`Menu/*.res`: BIGF archives of EA APT, big-endian Xbox 360).
 
 `apt.py` provides:

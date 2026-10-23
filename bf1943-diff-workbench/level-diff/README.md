@@ -1,4 +1,7 @@
-# LevelDiff
+# LevelDiff (BF1943 Tool Suite, diff workbench)
+
+**BF1943 status: not adapted yet** - OPFOR's BFBC2 tool; it reads BFBC2 `.dbx` files through DbxEdit's code and
+is not tested on BF1943's (which use the same binary DBX format). Everything below describes it on BFBC2 data.
 
 Compares two Battlefield: Bad Company 2 binary `.dbx` files instance by instance: what was added, what was
 removed, and which fields changed. It works on levels and on any other partition. Typical uses:
@@ -49,7 +52,7 @@ ReferenceObjectData    C3A93730-7A4B-488D-A41A-8ACE4F7D3695
 
 LevelDiff keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools (`ToolLog`, shared
 with DbxEdit). When it cannot do something it prints the cause, what to do and the log's path, and exits with
-code 1. Tests: `tests\test_leveldiff.py` (quick and game tiers of the suite's `run_tests.py`).
+code 1. Tests: none here yet (its tests were on BFBC2 levels and were removed; it gets BF1943 tests when adapted).
 
 ## Credits
 

@@ -1,0 +1,6 @@
+# Private Kynapse research notes (never published)
+research/kynapse mapbuilder research/
+
+# Python caches
+__pycache__/
+*.pyc

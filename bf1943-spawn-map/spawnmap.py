@@ -124,7 +124,11 @@ def spawn_map(game, level):
     objectives.sort(key=lambda o: (o['role'] != 'base', int(o['index'] or 0)))
     unowned = [soldier_spawn(e, by_guid) for e in f.instances
                if kind(e) == 'SoldierSpawnEntityData' and (e.attr('guid') or '').lower() not in owned]
-    return dict(level=level, bundle=bundle, objectives=objectives, unowned_soldier_spawns=unowned)
+    # vehicles no objective owns (e.g. the carriers' own boats and planes): their team is their spawn's
+    vehicles = [vehicle_spawn(e) for e in f.instances
+                if kind(e) == 'VehicleSpawnEntityData' and (e.attr('guid') or '').lower() not in owned]
+    return dict(level=level, bundle=bundle, objectives=objectives, unowned_soldier_spawns=unowned,
+                unowned_vehicle_spawns=vehicles)
 
 
 def show(m):
@@ -142,6 +146,8 @@ def show(m):
             for v in vehicles:
                 counts[v['vehicle']] = counts.get(v['vehicle'], 0) + 1
             print('       vehicles: ' + ', '.join(f'{n} x{c}' for n, c in sorted(counts.items())))
+    for v in m['unowned_vehicle_spawns']:
+        print(f'  (no objective) vehicle {v["vehicle"]:24} {v["team"] or "-":12} at {v["position"]}')
     for s in m['unowned_soldier_spawns']:
         print(f'  (no objective) soldier spawn {s["name"] or "-"} {s["team"]} {s["player_type"]} enabled {s["enabled"]}'
               f' at {s["position"]}')
@@ -168,4 +174,7 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+    from bfbc2core import errors
+    errors.setup('spawnmap', gui=False)
+    with errors.guard():
+        sys.exit(main(sys.argv))

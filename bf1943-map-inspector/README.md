@@ -1,9 +1,13 @@
-# bf1943-map-inspector
+# BF1943 Map Inspector (bf1943-map-inspector)
+
+Part of the BF1943 Tool Suite. **BF1943 status: not adapted yet** - it still opens BFBC2 levels from
+Project OPFOR's game copy (through `core/bfbc2core/level.py` and NavKit's `prepare` step), and everything below
+describes it on BFBC2 data. It does not open BF1943 levels yet.
 
 Browse a Battlefield: Bad Company 2 level in 3D and inspect every object: where it is, what it is, which
 file it comes from, its full property tree, and how it links to other objects.
 
-**Opening it:** in the suite window (`BFBC2 Tool Suite.pyw`), Levels tab: choose a level, then **Open in Map
+**Opening it:** in the suite window (`BF1943 Tool Suite.pyw`), Levels tab: choose a level, then **Open in Map
 Inspector** (or double-click the level). Or double-click `inspector.py` here: a level picker opens. Or from
 a command line:
 

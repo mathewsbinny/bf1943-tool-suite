@@ -1,10 +1,15 @@
-# bf1943-navigation-studio
+# BF1943 Navigation Studio (bf1943-navigation-studio)
+
+Part of the BF1943 Tool Suite. **BF1943 status: not adapted yet** - it still shows BFBC2 levels from Project
+OPFOR's game copy with BFBC2's Kynapse path data (`pathdata.hpd`, DICE's and the little-endian NavKit's builds);
+everything below, including the measurements, is on BFBC2 data. BF1943 ships no path data, and its bots will use
+our own navigation graph exported from NavKit's builder, which the studio cannot show yet.
 
 View a level's AI navigation data (Kynapse `pathdata.hpd`) in 3D: NavKit's build and DICE's original
 side by side, over the level's terrain, water and objects. Milestone M3 (viewing); editing, the path test
-and side files are M4 (`../DESIGN.md` sections 4.2 and 5).
+and side files are M4 (OPFOR's [DESIGN.md](../docs/opfor-bfbc2/DESIGN.md) sections 4.2 and 5).
 
-**Opening it:** in the suite window (`BFBC2 Tool Suite.pyw`), Levels tab: choose a level, then **Open in
+**Opening it:** in the suite window (`BF1943 Tool Suite.pyw`), Levels tab: choose a level, then **Open in
 Navigation Studio** (optionally with a NavKit file of your choice). Or double-click `studio.py` here: a level
 picker opens. Or from a command line:
 
@@ -46,7 +51,7 @@ button that flies there), or that no route node is within 15 m of a point. It pl
 game also smooths routes through the areas. (`core/bfbc2core/navpath.py`; `--path "x,y,z;x,y,z"` for tests.)
 
 **Edit mode (E, milestone M4 step 2).** Draw edits on the level; they are kept in a side file,
-`work\navkit\<level>\<level>.navtune.json` (format: `../DESIGN.md` section 5.1; `core/bfbc2core/navtune.py`).
+`work\navkit\<level>\<level>.navtune.json` (format: OPFOR's `../docs/opfor-bfbc2/DESIGN.md` section 5.1; `core/bfbc2core/navtune.py`).
 Tools: walkable or unwalkable region (click an outline and press Enter, or click two corners of a box; the
 height range runs from 2 m below to 4 m above the clicked points, adjustable), seed, unseed, link two areas,
 add or remove a route edge (two points), traversal (ladder, jump, vault or drop, one- or two-way: the
@@ -98,7 +103,10 @@ same floor (magenta dots). The orders and spawns are the level's own (read from 
 writes `work\navstudio\<level>_anomalies.json`, per anomaly its class, position and value (island size, cell
 count, distance); headless: `python overlay.py <level> --anomalies`. Read the counts against DICE's own file, not as
 absolutes: on the campaign levels DICE's working data has as many orders and spawns without a nearby node as
-NavKit's (first use, below) - AreaOrder positions are area volumes, not always walkable points.
+NavKit's (first use, below) - AreaOrder positions are area volumes, not always walkable points. To count DICE's
+file the same way, pass it as the candidate (`--anomalies --candidate <DICE's pathdata.hpd>`). All 15 levels with
+DICE path data, NavKit's builds of 2026-10-22 (DICE / NavKit): spawns on small islands 147 / 72, orders without a
+node 768 / 686, sliver areas 77,996 / 62,708, lonely nodes 5,081 / 10,011, islands under 25 nodes 5,684 / 6,390.
 
 **First use (2026-10-21).** Napisal's ONS_MP_002 and DICE's Xbox ONS_MP_002 drawn on stock MP_002:
 - none of Napisal's 28 enabled AI spawners lies within 3 m of a DICE console spawner (nearest 6.1-108.5 m, median

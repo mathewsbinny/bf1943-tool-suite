@@ -5,8 +5,9 @@ level's terrain-00.fbrb).
     hf.height(x, z)            # world height, grid squares split as the game splits them
     vertices, triangles = hf.mesh(stride=2)
 
-Layout (all little-endian; checked against the in-game terrain samples of 13 campaign levels, see DESIGN.md
-"Terrain height field"):
+Layout (little-endian on BFBC2 PC, checked against the in-game terrain samples of 13 campaign levels, see DESIGN.md
+"Terrain height field"; big-endian on BF1943 Xbox 360, detected from the size field, checked against Wake Island's
+spawn points 2026-10-23):
 
     0x00  6 x f32      world bounds: min x, min y, min z, max x, max y, max z
     0x18  u32          size: samples per side (1024 or 2048)
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 import numpy as np
 
 HEADER = struct.Struct('<6f6IB')
+HEADER_BE = struct.Struct('>6f6IB')
 
 
 @dataclass
@@ -65,12 +67,18 @@ class Heightfield:
 
 
 def read(path):
-    data = open(path, 'rb').read()
-    f = HEADER.unpack_from(data, 0)
+    data = open(path, 'rb').read() if isinstance(path, str) else bytes(path)
+    # the byte order whose samples-per-side is a power of two and whose heights fit in the file (the other order
+    # reads a size hundreds of times larger)
+    def fits(e):
+        n = struct.unpack_from(e + 'I', data, 0x18)[0]
+        return 0 < n <= 0x8000 and not n & (n - 1) and HEADER.size + 2 * n * n <= len(data)
+    little = fits('<') or not fits('>')
+    f = (HEADER if little else HEADER_BE).unpack_from(data, 0)
     lo, hi, size = np.array(f[0:3]), np.array(f[3:6]), f[6]
     if size <= 0 or size & (size - 1) or HEADER.size + 2 * size * size > len(data):
-        raise ValueError(f'{path}: not a TerrainHeightfield (size {size})')
-    raw = np.frombuffer(data, '<u2', size * size, HEADER.size).reshape(size, size)
+        raise ValueError(f'{path if isinstance(path, str) else "data"}: not a TerrainHeightfield (size {size})')
+    raw = np.frombuffer(data, '<u2' if little else '>u2', size * size, HEADER.size).reshape(size, size)
     heights = (lo[1] + raw * ((hi[1] - lo[1]) / 65535.0)).astype(np.float32)
     return Heightfield(lo, hi, size, raw, heights)
 

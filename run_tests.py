@@ -1,18 +1,17 @@
 r"""Runs the suite's tests: one line per test, the failures' output at the end, exit code 1 if any failed.
 
-  python run_tests.py [quick | game | full] [--only <name>] [--list]
+  python run_tests.py [quick | bf1943] [--only <name>] [--list]
 
-  quick   no game data, about a minute: repository rules, DbxEdit unit tests, and on files built by the
-          tests: FbrbTool, LevelDiff, the crash reader, the console readers (needs Windows for the C# tools)
-  game    + Project OPFOR's game copy, about 10 minutes: FbrbTool on 12 game bundles, water on every level,
-          the level loader against its snapshot, terrain against the in-game samples, path-data and mesh
-          round trips, LevelDiff on MP_005, the crash reader's code view on BFBC2Game.exe, the console
-          readers on your own Xbox 360 files (skipped when they are not on the PC), the 3D tools opening a
-          level (needs a display), NavKit's regression test on two small levels
-  full    + the corpus runs, about 90 minutes: DbxEdit and the Python DBX reader on every unpacked .dbx,
-          FbrbTool on all 1,055 bundles, NavKit's regression test on all 13 campaign levels
+Every test is about BF1943 or the tools that work on it; tests for BFBC2 data and for the copied tools not yet
+adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
+  quick   no game data, about a minute: repository rules, error handling, the STFS reader on packages it builds,
+          the Xenia kit's patch file, assembler and bot code, NavKit's builder rules (both variants) and the offline
+          sampler on a made-up level
+  bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), a few minutes: the kit's
+          full build, every BF1943 bundle and DBX partition, terrain and water on every level, the menu movies, the
+          spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit
 
-Run `quick` before every commit and `game` before every push; `full` after changes to a format reader.
+Run `quick` before every commit and `bf1943` before every push.
 """
 import os
 import subprocess
@@ -21,97 +20,68 @@ import time
 
 SUITE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
-TIERS = ['quick', 'game', 'full']
-
-
-def opfor():
-    sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit'))
-    import navkit
-    return navkit.find_opfor(None)
-
-
-def pathdata_files(root):
-    """Every path-data file: the game copy's (with DICE's originals kept as pathdata.hpd.<suffix> where NavKit's
-    is installed) and OPFOR's work folder's (Xbox Onslaught copies, NavKit's own builds)."""
-    out = []
-    for top in (os.path.join(root, 'game', 'Output', 'win32', 'ai'), os.path.join(root, 'work')):
-        for dp, _, fs in os.walk(top):
-            out += [os.path.join(dp, f) for f in fs if f.lower().startswith('pathdata.hpd')]
-    return sorted(out)
+TIERS = ['quick', 'bf1943']
+# what each tier runs: tests are tagged by the data they need, not by how long they take
+SELECT = {'quick': {'quick'}, 'bf1943': {'quick', 'bf1943'}}
 
 
 def tests():
-    """(name, tier, argv). Game paths are only looked up for the tiers that need them."""
-    t = [
+    """(name, tier, argv)."""
+    data = os.path.join(SUITE, 'tests', 'test_bf1943_data.py')
+    return [
         ('repository rules', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_repo.py')]),
-        ('DbxEdit unit tests', 'quick', ['cmd', '/c', os.path.join(SUITE, 'bf1943-dbx-tools', 'tests', 'run_tests.bat')]),
-        ('FbrbTool build', 'quick', ['cmd', '/c', os.path.join(SUITE, 'bf1943-fbrb-tool', 'build.bat')]),
-        ('FbrbTool round trip, built bundle', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_fbrb.py')]),
         ('error handling and logs', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_errors.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
-        ('navigation side files (navtune)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navtune.py')]),
-        ('NavKit water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_water_rule.py')]),
-        ('NavKit walkability edits (navedits)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_navedits.py')]),
-        ('NavKit area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_area_link.py')]),
-        ('NavKit regression progress estimates', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_regress_progress.py')]),
-        ('NavKit boundary diagnostic (navboundary)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_navboundary.py')]),
-        ('NavKit portal symmetry', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_portal_symmetry.py')]),
-        ('NavKit reference extent clip', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_reference_clip.py')]),
-        ('NavKit soldiers absent from path data', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_characters.py')]),
-        ('NavKit headroom band', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_headroom.py')]),
-        ('LevelDiff build', 'quick', ['cmd', '/c', os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'build.bat')]),
-        ('LevelDiff, built levels', 'quick', [PY, os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'tests', 'test_leveldiff.py')]),
-        ('crash reader, built reports', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'crash-reader', 'tests', 'test_crashreader.py')]),
-        ('console readers, built images', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
+        ('STFS reader, built packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
         ('Xenia kit: patch file, port edit, Xenia fix', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py')]),
         ('Xenia kit: PowerPC assembler against capstone', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_ppcasm.py')]),
         ('Xenia kit: bots experiment layout', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py')]),
-        ('Spawn map: every level bases and spawns', 'quick', [PY, os.path.join(SUITE, 'bf1943-spawn-map', 'tests', 'test_spawnmap.py')]),
-        ('LevelDiff on MP_005', 'game', [PY, os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'tests', 'test_leveldiff.py'), '--game']),
-        ('crash reader code view (BFBC2Game.exe)', 'game', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'crash-reader', 'tests', 'test_crashreader.py'), '--game']),
-        ('console readers on your Xbox files', 'game', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py'), '--game']),
-        ('Xenia kit: full build from your BF1943 package', 'game', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py'), '--game']),
-        ('FbrbTool round trip, 12 game bundles', 'game', [PY, os.path.join(SUITE, 'core', 'tests', 'test_fbrb.py'), '--game', '12']),
-        ('water, every level', 'game', [PY, os.path.join(SUITE, 'core', 'tests', 'test_water.py')]),
-        ('level loader snapshot', 'game', [PY, os.path.join(SUITE, 'core', 'tests', 'test_level.py')]),
-        ('terrain against in-game samples', 'game', [PY, os.path.join(SUITE, 'core', 'tests', 'test_terrain.py')]),
-        ('path data round trip (hpdtool)', 'game', lambda root: [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tools', 'hpdtool.py'),
-                                                               'roundtrip', *pathdata_files(root)]),
-        ('navigation mesh round trip (kymesh)', 'game', lambda root: [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tools', 'hpdtool.py'),
-                                                                    'meshtrip', *pathdata_files(root)]),
-        ('navigation data and the path test', 'game', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navdata.py')]),
-        ('NavKit links and route edges', 'game', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_links.py')]),
-        ('traversals, the apply report, installing', 'game', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_traversal.py')]),
-        ('navkit apply with walkability edits', 'game', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tests', 'test_apply.py')]),
-        ('Navigation Studio edit mode', 'game', [PY, os.path.join(SUITE, 'bf1943-navigation-studio', 'tests', 'test_editing.py')]),
-        ('the suite window (hub) and the level picker', 'game', [PY, os.path.join(SUITE, 'tests', 'test_hub.py')]),
-        ('3D tools open and draw (Map Inspector, Navigation Studio)', 'game', [PY, os.path.join(SUITE, 'tests', 'test_viewers.py')]),
-        ('NavKit regression, 2 small levels', 'game', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tools', 'navregress.py'),
-                                                       '--levels', 'sp_004_b,sp_009']),
-        ('NavKit regression, all 13 campaign levels', 'full', [PY, os.path.join(SUITE, 'bf1943-auto-navkit', 'tools', 'navregress.py')]),
-        ('DbxEdit corpus and fingerprints', 'full', lambda root: ['cmd', '/c', os.path.join(SUITE, 'bf1943-dbx-tools', 'tests', 'run_tests.bat'),
-                                                                 os.path.join(root, 'work', 'levels'), os.path.join(root, 'work', 'navkit', 'common')]),
-        ('Python DBX reader against DbxEdit', 'full', lambda root: [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx.py'),
-                                                                   os.path.join(root, 'work', 'levels'), os.path.join(root, 'work', 'navkit', 'common')]),
-        ('FbrbTool round trip, every game bundle', 'full', [PY, os.path.join(SUITE, 'core', 'tests', 'test_fbrb.py'), '--game', '0']),
+        ('NavKit big-endian: offline sampler (made-up level)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_sampler1943.py')]),
+        ('NavKit big-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_water_rule.py')]),
+        ('NavKit big-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navedits.py')]),
+        ('NavKit big-endian: area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_area_link.py')]),
+        ('NavKit big-endian: portal symmetry', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_portal_symmetry.py')]),
+        ('NavKit big-endian: soldiers absent from samples', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_characters.py')]),
+        ('NavKit big-endian: headroom band', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_headroom.py')]),
+        ('NavKit big-endian: 45-degree bridge outlines', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_bridge_union.py')]),
+        ('NavKit big-endian: dynamic props and doors', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_dynamic_props.py')]),
+        ('NavKit big-endian: collision index', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_havok_index.py')]),
+        ('NavKit big-endian: narrow lips and sills', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_lips.py')]),
+        ('NavKit big-endian: roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_roof_prune.py')]),
+        ('NavKit little-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_water_rule.py')]),
+        ('NavKit little-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navedits.py')]),
+        ('NavKit little-endian: area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_area_link.py')]),
+        ('NavKit little-endian: portal symmetry', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_portal_symmetry.py')]),
+        ('NavKit little-endian: soldiers absent from samples', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_characters.py')]),
+        ('NavKit little-endian: headroom band', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_headroom.py')]),
+        ('NavKit little-endian: 45-degree bridge outlines', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_bridge_union.py')]),
+        ('NavKit little-endian: dynamic props and doors', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_dynamic_props.py')]),
+        ('NavKit little-endian: collision index', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_havok_index.py')]),
+        ('NavKit little-endian: narrow lips and sills', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_lips.py')]),
+        ('NavKit little-endian: roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_roof_prune.py')]),
+        ('Xenia kit: full build from your BF1943 package', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py'), '--game']),
+        ('BF1943 bundles: read and rebuild (fbrb1943)', 'bf1943', [PY, data, 'bundles']),
+        ('BF1943 DBX: every partition parses', 'bf1943', [PY, data, 'dbx']),
+        ('BF1943 terrain and water, every level', 'bf1943', [PY, data, 'terrain']),
+        ('BF1943 menu movies (apt)', 'bf1943', [PY, data, 'apt']),
+        ('Spawn map: every level bases and spawns', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-spawn-map', 'tests', 'test_spawnmap.py')]),
+        ('NavKit big-endian: Wake Island objects', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_levelobjects1943.py')]),
+        ('NavKit big-endian: Havok 4.6.1 meshes', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_havok461.py')]),
+        ('NavKit little-endian: Havok 4.6.1 meshes', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_havok461.py')]),
     ]
-    return t
 
 
 def main(argv):
-    tier = next((a for a in argv[1:] if a in TIERS), 'quick')
+    tier = next((a for a in argv[1:] if a in SELECT), 'quick')
     only = argv[argv.index('--only') + 1].lower() if '--only' in argv else None
-    chosen = [x for x in tests() if TIERS.index(x[1]) <= TIERS.index(tier) and (only is None or only in x[0].lower())]
+    chosen = [x for x in tests() if x[1] in SELECT[tier] and (only is None or only in x[0].lower())]
     if '--list' in argv:
         for name, t, _ in chosen:
             print(f'{t:6s} {name}')
         return 0
-    root = opfor() if any(callable(a) or t != 'quick' for _, t, a in chosen) else None
-    print(f'BFBC2 Tool Suite tests: {tier}, {len(chosen)} test(s)' + (f', OPFOR at {root}' if root else ''))
+    print(f'BF1943 Tool Suite tests: {tier}, {len(chosen)} test(s)')
     failures, start = [], time.time()
     for name, t, args in chosen:
-        if callable(args):
-            args = args(root)
         t0 = time.time()
         r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE)
         out = (r.stdout + r.stderr).strip()

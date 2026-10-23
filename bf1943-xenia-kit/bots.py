@@ -29,11 +29,15 @@ same way, then given what a human player gets from the network, and spawned thro
        (With spawn 0, or the first entry of either list, each side's bots spawned on the other side's carrier:
        runs of 2026-10-23.) The server refuses while a respawn delay runs, so this also respawns them.
 
-The AI flag (+0x214, 8236f768) is set, after the score registration (8240dfe0 skips AI players). The server's
-soldier update (822f1d70) applies a player's input frames (+0x118) only for an AI player, or a soldier that
-reports itself as server-simulated (virtual +0x100); a human's soldier is moved by the human's own client. Without
-the flag (runs of 2026-10-23) the bots stood still at their spawn transform, 0.8 m above the deck, whatever input
-they were given. Evidence and addresses: operation-rising-sun/research/AGENT_PROGRESS.md (2026-10-22,
+Stepping: a soldier is advanced only by its virtual +0x104 (822f05c8), which the network path calls once per
+input frame it drains from a connection (823b2c80, at 823b2ed4). The physics world skips characters while the
+setting Physics.SingleStepCharacter is on (8253e4c8 tests the character's +0xd2, which the soldier constructor sets
+from it), and the per-tick update 822f1d70 runs only the last part of the step (+0x114), and only for players with
+the AI flag (+0x214). BFBC2 turns the setting off in levels with AI, so its physics world steps AI soldiers
+(research/evidence/ai-soldier-control.json). The bots therefore call +0x104 after each frame they push, and keep
+the AI flag at 0 so that 822f1d70 does not apply the input a second time. (Runs of 2026-10-23: without stepping,
+with the flag 0 the bots stood at their spawn transform 0.8 m above the deck; with it 1 they stood on the deck
+but ignored all input.) Evidence and addresses: operation-rising-sun/research/AGENT_PROGRESS.md (2026-10-22,
 "Bots: injection recipe"). The addresses are this build's (module hash 872BBE31C0FBA21B) only.
 """
 import struct
@@ -50,18 +54,21 @@ CODE = 0x82AAA1C0            # unused, zero: the end of the BINK code section's 
 CODE_END = 0x82AAB000
 DATA = 0x82D26E10            # unused, zero: after .data, before fieldinf (to 0x82D27000)
 DATA_END = 0x82D27000
-MAX_BOTS = 8
-# data layout
-STATE, MANAGER, TICK, SLOTS, HANDLE = 0x0, 0x4, 0x8, 0x10, 0x30
+MAX_BOTS = 23               # a full 24-player match (12 v 12) with the host
+# data layout: state words, then a player slot per bot, then the kit lookup's handle
+STATE, MANAGER, TICK, SLOTS = 0x0, 0x4, 0x8, 0x10
+HANDLE = SLOTS + 4 * MAX_BOTS + 4
 FRAME = 0x1E0                # stack frame: an input frame buffer at +0x80 (0x100 bytes, 16-aligned); saves (to -0x50) above it
 BUF = 0x80
 DT = BUF + 0x104             # the saved time step (float), between the buffer and the saved registers
-THROTTLE = 0x3F800000        # test: forward input 1.0 (float bits) in every bot frame
-YAW = 0x3E99999A             # test: turn input 0.3
+THROTTLE = 0x00000000        # forward input in every bot frame (float bits; 0x3F800000 = 1.0 walks forward)
 
 TEAMS = {1: 'US', 2: 'RU'}   # asset folder per team (Japan's soldiers keep BFBC2's RU name)
 KITS = {'Rifleman': 'Assault', 'Infantry': 'Support', 'Scout': 'Specialist'}
-DEFAULT_BOTS = [(1, 'Rifleman'), (2, 'Rifleman'), (1, 'Infantry'), (2, 'Infantry')]
+FRIENDLY, ENEMY = 1, 2       # a bot's side, relative to the host's team (read when the bots are created)
+CLASSES = ['Rifleman', 'Infantry', 'Scout']
+# a full match: 11 on the host's side and 12 against, the classes in turn
+DEFAULT_BOTS = ([(FRIENDLY, CLASSES[k % 3]) for k in range(11)] + [(ENEMY, CLASSES[k % 3]) for k in range(12)])
 
 CODE_SOURCE = '''
 hook:
@@ -98,6 +105,7 @@ hook:
     lwz r5, 0x120(r4)
     cmpwi r5, 0
     beq out
+    lwz r25, 0x30(r4)        # the host's team: bots are friendly (the same) or enemy (3 - it)
     mr r5, r4                # report: the host's player and team (Xenia logs DbgPrint)
     lwz r6, 0x30(r4)
     la r3, FMT_HOST
@@ -109,9 +117,15 @@ hook:
     la r29, BOTS
     la r28, SLOTS_ADDR
 create:
-    lwz r3, 0(r29)           # team, 0 ends the table
+    lwz r3, 0(r29)           # side (FRIENDLY or ENEMY), 0 ends the table
     cmpwi r3, 0
     beq respawn
+    mr r24, r25              # the bot's team
+    cmpwi r3, FRIENDLY
+    beq side_known
+    li r24, 3
+    subf r24, r25, r24
+side_known:
     mr r3, r30
     li r4, 0
     bl 0x82387ef0            # createPlayer
@@ -120,7 +134,7 @@ create:
     stw r3, 0(r28)
     mr r4, r3
     mr r3, r30
-    lwz r5, 8(r29)
+    lwz r5, 12(r29)
     bl 0x8238efd8            # addPlayer(manager, player, name)
     bl 0x82349d78            # as the network join does next (823af188): register the player with the
     lwz r3, 0x44(r3)         # server's score and stats managers, 8240dfe0(context + 0x44, player)
@@ -141,20 +155,19 @@ team:
     lwz r3, 0(r28)
     bl 0x82375130            # ready to spawn
     lwz r3, 0(r28)
-    lwz r4, 0(r29)
+    mr r4, r24
     bl 0x82374f90            # setTeam
-    lwz r3, 0(r28)
-    li r4, 1
-    bl 0x8236f768            # the AI flag (+0x214): the server applies only an AI player's input frames itself
-                             # (822f1d70); a human's soldier is moved by its own client. Set after 8240dfe0,
-                             # which skips AI players (the scoreboard). (after ready, which fires the events team assignment listens to)
     li r4, 0
     stw r4, HANDLE(r31)
     stw r4, HANDLE_4(r31)
     stw r4, HANDLE_8(r31)
     stw r4, HANDLE_C(r31)
     addi r3, r31, HANDLE
-    lwz r4, 4(r29)
+    lwz r4, 4(r29)           # the kit's name for team 1 (USMC) or team 2 (Japan)
+    cmpwi r24, 1
+    beq kit_named
+    lwz r4, 8(r29)
+kit_named:
     bl 0x82378988            # the kit's SoldierEntityData, by asset name
     lwz r4, HANDLE(r31)
     cmpwi r4, 0
@@ -168,7 +181,7 @@ next:
     lwz r5, 0x30(r4)
     lwz r6, 0x1f4(r4)
     bl 0x829fa7ec
-    addi r29, r29, 12
+    addi r29, r29, 16
     addi r28, r28, 4
     b create
 respawn:
@@ -215,17 +228,18 @@ spawn:
     stw r5, BUF_84(r1)
     li32 r5, THROTTLE        # test: EIAThrottle (action 0, an analog float at frame + 8): walk forward
     stw r5, BUF_THROTTLE(r1)
-    li32 r5, YAW             # test: EIAYaw (action 4, frame + 0x18): turn slowly
-    stw r5, BUF_YAW(r1)
-    lwz r5, TICK(r31)        # test: EIAJump (action 12, a button: bit 12 of the 64-bit mask at frame + 0x78),
-    andi. r5, r5, 16         # held for 16 ticks, then released for 16
-    beq no_jump
-    li r5, 0x1000
-    stw r5, BUF_BUTTONS_LO(r1)
-no_jump:
+
     lwz r3, 0x118(r27)
     addi r4, r1, BUF
     bl 0x822c15d0            # push it
+    lwz r3, 0x120(r27)       # and step the soldier with it, as the network path does after each frame it
+    cmpwi r3, 0              # drains (823b2ed4): soldier virtual +0x104 (822f05c8: facing, jump and velocity
+    beq spawn_it             # (+0x110), the character physics with frame dt, then placement (+0x114)),
+    lwz r11, 0(r3)           # entry index 0. Nothing else steps a soldier: the physics world skips characters
+    lwz r11, 0x104(r11)      # while Physics.SingleStepCharacter is on (8253e4c8), and the per-tick update
+    mtctr r11                # 822f1d70 runs only +0x114, and only for AI-flagged players.
+    li r4, 0
+    bctrl
     lwz r3, 0x120(r27)       # report: every 64 ticks, where the server has the bot's soldier
     cmpwi r3, 0              # (its transform, 822a7bb0, translation row at +0x30, as raw float bits)
     beq spawn_it
@@ -356,22 +370,25 @@ def build(bots=DEFAULT_BOTS):
     """(patch words [(address, value, comment)], code bytes, data bytes) for the given [(team, class)]."""
     if not 1 <= len(bots) <= MAX_BOTS:
         raise ValueError(f'1 to {MAX_BOTS} bots')
-    for team, kit in bots:
-        if team not in TEAMS or kit not in KITS:
-            raise ValueError(f'unknown bot {team} {kit}')
+    for side, kit in bots:
+        if side not in (FRIENDLY, ENEMY) or kit not in KITS:
+            raise ValueError(f'unknown bot {side} {kit}')
     symbols = {'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS, 'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4,
                'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
-               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_YAW': BUF + 0x18, 'YAW': YAW, 'BUF_BUTTONS_LO': BUF + 0x7C, 'THROTTLE': THROTTLE, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'BOTS': 0}
+               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'THROTTLE': THROTTLE, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': 0}
     code, _ = ppcasm.assemble(CODE_SOURCE, CODE, symbols)
     table_at = CODE + len(code)
-    strings_at = table_at + 12 * len(bots) + 4
+    strings_at = table_at + 16 * len(bots) + 4
     strings, table = b'', b''
-    for n, (team, kit) in enumerate(bots, 1):
-        kit_at = strings_at + len(strings)
-        strings += string_record(f'Objects/Soldiers/{TEAMS[team]}/{KITS[kit]}', kit_at)
+    kit_strings = {}
+    for kit in sorted(set(k for _, k in bots)):    # each kit's name for team 1 and team 2, once
+        for team, folder in TEAMS.items():
+            kit_strings[kit, team] = strings_at + len(strings)
+            strings += string_record(f'Objects/Soldiers/{folder}/{KITS[kit]}', kit_strings[kit, team])
+    for n, (side, kit) in enumerate(bots, 1):
         name_at = strings_at + len(strings)
-        strings += string_record(f'Bot {n} {"USMC" if team == 1 else "IJA"} {kit}', name_at)
-        table += struct.pack('>III', team, kit_at, name_at)
+        strings += string_record(f'Bot {n} {kit}', name_at)
+        table += struct.pack('>IIII', side, kit_strings[kit, 1], kit_strings[kit, 2], name_at)
     table += struct.pack('>I', 0)
     symbols['BOTS'] = table_at
     code, _ = ppcasm.assemble(CODE_SOURCE, CODE, symbols)
@@ -389,10 +406,11 @@ def build(bots=DEFAULT_BOTS):
 
 def patch_toml(bots=DEFAULT_BOTS):
     words, code, _ = build(bots)
-    names = ', '.join(f'{"USMC" if t == 1 else "Japan"} {k}' for t, k in bots)
+    friendly = sum(1 for s, _ in bots if s == FRIENDLY)
+    names = f'{friendly} on the host side, {len(bots) - friendly} against'
     lines = [HEADER + ' Experimental; addresses are for module hash 872BBE31C0FBA21B.',
              'title_name = "Battlefield 1943"', 'title_id = "5841097E"', 'hash = "872BBE31C0FBA21B"', '',
-             '[[patch]]', '    name = "Experiment: offline bots (spawn, no controls yet)"',
+             '[[patch]]', '    name = "Experiment: offline bots (they spawn and stand; no decisions yet)"',
              f'    desc = "{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; they do not move yet."',
              '    author = "bf1943-xenia-kit"', '    is_enabled = true', '']
     for address, value, comment in words:

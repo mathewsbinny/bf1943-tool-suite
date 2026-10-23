@@ -4,7 +4,8 @@ level's terrain-00.fbrb.
     w = read(folder_or_mesh_path, name)    # Water: vertices, triangles, per-triangle shader (or None)
     w.vertices (n, 3) float32, w.triangles (m, 3) uint32, w.shader[k] -> shader path of triangle k
 
-WaterMesh (little-endian; read on all 36 levels with a terrain bundle, each file consumed exactly):
+WaterMesh (little-endian on BFBC2 PC, read on all 36 levels with a terrain bundle, each file consumed exactly;
+big-endian on BF1943 Xbox 360, detected from the body count):
 
     u32           bodies (1 in every level)
     per body:     u32 vertex count, vertex count x (f32 x, y, z)
@@ -42,15 +43,16 @@ class Water:
 def read_mesh(path):
     """(vertices, triangles) of every body in a .Water.Mesh.res, bodies joined."""
     d = open(path, 'rb').read()
-    bodies = struct.unpack_from('<I', d, 0)[0]
+    e = '<' if struct.unpack_from('<I', d, 0)[0] < 0x10000 else '>'    # a handful of bodies, in either byte order
+    bodies = struct.unpack_from(e + 'I', d, 0)[0]
     o, verts, tris = 4, [], []
     base = 0
     for _ in range(bodies):
-        n = struct.unpack_from('<I', d, o)[0]
-        v = np.frombuffer(d, '<f4', n * 3, o + 4).reshape(n, 3)
+        n = struct.unpack_from(e + 'I', d, o)[0]
+        v = np.frombuffer(d, e + 'f4', n * 3, o + 4).reshape(n, 3)
         o += 4 + 12 * n
-        m = struct.unpack_from('<I', d, o)[0]
-        i = np.frombuffer(d, '<u4', m, o + 4).reshape(-1, 3)
+        m = struct.unpack_from(e + 'I', d, o)[0]
+        i = np.frombuffer(d, e + 'u4', m, o + 4).reshape(-1, 3)
         o += 4 + 4 * m
         verts.append(v)
         tris.append(i.astype(np.uint32) + base)

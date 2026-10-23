@@ -25,7 +25,7 @@ from . import dbx, terrain, water
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
-NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit')
+NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit-little-endian')
 sys.path.insert(0, NAVKIT)
 sys.path.insert(0, os.path.join(NAVKIT, 'tools'))
 

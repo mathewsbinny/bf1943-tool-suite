@@ -8,3 +8,7 @@
 - BFBC2 behavior in copied tools is a lead, not a BF1943 fact: verify each format or rule against BF1943
   data before relying on it.
 - Do not ship game binaries or assets. Do not copy decompiled code into tools.
+- Each tool's README states its BF1943 status (adapted / partly / not yet) and what data it reads today, and
+  the suite README's layout table repeats it. Update both when a tool is adapted; never claim BF1943 support a
+  tool does not have. Keep factual BFBC2 references (formats, OPFOR provenance, results measured on BFBC2 levels).
+- `docs/opfor-bfbc2/` is OPFOR's own documentation, kept unchanged as reference.

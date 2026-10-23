@@ -812,6 +812,226 @@
           ]
         }
       ]
+    },
+    {
+      "commit": "ea92211e89d8d8ee30ec1711766c736398ce6d10",
+      "imported": "2026-10-23T11:18:31-04:00",
+      "kind": "update",
+      "source_uncommitted_not_copied": [],
+      "items": [
+        {
+          "source": "bfbc2-auto-navkit",
+          "destination": "bf1943-auto-navkit",
+          "note": "update",
+          "files": [
+            {
+              "path": "tools/navwalk.py",
+              "bytes": 43260,
+              "git_blob": "678cb15ec92edd32baf359478f76aa8072fe2f96",
+              "sha256": "86e2a3d6e0e67591eb02fc06e23504bed13d3214198514596b296113a65d7594",
+              "previous_git_blob": "232b99f6526799fba650553060c9a8ddc519618e"
+            }
+          ],
+          "conflicts": [
+            "README.md"
+          ],
+          "merged_by_hand": {
+            "README.md": "source diff fab30c0..ea92211 applied cleanly (git apply) onto the locally rewired file"
+          }
+        },
+        {
+          "source": "bfbc2-navigation-studio",
+          "destination": "bf1943-navigation-studio",
+          "note": "update",
+          "files": [],
+          "conflicts": [
+            "README.md"
+          ],
+          "merged_by_hand": {
+            "README.md": "source diff fab30c0..ea92211 applied cleanly (git apply) onto the locally rewired file"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "rename",
+      "from": "bf1943-auto-navkit",
+      "to": "bf1943-auto-navkit-little-endian",
+      "date": "2026-10-23T11:31:08-04:00",
+      "note": "two variants: little-endian (BFBC2 PC data, and later the PC port of BF1943) and big-endian (BF1943 Xbox 360 data, bf1943-auto-navkit-big-endian, a copy of this folder made in this suite)"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-automated-map-and-bot-test-harness",
+      "paths": [
+        "crash-reader/tests/test_crashreader.py"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-dbx-tools",
+      "paths": [
+        "tests/DbxTests.cs",
+        "tests/fingerprints_795745.txt",
+        "tests/run_tests.bat"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-diff-workbench",
+      "paths": [
+        "level-diff/tests/test_leveldiff.py"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-navigation-studio",
+      "paths": [
+        "tests/test_editing.py"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "kind": "remove",
+      "destination": "core",
+      "paths": [
+        "tests/level_snapshot.json",
+        "tests/test_dbx.py",
+        "tests/test_fbrb.py",
+        "tests/test_level.py",
+        "tests/test_navdata.py",
+        "tests/test_navtune.py",
+        "tests/test_terrain.py",
+        "tests/test_water.py"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "kind": "remove",
+      "destination": "tests",
+      "paths": [
+        "test_hub.py",
+        "test_viewers.py"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-auto-navkit-little-endian",
+      "paths": [
+        "tests/test_apply.py",
+        "tests/test_links.py",
+        "tests/test_navboundary.py",
+        "tests/test_reference_clip.py",
+        "tests/test_regress_progress.py",
+        "tests/test_traversal.py"
+      ],
+      "removed": "2026-10-23T13:57:15-04:00",
+      "note": "BFBC2 tests: the suite keeps only tests about BF1943; a tool gets BF1943 tests when it is adapted"
+    },
+    {
+      "commit": "c08c2f000f046fc7056e248697067465e69998d2",
+      "imported": "2026-10-23T19:02:02-04:00",
+      "kind": "update",
+      "source_uncommitted_not_copied": [
+        "bfbc2-auto-navkit/navkit.py",
+        "bfbc2-auto-navkit/tools/levelobjects.py",
+        "bfbc2-auto-navkit/tools/navbuild.py",
+        "bfbc2-auto-navkit/tools/navregress.py",
+        "bfbc2-auto-navkit/tools/navwalk.py",
+        "run_tests.py"
+      ],
+      "items": [
+        {
+          "source": "bfbc2-auto-navkit",
+          "destination": "bf1943-auto-navkit-little-endian",
+          "note": "update",
+          "files": [
+            {
+              "path": "research/KYNAPSE_SPEC.md",
+              "bytes": 75989,
+              "git_blob": "c354480d0c94051928bb8fcac5b8bcd1e6e09e01",
+              "sha256": "b47948bae5491f20525f50d327058d929ccd19f25ea9e83e70c0808fdc81e4d5",
+              "previous_git_blob": "9d3cb9e76df638fa8c8f7dde477e053066bd196e"
+            },
+            {
+              "path": "tests/test_bridge_union.py",
+              "bytes": 4992,
+              "git_blob": "208cfb6588aad4ed428af60f7d66821376e0bde7",
+              "sha256": "9c8a03205ed566ebd2b128833283eef2247d6ba885c4eb0286f64d1b452371f5",
+              "new": true
+            },
+            {
+              "path": "tests/test_dynamic_props.py",
+              "bytes": 3929,
+              "git_blob": "b6524afbabe3ee0e13a463e319fcf821ffd463e9",
+              "sha256": "887ea1bb1f08b9e04a80709fb54cc4285ff900ee5a9869652f01415bcd5b62a6",
+              "new": true
+            },
+            {
+              "path": "tests/test_havok_index.py",
+              "bytes": 1693,
+              "git_blob": "c9a497a8443bd85c237adf3d4c7222e0d07c73af",
+              "sha256": "b775f9df9814ec44d7ce8887e8fa9207f063b25bd2f51c68805453f70b8983d9",
+              "new": true
+            },
+            {
+              "path": "tests/test_lips.py",
+              "bytes": 3573,
+              "git_blob": "8b61281f0c5601ffa8936ce1cc778e33748d3d79",
+              "sha256": "e02ca3631293c7e095d8cf7da56e6920fce6254c394bdce246979d6b24c5088e",
+              "new": true
+            },
+            {
+              "path": "tests/test_roof_prune.py",
+              "bytes": 3548,
+              "git_blob": "6ac90aa0089473e89f61a8cf57c7d96927e87660",
+              "sha256": "edd2bbbc1d9eec858c6491d3b3c07af3c4a64d07dd1eaffd1572e8bf2f592004",
+              "new": true
+            },
+            {
+              "path": "tools/hpdcheck.py",
+              "bytes": 3337,
+              "git_blob": "40d85c9df9002706d6092061dd7cd5806b62d1f1",
+              "sha256": "11dd9838d7ecbfb33e152755923683923de5383f878431b63b07531937ad0cea",
+              "new": true
+            },
+            {
+              "path": "tools/navbuild.py",
+              "bytes": 86449,
+              "git_blob": "bc3dcd5214cf758eab48fc044a0c1b60a0ac4984",
+              "sha256": "df1e48deb0fef0a7be49fcd2e85caf211dc99a09b21e87509f55b2cef075d23f",
+              "previous_git_blob": "782f852f2d2982e97b4eeae1118d692bbd80c4fa"
+            },
+            {
+              "path": "tools/navparity.py",
+              "bytes": 15142,
+              "git_blob": "ca2af4f99b30c4d6c8fbda9c9800a717a7b5d17e",
+              "sha256": "8c0176b83d4b78f14b9972f8e825cbd2e0d94fc8552a349fefd5c327ad24c440",
+              "previous_git_blob": "5cca23193224cef271068b8af6898e5daf76bf7e"
+            },
+            {
+              "path": "tools/navregress.py",
+              "bytes": 14201,
+              "git_blob": "249ddae764c95d73131fa508fbf92bc72a1703ad",
+              "sha256": "e26cb5c6392a89b67ccc9df8a05fbc78cc0a09b7d2590466338a5de8171c76be",
+              "previous_git_blob": "87877eebc91ca81e6575f47944b0235a5f92c31f"
+            }
+          ],
+          "conflicts": [
+            "README.md"
+          ]
+        }
+      ]
     }
   ]
 }

@@ -7,8 +7,9 @@ u32 string-table size, the strings, u32 entry count, entries of six u32 (name of
 size, size again, type-name offset), then a flag byte (payload compressed) and u32 payload size. Entries
 are contiguous in directory order, without alignment. gzip members carry mtime 0 and OS byte 0x0b.
 
-`Bundle.build` rewrites only offsets and sizes; with no replaced entries it reproduces the original
-directory and payload byte-for-byte (checked by tests/test_fbrb.py).
+`Bundle.build` rewrites only offsets and sizes; with no replaced entries it reproduces the original directory and
+(decompressed) payload byte-for-byte. A compressed bundle's gzip bytes differ, since zlib is not the encoder DICE's
+tools used; the game reads the decompressed content (checked on all 82 bundles by tests/test_bf1943_data.py bundles).
 """
 import gzip
 import struct

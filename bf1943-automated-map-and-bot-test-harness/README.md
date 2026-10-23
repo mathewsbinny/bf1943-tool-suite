@@ -1,6 +1,12 @@
-# bf1943-automated-map-and-bot-test-harness
+# BF1943 map and bot test harness (bf1943-automated-map-and-bot-test-harness)
 
-Repeatable tests of maps and bots, with results compared between builds (`../DESIGN.md` section 4.5).
+Part of the BF1943 Tool Suite. **BF1943 status: not adapted yet** - the crash reader and the in-game runs below
+are OPFOR's and work on BFBC2 (`crashreport.xml`, `BFBC2Game.exe`, Project OPFOR's `testrun.bat`). BF1943 runs
+in Xenia, which writes no `crashreport.xml`; BF1943's bot tests are, for now, `bf1943-xenia-kit`'s
+(`tests/test_bots.py`) and its `rs-bots:` log lines.
+
+Repeatable tests of maps and bots, with results compared between builds (OPFOR's
+[DESIGN.md](../docs/opfor-bfbc2/DESIGN.md) section 4.5).
 
 **Ready**
 

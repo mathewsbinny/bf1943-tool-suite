@@ -1,4 +1,7 @@
-# BC2 crash reader
+# BC2 crash reader (BF1943 Tool Suite, test harness)
+
+**BF1943 status: not adapted yet** - OPFOR's BFBC2 tool: it reads BFBC2 PC's `crashreport.xml` and your
+`BFBC2Game.exe`. BF1943 (in Xenia) has no such report.
 
 When Battlefield: Bad Company 2 crashes, it writes `crashreport.xml`: a crash address, a list of raw
 addresses and the CPU registers. This tool turns that into something you can act on:

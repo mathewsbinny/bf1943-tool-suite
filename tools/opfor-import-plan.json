@@ -6,7 +6,7 @@
   },
   {
     "source": "bfbc2-auto-navkit",
-    "destination": "bf1943-auto-navkit",
+    "destination": "bf1943-auto-navkit-little-endian",
     "note": "verbatim copy; adapted for BF1943 in later commits"
   },
   {
