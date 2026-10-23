@@ -43,8 +43,8 @@ def known_and_patch():
     check(f'title_id = "{known["game"]["title_id"]}"' in text and f'hash = "{known["game"]["module_hash"]}"' in text,
           'the patch file names the game and its module hash (Xenia applies it to that executable only)')
     words = re.findall(r'address = 0x([0-9a-f]{8})\s+value = 0x([0-9a-f]{8})', text)
-    check(len(words) == 10 and all(0x82000000 <= int(a, 16) < 0x83000000 for a, _ in words),
-          f'the patch file holds 10 code words in the game image ({len(words)})')
+    check(len(words) == 11 and all(0x82000000 <= int(a, 16) < 0x83000000 for a, _ in words),
+          f'the patch file holds 11 code words in the game image ({len(words)})')
 
 
 def port_edit():

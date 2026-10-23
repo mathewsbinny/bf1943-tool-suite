@@ -468,12 +468,12 @@
  },
  "patch": {
   "file": "5841097E - Battlefield 1943.patch.toml",
-  "sha256": "da5b37330c3d48660f083d594f6c2c7b2f93cbc89476b4f7773dd825944a745a"
+  "sha256": "8b4afcbbee5926b69d66f0696e651a3951e2a106901ee8e5829f3beb87a97a62"
  },
  "expected": {
   "main_nav_res_sha256": "7878ff7e9e0730081ba579737e735abb0a68ba2204c32434fa4ef38896add97c",
   "game_settings_cfg_sha256": "ebaa008b7938da15d0e22cdee1b811dcf1764cf3e1f49731f496f2d8a6191790",
   "main_root_res_sha256": "d116defce391f9803a1e4d55c6b55053322b7e47db34af316215686fcb044ac8",
-  "igm_mp_cq_res_sha256": "149c0264f258746649efc7d8e3f147362724abfc83f9b1efa73eb9c3e914ac07"
+  "igm_mp_cq_res_sha256": "9650cd902f7a0296c6f6a7389a4531b5f1def27a6e5ef415c8af24482980e2b1"
  }
 }

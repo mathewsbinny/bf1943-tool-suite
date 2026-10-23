@@ -30,6 +30,7 @@ Mirrors the BFBC2 suite: one shared core and a folder per tool. `bf1943-converte
 | `bf1943-map-inspector/`, `bf1943-navigation-studio/` | 3D views of levels and navigation data | OPFOR tools of the same names |
 | `bf1943-xenia-kit/` | **ready:** turns your own BF1943 package into a Xenia setup with offline Quick Match and local matches (`xeniakit.py build`) | new; findings from rising-sun `src/xeniaprobe`, `src/uiresearch` |
 | `bf1943-apt-tools/` | **ready:** menu movie (APT) reader, disassembler and rewriter | rising-sun `src/uiresearch/apt.py` |
+| `bf1943-spawn-map/` | **ready:** each level's bases and flags with the soldier and vehicle spawns they own (`spawnmap.py`) | new; uses `core/bfbc2core/dbx.py` and `bf1943-fbrb-tool` |
 | `bf1943-converter/` | the end-user toolkit: verify the user's copy, convert it to the PC build | new |
 
 ## Rules

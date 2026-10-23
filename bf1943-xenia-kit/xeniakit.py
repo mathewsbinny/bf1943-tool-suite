@@ -1,6 +1,6 @@
 r"""BF1943 Xenia kit: turns your own Battlefield 1943 (XBLA) package into a Xenia setup with offline play.
 
-  python -B xeniakit.py build <package> <xenia folder> [--out <folder>] [--replace-patch]
+  python -B xeniakit.py build <package> <xenia folder> [--out <folder>] [--replace-patch] [--experiment-bots]
   python -B xeniakit.py verify [--out <folder>]
   python -B xeniakit.py launch [--out <folder>] [--gpu vulkan|d3d12]
 
@@ -36,6 +36,7 @@ KIT = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(KIT)
 sys.path[:0] = [KIT, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-console-readers', 'stfs')]
 from bfbc2core import errors
+import bots
 import config_edits
 import igm_edits
 import menu_edits
@@ -159,6 +160,17 @@ def build(args):
     if os.path.exists(patch_dst) and sha256_file(patch_dst) != KNOWN['patch']['sha256'] and not args.replace_patch:
         raise FileExistsError(f'{patch_dst} exists with other contents: pass --replace-patch to replace it')
     shutil.copyfile(patch_src, patch_dst)
+    bots_dst = os.path.join(args.xenia, 'patches', bots.PATCH_FILE)
+    bots_text = None
+    if args.experiment_bots:
+        say('    experiment: offline bots (bots.py; they join, take a kit and spawn, and do not move yet)')
+        bots_text = bots.patch_toml()
+        with open(bots_dst, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(bots_text)
+    elif os.path.isfile(bots_dst):
+        if not open(bots_dst, encoding='utf-8').read().startswith(bots.HEADER):
+            raise FileExistsError(f'{bots_dst} was not made by this kit: move it away first')
+        os.remove(bots_dst)  # a normal build has no bots
     fixed, fix_log = netfix.build(xenia_bytes)
     if sha256(fixed) != KNOWN['xenia']['netfix_sha256']:
         raise ValueError('the fixed Xenia differs from the verified result')
@@ -179,7 +191,8 @@ def build(args):
                     xenia=os.path.abspath(args.xenia), xenia_sha256=KNOWN['xenia']['exe_sha256'],
                     netfix=fixed_path, netfix_sha256=sha256(fixed), netfix_changes=fix_log,
                     patch=patch_dst, patch_sha256=KNOWN['patch']['sha256'], title=title, edits=replaced,
-                    experiment_team=args.experiment_team)
+                    experiment_team=args.experiment_team,
+                    bots_patch=bots_dst if bots_text else None, bots_patch_sha256=sha256(bots_text.encode()) if bots_text else None)
     with open(os.path.join(out, 'kit-manifest.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(manifest, f, indent=1)
     write_launcher(out, manifest, args.gpu)
@@ -211,7 +224,10 @@ def verify(args):
     for f in title_manifest['files']:
         if sha256_file(os.path.join(m['title'], *f['path'].split('/'))) != f['sha256']:
             bad.append(f['path'])
-    for path, expected in ((m['netfix'], m['netfix_sha256']), (m['patch'], m['patch_sha256'])):
+    checked = [(m['netfix'], m['netfix_sha256']), (m['patch'], m['patch_sha256'])]
+    if m.get('bots_patch'):
+        checked.append((m['bots_patch'], m['bots_patch_sha256']))
+    for path, expected in checked:
         if not os.path.isfile(path) or sha256_file(path) != expected:
             bad.append(path)
     if bad:
@@ -234,6 +250,7 @@ def main(argv):
     b.add_argument('xenia')
     b.add_argument('--replace-patch', action='store_true')
     b.add_argument('--experiment-team', type=int, choices=[1, 2], help='experiment: the deploy screen requests this team')
+    b.add_argument('--experiment-bots', action='store_true', help='experiment: a second patch file with offline bots')
     for s in (b, sub.add_parser('verify'), sub.add_parser('launch')):
         s.add_argument('--out', default=DEFAULT_OUT)
         s.add_argument('--gpu', default='vulkan', choices=['vulkan', 'd3d12'])

@@ -64,3 +64,14 @@ hash = "872BBE31C0FBA21B"
         # XNetGetTitleXnAddr wrapper returns XNET_GET_XNADDR_NONE (1) without calling the import (was 0x48576b64)
         address = 0x824836a8
         value = 0x4e800020
+
+[[patch]]
+    name = "Offline: no automatic team on joining"
+    desc = "A joining player stays without a team until choosing a side, instead of being put on the smaller team."
+    author = "operation-rising-sun"
+    is_enabled = true
+
+    [[patch.be32]]
+        # "Start": no automatic team (bl 0x82375970 -> li r3,0); the side is chosen in CHOOSE YOUR SIDE (was 0x4bfdb521)
+        address = 0x8239a450
+        value = 0x38600000

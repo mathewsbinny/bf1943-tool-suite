@@ -254,7 +254,9 @@ def selector_code():
         return set_this('rsSel', [op('PushByte', value=team)]) + sound(sound_name) + cards()
 
     stop_hold = path('rsHold') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
-    confirm = (stop_hold + sound('SND_MENU_SELECT') + visible(parts, False) + hidden_hard(CLASS_MENU, False)
+    # the class menu stays transparent until the deploy screen is redrawn for the chosen side (rsCheckTeam): shown
+    # earlier, it flickers with the team it had before (USMC, or with no team yet, the same USMC art)
+    confirm = (stop_hold + sound('SND_MENU_SELECT') + visible(parts, False)
                + if_else(path('rsSel') + [op('PushByte', value=1), op('Equals2')],
                          fscommand('selectTeam', '1'), fscommand('selectTeam', '2'))
                + set_this('rsSideChosen', [op('PushTrue')]) + set_this('rsWantTeam', path('rsSel'))
@@ -301,7 +303,7 @@ def selector_code():
              + path('rsTimer') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
              + factions()
              + call([op('PushThis')], 'init')    # the deploy screen's own setup, now for the new team
-             + kit_art() + set_this('rsKitTicks', [op('PushZero')])
+             + kit_art() + hidden_hard(CLASS_MENU, False) + set_this('rsKitTicks', [op('PushZero')])
              + set_this('rsKitTimer', [op('PushByte', value=CHECK_MS), s('rsKitArt'), op('PushThis'),
                                        op('PushByte', value=3), s('setInterval'), op('CallFunction')])
              + [not_yet, op('Pop')])
