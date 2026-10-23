@@ -1,4 +1,4 @@
-# Project OPFOR BF1943 Tool Suite
+# BF1943 Tool Suite (bf1943-tool-suite)
 
 - Tools for the BF1943 PC client (`../project-opfor-bf1943`); research and evidence are in `../operation-rising-sun`.
 - OPFOR's `C:/Games/Project OPFOR Toolkit/bfbc2-tool-suite` is a read-only source: never edit it, run its

@@ -1,8 +1,8 @@
-# Project OPFOR BF1943 Tool Suite
+# BF1943 Tool Suite
 
-Tools for converting, inspecting and building AI data for Battlefield 1943 (XBLA), for the native PC client in
-[project-opfor-bf1943](../project-opfor-bf1943/README.md). The research and evidence behind them live in
-[operation-rising-sun](../operation-rising-sun/README.md).
+Tools for converting, inspecting and building AI data for Battlefield 1943 (XBLA). They support the native PC client
+(project-opfor-bf1943) and the research behind it (operation-rising-sun); both are separate, local projects.
+Repository: https://github.com/mathewsbinny/bf1943-tool-suite
 
 This suite holds **new BF1943 tools** and **modified copies of OPFOR tools**. OPFOR's own
 `bfbc2-tool-suite` (in `C:\Games\Project OPFOR Toolkit`) stays dedicated to BFBC2 and is never changed:

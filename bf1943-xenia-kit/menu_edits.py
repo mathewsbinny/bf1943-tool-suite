@@ -54,7 +54,8 @@ TITLE = 'LOCAL MATCH'
 def main_menu(apt, rw):
     """The main menu's item lists (char 51 frame 0), relocated:
     - Quick Match items [label, 'event', 'quickmatch', true] become [label, 'dev', 0, false] (open the browser);
-    - each Leaderboards item [label, 0, 'leaderboard', true] is dropped and its list's count lowered;
+    - each Leaderboards item [label, 0, 'leaderboard', true] and RETURN TO GAME LIBRARY item [label, 'event', 'quit',
+      false] is dropped and its list's count lowered;
     - the label key MENU_TITLE_QUICKMATCH becomes the text LOCAL MATCH (menu labels show plain text as is,
       as the dev item's '* DEV *' does);
     - the first time the menu opens it logged in to EA Online by itself (presenceRequestOnline "1", when
@@ -65,7 +66,7 @@ def main_menu(apt, rw):
     pool = next(i.args['items'] for i in ins if i.op == 0x88)
     name = lambda i: apt.constants[pool[i.args['value']]] if i.op in (0xA2, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3) else None
     dev = next(n for n, c in enumerate(pool) if apt.constants[c] == 'dev')
-    out, counts, k = [], dict(quickmatch=0, leaderboard=0, label=0, online=0), 0
+    out, counts, k = [], dict(quickmatch=0, leaderboard=0, quit=0, label=0, online=0), 0
     pending_lists = 0  # lists that lost an item and still need their count lowered
     referenced = {id(j.args.get(key)) for j in ins for key in ('target', 'end') if key in j.args}
     while k < len(ins):
@@ -79,23 +80,29 @@ def main_menu(apt, rw):
             counts['quickmatch'] += 1
             k += 3
             continue
-        if (i.op in (0x73, 0x74) and ins[k + 1].op == 0x59 and name(ins[k + 2]) == 'leaderboard'
-                and ins[k + 3].op == 0x96 and ins[k + 4].op == 0xAF and ins[k + 5].op == 0xB5
-                and ins[k + 5].args['value'] == 4 and ins[k + 6].op == 0x42):
+        # an item [label, kind, id, needs-online] built from 7 instructions, ending PushByte 4; InitArray
+        whole = (k + 6 < len(ins) and i.op in (0x73, 0x74) and ins[k + 3].op == 0x96 and ins[k + 4].op == 0xAF
+                 and ins[k + 5].op == 0xB5 and ins[k + 5].args['value'] == 4 and ins[k + 6].op == 0x42)
+        drop = None
+        if whole and ins[k + 1].op == 0x59 and name(ins[k + 2]) == 'leaderboard':
+            drop = 'leaderboard'    # [label, 0, 'leaderboard', true]: a page needing EA Online
+        elif whole and name(ins[k + 1]) == 'quit' and name(ins[k + 2]) == 'event':
+            drop = 'quit'           # [label, 'event', 'quit', false]: RETURN TO GAME LIBRARY
+        if drop:
             if any(id(r) in referenced for r in ins[k:k + 7]):
-                raise ValueError('a branch or function ends inside a Leaderboards item')
-            counts['leaderboard'] += 1
+                raise ValueError(f'a branch or function ends inside a {drop} item')
+            counts[drop] += 1
             pending_lists += 1
             k += 7
             continue
         if pending_lists and i.op == 0xB5 and ins[k + 1].op == 0x42 and ins[k + 2].op == 0x1D:
             # the list's own count: the last PushByte/InitArray before SetVariable menuItems
-            out += [op('PushByte', value=i.args['value'] - 1), ins[k + 1]]
+            out += [op('PushByte', value=i.args['value'] - pending_lists), ins[k + 1]]
             for j in ins:
                 for key in ('target', 'end'):
                     if j.args.get(key) is i:
                         j.args[key] = out[-2]
-            pending_lists -= 1
+            pending_lists = 0
             k += 2
             continue
         if (name(i) == '1' and name(ins[k + 1]) == 'presenceRequestOnline' and ins[k + 2].op == 0xB5
@@ -124,7 +131,8 @@ def main_menu(apt, rw):
             continue
         out.append(i)
         k += 1
-    if counts['quickmatch'] != 4 or counts['leaderboard'] < 1 or counts['label'] < 1 or counts['online'] != 1 or pending_lists:
+    if (counts['quickmatch'] != 4 or counts['leaderboard'] < 1 or counts['quit'] < 1 or counts['label'] < 1
+            or counts['online'] != 1 or pending_lists):
         raise ValueError(f'main menu block differs from the expected shape: {counts}, unclosed lists {pending_lists}')
     kept = {id(i) for i in out}
     for j in out:
@@ -133,7 +141,8 @@ def main_menu(apt, rw):
                 raise ValueError(f'{j.label} refers to a removed instruction')
     rw.repoint(item, field, start, rw.assemble(out),
                f'main menu: Quick Match opens the local browser ({counts["quickmatch"]} lists), '
-               f'Leaderboards removed ({counts["leaderboard"]} lists), label "{TITLE}" ({counts["label"]}), '
+               f'Leaderboards removed ({counts["leaderboard"]} lists), Return to Game Library removed ({counts["quit"]} lists), '
+               f'label "{TITLE}" ({counts["label"]}), '
                f'no EA Online login on opening the menu')
     return counts
 

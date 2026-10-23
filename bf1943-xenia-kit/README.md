@@ -53,10 +53,12 @@ Xenia's settings are not changed. The two command-line options in `launch.cmd` a
 | File | Change | Code |
 |---|---|---|
 | `menu\main\mainmenu-00.fbrb` (`main_nav`) | **Quick Match** becomes **LOCAL MATCH**. It opens a browser of the four maps (Wake Island, Guadalcanal and Iwo Jima Conquest; Coral Sea Air Superiority), and picking one hosts a local match (`hostMultiplayerLocal`). The browser is the game's own developer host list, tidied and given a heading | `menu_edits.py` |
-| same | **Leaderboards** removed from the main menu | `menu_edits.py` |
+| same | **Leaderboards** and **Return to Game Library** removed from the main menu | `menu_edits.py` |
 | same | **No EA Online check** when the main menu opens. Join With Friends and Private Match still report that they cannot connect, by design until LAN play | `menu_edits.py` |
 | same (`main_root`) | **No "the game is saving" icon notice** at startup | `menu_edits.py` |
-| `menu\hud\hud_multiplayer_cq-00.fbrb` (`igm_mp_cq`) | **CHOOSE YOUR SIDE** before the first deploy of each match. Two cards, USMC and JAPAN, show the game's own soldier portraits and flags. Left/right (stick or D-pad) chooses and A confirms. The class menu and the deploy labels stay hidden until the server has switched you, then the deploy screen redraws itself for your side. You cannot enter battle before choosing | `igm_edits.py` |
+| `menu\hud\hud_multiplayer_cq-00.fbrb` (`igm_mp_cq`) | **CHOOSE YOUR SIDE** before the first deploy of each match. Two cards, USMC and JAPAN, show the game's own soldier portraits and flags. Left/right (stick or D-pad) chooses and A confirms. The class menu and the deploy labels stay hidden until the server has switched you, then the deploy screen redraws itself for your side: each class card with its own soldier and icon. The HUD's spawn banner and the scoreboard headers name your new side. You cannot enter battle before choosing | `igm_edits.py` |
+| same | **FRONTLINE REPORT** (the in-game menu) without Leaderboards: My Squad, Scoreboard, Help & Options, Achievements, Exit Game, Respawn/Suicide | `igm_edits.py` |
+| same | **No See Gamer Card** button on My Squad, the scoreboard or the friends list (an Xbox LIVE overlay, empty offline) | `igm_edits.py` |
 | `config.zz` (`GameSettings.cfg`) | Network ports 1001/1003 become 25001/25003 | `config_edits.py` |
 
 Port numbers below 1024 are the problem: Xenia moves the server's ports by +10000 but not the client's destination, so the client never finds its server.
@@ -65,7 +67,6 @@ The evidence behind each change is in `operation-rising-sun/research/AGENT_PROGR
 
 ## Known limits
 
-- **The in-game menu ("Frontline Report") still lists Leaderboards**; only the main menu's entry is removed so far.
 - **Xenia occasionally crashes** in its own thread clean-up when a second match loads in one session (observed once, at `xenia_canary_netfix.exe+0x25338A`). It is Xenia's bug, not the game's or the kit's. Restart Xenia if it happens.
 - **Experiment, for development only:** `--experiment-team 1|2` replaces the side choice with a fixed team request each time the deploy screen opens.
 

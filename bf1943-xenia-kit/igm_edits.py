@@ -11,6 +11,8 @@ team_selector(): the first time the deploy screen opens in a match, a CHOOSE YOU
 screen's own parts shows two boxes, USMC and JAPAN (kit cards with each side's soldier and the game's team flags).
 Left/right (stick or D-pad) picks one, A confirms; the class menu stays hidden until the server has switched the
 team, then the screen redraws itself for it. The player cannot enter battle before choosing.
+frontline_without_leaderboards(): the in-game menu FRONTLINE REPORT without its Leaderboards row.
+no_gamer_card(): no SEE GAMER CARD button on My Squad, the scoreboard or the friends list.
 force_team(): experiment only; requests one team every time the deploy screen opens.
 """
 import os
@@ -53,7 +55,23 @@ CLASS_MENU = ['RIFLEMAN', 'INFANTRY', 'SCOUT', 'selectKitText', 'button_8', 'spa
               'selectSpawnText']
 HOLD_MS = 100        # the screen's own updates show some of these again: hidden (and transparent) this often
 CHECK_MS = 100       # how often the new team is checked after a choice
-CHECK_LIMIT = 50     # refresh anyway after this many checks (5 s) if the server did not confirm
+SETTLE_CHECKS = 10   # after extern.playerTeam shows the new team, the rest of the switch (the team's kit list)
+                     # arrives later: the deploy screen is redrawn this many checks (1 s) afterwards
+CHECK_LIMIT = 50     # redraw anyway after this many checks (5 s)
+# After that redraw (a second init() on the same screen) every class card is left on kitInfo frame kit_0, the
+# Rifleman art (seen 2026-10-22, session kits-2); a newly opened screen sets each card's own frame. The cards'
+# kit frames (kitInfo, char 288: kit_1, kit_0, kit_2, each with its own character art) are set again directly,
+# with init()'s portrait rule (setKitInfo: the chosen class in colour, the others '_black'), on each check for
+# KIT_TICKS checks while the screen settles.
+KIT_CARDS = 3
+KIT_TICKS = 10
+# The HUD's spawn banner and the scoreboard headers show _root.factionSIDs[0] / [1], built once when the HUD loads
+# (hud_root_cq 0x3e965) from extern.teamFactions. That pair is UiManager +0x421ec/+0x421f0, written only on joining
+# (8245d798: faction of my team, faction of the other), so after a team switch it still names the joining team.
+# Rebuilt from the live extern.playerTeam: factionNames is [neutral, USMC, Japan, Japan] by faction, and team 1 is
+# faction 1 (USMC), team 2 faction 2 (Japan).
+FACTION_ARRAYS = [('factionSIDs', 'factionNames'), ('factionSIDsWIN', 'factionNamesWIN'),
+                  ('factionSIDsLOSE', 'factionNamesLOSE')]
 
 
 def deploy_block(apt):
@@ -108,10 +126,11 @@ def visible(names, on):
 
 
 def hidden_hard(names, on):
-    """_visible and _alpha together: the screen's updates set _visible again, but leave _alpha alone."""
+    """Hidden by _alpha only. The screen's updates set _visible again but leave _alpha alone; and a clip hidden by
+    _visible does not apply frame changes to its children (the kit cards' kitInfo.gotoAndPlay("kit_N") in init()
+    would be lost, leaving every card on kit_1)."""
     out = []
     for name in names:
-        out += set_member(path(name), '_visible', [op('PushFalse' if on else 'PushTrue')])
         out += set_member(path(name), '_alpha', [op('PushByte', value=0 if on else 100)])
     return out
 
@@ -239,19 +258,56 @@ def selector_code():
                + if_else(path('rsSel') + [op('PushByte', value=1), op('Equals2')],
                          fscommand('selectTeam', '1'), fscommand('selectTeam', '2'))
                + set_this('rsSideChosen', [op('PushTrue')]) + set_this('rsWantTeam', path('rsSel'))
-               + set_this('rsChecks', [op('PushZero')])
+               + set_this('rsChecks', [op('PushZero')]) + set_this('rsSettled', [op('PushZero')])
+               + call(menu_common(), 'removeAllActions')   # nothing to press until the screen is redrawn
                + set_this('rsTimer', [op('PushByte', value=CHECK_MS), s('rsCheckTeam'), op('PushThis'),
                                       op('PushByte', value=3), s('setInterval'), op('CallFunction')]))
-    done = op('PushUndefined')
+    def factions():  # _root.factionSIDs = [factionNames[my team], factionNames[3 - my team]] (and the WIN/LOSE pairs)
+        out = []
+        for sids, names in FACTION_ARRAYS:
+            mine = member(var('_root'), names) + member(var('extern'), 'playerTeam') + [op('GetMember')]
+            other = (member(var('_root'), names) + [op('PushByte', value=3)] + member(var('extern'), 'playerTeam')
+                     + [op('Subtract'), op('GetMember')])
+            out += var('_root') + [s(sids)] + other + mine + [op('PushByte', value=2), op('InitArray'), op('SetMember')]
+        return out
+
+    def kit_art():  # each class card on its own kit frame, in the new team's colour (chosen) or black portrait
+        out = []
+        for i in range(KIT_CARDS):
+            def kit_info():
+                return member(var('m_kits') + [op('PushByte', value=i), op('GetMember'), op('PushByte', value=2),
+                                               op('GetMember')], 'kitInfo')
+            out += call(kit_info(), 'gotoAndStop', [s(f'kit_{i}')])
+            out += if_else(path('m_currentKitIdx') + [op('PushByte', value=i), op('Equals2')],
+                           call(kit_info(), 'setTeam', var('m_teamStr')),
+                           call(kit_info(), 'setTeam', var('m_teamStr') + [s('_black'), op('Add2')]))
+        return out
+
+    kits_done = op('PushUndefined')
+    kits = (kit_art() + set_this('rsKitTicks', path('rsKitTicks') + [op('Increment')])
+            + path('rsKitTicks') + [op('PushByte', value=KIT_TICKS - 1), op('Greater'), op('Not'),
+                                    op('BranchIfTrue', target=kits_done)]
+            + path('rsKitTimer') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
+            + [kits_done, op('Pop')])
+
+    not_yet, redraw = op('PushUndefined'), op('PushUndefined')
     check = (set_this('rsChecks', path('rsChecks') + [op('Increment')])
-             + member(var('extern'), 'playerTeam') + path('rsWantTeam') + [op('Equals2')]
+             # once the server reports the new team, count settle checks
+             + if_else(member(var('extern'), 'playerTeam') + path('rsWantTeam') + [op('Equals2')],
+                       set_this('rsSettled', path('rsSettled') + [op('Increment')]), [])
+             + path('rsSettled') + [op('PushByte', value=SETTLE_CHECKS - 1), op('Greater')]
              + path('rsChecks') + [op('PushByte', value=CHECK_LIMIT), op('Greater'), op('Or'),
-                                   op('Not'), op('BranchIfTrue', target=done)]
+                                   op('Not'), op('BranchIfTrue', target=not_yet)]
              + path('rsTimer') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
+             + factions()
              + call([op('PushThis')], 'init')    # the deploy screen's own setup, now for the new team
-             + [done, op('Pop')])
+             + kit_art() + set_this('rsKitTicks', [op('PushZero')])
+             + set_this('rsKitTimer', [op('PushByte', value=CHECK_MS), s('rsKitArt'), op('PushThis'),
+                                       op('PushByte', value=3), s('setInterval'), op('CallFunction')])
+             + [not_yet, op('Pop')])
     functions = [('rsLeft', choose(1, 'SND_NAV_UP')), ('rsRight', choose(2, 'SND_NAV_DOWN')),
-                 ('rsConfirm', confirm), ('rsCheckTeam', check), ('rsHoldHidden', hidden_hard(CLASS_MENU, True) + texts())]
+                 ('rsConfirm', confirm), ('rsCheckTeam', check), ('rsHoldHidden', hidden_hard(CLASS_MENU, True) + texts()),
+                 ('rsKitArt', kits)]
 
     ask = (hidden_hard(CLASS_MENU, True) + visible(parts, True)
            + set_member(path('rsPanel', 'kitInfo'), '_visible', [op('PushFalse')])
@@ -300,6 +356,127 @@ def team_selector(apt, rw):
                'refreshed for the chosen team once the server confirms')
 
 
+FRONTLINE_BLOCK = 0x2B048   # the in-game menu page "FRONTLINE REPORT" (movie frame 5, 'start')
+ROW_STEP = 31.0             # its rows menuitem_0..6 stand 31 px apart
+
+
+def frontline_without_leaderboards(apt, rw):
+    """FRONTLINE REPORT lists My Squad, Scoreboard, Help & Options, Leaderboards, Achievements, Exit Game and
+    Respawn/Suicide, one fixed row clip each (menuitem_0..6). Leaderboards (menuitem_3) is dropped from menuItems,
+    its row is never shown (getMenuTxt's table sets each row's _visible), and the three rows below move up a row."""
+    hits = [(i, f, s) for o, i, f, s in apt.action_items() if o == 'char movie frame 5 action' and s == FRONTLINE_BLOCK]
+    if len(hits) != 1:
+        raise ValueError('the FRONTLINE REPORT block is not where expected (a different game version?)')
+    item, field, start = hits[0]
+    ins = rw.block(start)
+    pool = next(i.args['items'] for i in ins if i.op == 0x88)
+    name = lambda i: apt.constants[pool[i.args['value']]] if i.op in (0xA2, 0xAE, 0xAF, 0xB2) else None
+    done = set()
+    k = 0
+    while k < len(ins):
+        i = ins[k]
+        # menuItems: [... [menuitem_3, 'leaderboard', true] ...] (6 instructions), then the list's count 7
+        if (i.op == 0x73 and name(ins[k + 1]) == 'leaderboard' and ins[k + 2].op == 0x70 and name(ins[k + 3]) == 'menuitem_3'
+                and ins[k + 4].op == 0xB5 and ins[k + 4].args['value'] == 3 and ins[k + 5].op == 0x42):
+            removed = ins[k:k + 6]
+            if any(j.args.get(key) is r for j in ins for key in ('target', 'end') for r in removed):
+                raise ValueError('a branch or function ends inside the Leaderboards item')
+            del ins[k:k + 6]
+            count = next(c for c in range(k, len(ins)) if ins[c].op == 0xB5 and ins[c + 1].op == 0x42 and ins[c + 2].op == 0x1D)
+            if ins[count].args['value'] != 7:
+                raise ValueError('the in-game menu list is not 7 items long')
+            new = op('PushByte', value=6)
+            for j in ins:
+                for key in ('target', 'end'):
+                    if j.args.get(key) is ins[count]:
+                        j.args[key] = new
+            ins[count] = new
+            done.add('item')
+            continue
+        # getMenuTxt: {menuitem_3: [!m_isTutorial, 'MENU_TITLE_LEADERBOARD'], ...}: the row is never visible
+        if (i.op == 0xA2 and name(i) == 'menuitem_3' and name(ins[k + 1]) == 'm_isTutorial' and ins[k + 2].op == 0x12
+                and name(ins[k + 3]) == 'MENU_TITLE_LEADERBOARD'):
+            new = op('PushFalse')
+            for j in ins:
+                for key in ('target', 'end'):
+                    if any(j.args.get(key) is r for r in ins[k + 1:k + 3]):
+                        j.args[key] = new
+            ins[k + 1:k + 3] = [new]
+            done.add('row')
+        k += 1
+    if done != {'item', 'row'}:
+        raise ValueError(f'the FRONTLINE REPORT block differs from the expected shape: {sorted(done)}')
+    rw.repoint(item, field, start, rw.assemble(ins), 'FRONTLINE REPORT: Leaderboards removed')
+    rows = {}
+    for f, items in apt.frames(apt.movie):
+        for it, kind in items:
+            if f == 5 and kind == 3 and apt.u(it + 0x34) and (apt.s(apt.u(it + 0x34)) or '').startswith('menuitem_'):
+                rows[apt.s(apt.u(it + 0x34))] = it
+    at = rows['menuitem_3'] + 16 + 16  # its own row, never shown: also placed off-screen in case it draws before getMenuTxt
+    x = struct.unpack('>f', apt.apt[at:at + 4])[0]
+    rw.patch(at, struct.pack('>f', x), struct.pack('>f', -2000.0), 'FRONTLINE REPORT: Leaderboards row off-screen')
+    for n in (4, 5, 6):
+        at = rows[f'menuitem_{n}'] + 16 + 20
+        y = struct.unpack('>f', apt.apt[at:at + 4])[0]
+        rw.patch(at, struct.pack('>f', y), struct.pack('>f', y - ROW_STEP), f'FRONTLINE REPORT: row menuitem_{n} up one row')
+
+
+# Every offer of SEE GAMER CARD (Y; FSCommand:showGamerCard, an Xbox LIVE overlay with nothing to show offline):
+# (block owner, block, setAction calls, button hints)
+GAMER_CARD = [
+    ('char movie frame 10 action', 0x2DF38, 1, 0),   # MY SQUAD
+    ('char 57 frame 0 action', 0x2F9C8, 0, 2),       # the friends list's button hints (pushed, and in a list of 3)
+    ('char 232 frame 0 action', 0x316D4, 1, 0),      # the scoreboard's player lists
+    ('char 234 frame 0 action', 0x31DD8, 1, 0),
+]
+
+
+def remove(ins, a, b):
+    """Delete ins[a:b]; branches and function ends that pointed into it point to the instruction after it."""
+    after = ins[b]
+    for j in ins:
+        for key in ('target', 'end'):
+            if any(j.args.get(key) is r for r in ins[a:b]):
+                j.args[key] = after
+    del ins[a:b]
+
+
+def no_gamer_card(apt, rw):
+    items = {(o, s): (i, f) for o, i, f, s in apt.action_items()}
+    for owner, start, calls, hints in GAMER_CARD:
+        if (owner, start) not in items:
+            raise ValueError(f'{owner}: the block is not where expected (a different game version?)')
+        item, field = items[(owner, start)]
+        ins = rw.block(start)
+        pool = next(i.args['items'] for i in ins if i.op == 0x88)
+        name = lambda i: apt.constants[pool[i.args['value']]] if i.op in (0xA2, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3) else None
+        found = [0, 0]
+        k = 0
+        while k < len(ins) - 10:
+            # setAction(BUTTON_UP, 'BUTTON_SEE_GAMERCARD', this, 'seeGamerCard'): 10 instructions, args pushed last first
+            if name(ins[k]) == 'seeGamerCard' and name(ins[k + 2]) == 'BUTTON_SEE_GAMERCARD' and name(ins[k + 9]) == 'setAction':
+                remove(ins, k, k + 10)
+                found[0] += 1
+                continue
+            # {which: 'y', txt: 'BUTTON_SEE_GAMERCARD'}, then ctx.btns.push(it) or further entries of a list literal
+            if (name(ins[k]) == 'which' and name(ins[k + 1]) == 'y' and name(ins[k + 3]) == 'BUTTON_SEE_GAMERCARD'
+                    and ins[k + 5].op == 0x43):
+                if ins[k + 6].op == 0x5A and name(ins[k + 9]) == 'push':
+                    remove(ins, k, k + 10)
+                else:
+                    count = next(c for c in range(k + 6, len(ins)) if ins[c].op == 0xB5 and ins[c + 1].op == 0x42)
+                    if ins[count].args['value'] != 3:
+                        raise ValueError(f'{owner}: the button hint list is not 3 long')
+                    ins[count].args['value'] = 2
+                    remove(ins, k, k + 6)
+                found[1] += 1
+                continue
+            k += 1
+        if found != [calls, hints]:
+            raise ValueError(f'{owner}: expected {calls} SEE GAMER CARD actions and {hints} hints, found {found}')
+        rw.repoint(item, field, start, rw.assemble(ins), f'{owner}: SEE GAMER CARD removed')
+
+
 def force_team(apt, rw, team):
     item, field, start = deploy_block(apt)
     ins = rw.block(start)
@@ -333,6 +510,8 @@ def build(bundle_bytes, team=None):
         force_team(apt, rw, team)
     else:
         team_selector(apt, rw)
+    frontline_without_leaderboards(apt, rw)
+    no_gamer_card(apt, rw)
     new_res = rw.res(res)
     problems = Apt(new_res).validate()[2]
     if problems:
