@@ -5,8 +5,10 @@ r"""Runs the suite's tests: one line per test, the failures' output at the end, 
 Every test is about BF1943 or the tools that work on it; tests for BFBC2 data and for the copied tools not yet
 adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
   quick   no game data, about a minute: repository rules, error handling, the STFS reader on packages it builds,
-          the Xenia kit's patch file, assembler and bot code, NavKit's builder rules (both variants) and the offline
-          sampler on a made-up level, the Xenia run reader on a log it writes, the executable tools' workspace lookup
+          the Xenia kit's patch file, assembler and bot code, NavKit's builder rules (both variants), the offline
+          sampler on a made-up level, jump links to a made-up ship's gun platform, a full build of a made-up level
+          with a 0.8 m / 0.2 m seam, the navigation reader's heights, the Xenia run reader on a log it writes, the
+          executable tools' workspace lookup
   bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), about 5 minutes: the kit's
           full build, every BF1943 bundle and DBX partition, terrain and water on every level, the menu movies, the
           spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit; the level loader on every map, DbxEdit
@@ -35,6 +37,8 @@ def tests():
     return [
         ('repository rules', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_repo.py')]),
         ('error handling and logs', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_errors.py')]),
+        ('navigation reader: cell heights use the node offset', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navdata_offset.py')]),
+        ('RSNV navigation file: both byte orders, search, locate, damaged files', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_rsnv.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
         ('STFS reader, built packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
         ('Xenia run reader, a written log', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_xeniarun.py')]),
@@ -43,6 +47,8 @@ def tests():
         ('Xenia kit: PowerPC assembler against capstone', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_ppcasm.py')]),
         ('Xenia kit: bots experiment layout', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py')]),
         ('NavKit big-endian: offline sampler (made-up level)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_sampler1943.py')]),
+        ('NavKit big-endian: jump links to ships\' AA gun platforms', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_jumplinks1943.py')]),
+        ('NavKit big-endian: seams between 0.8 m and 0.2 m sectors', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_mixed_seam.py')]),
         ('NavKit big-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_water_rule.py')]),
         ('NavKit big-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navedits.py')]),
         ('NavKit big-endian: area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_area_link.py')]),
@@ -81,6 +87,7 @@ def tests():
         ('the suite window (hub)', 'bf1943', [PY, tools, 'hub']),
         ('3D tools: Map Inspector, Navigation Studio', 'bf1943', [PY, tools, 'viewers']),
         ('NavKit big-endian: enclosure probe on Wake Island', 'bf1943', [PY, tools, 'probe']),
+        ('NavKit big-endian: RSNV export of your builds', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navexport1943.py')]),
         ('executable tools from the research workspace', 'bf1943', [PY, tools, 'xex']),
     ]
 

@@ -70,6 +70,13 @@ pseudocode, not original source.
 | `parse_function_trace.py` | a Xenia function trace (`run_xenia_probe.ps1 -FunctionTrace` in the test harness) mapped onto the image's functions |
 | `workspace.py`, `workspace.ps1` | the research workspace lookup |
 
+## Tests
+
+`python -B tests\test_workspace.py` (the `quick` tier of `run_tests.py`; no game data): `workspace.py` and
+`workspace.ps1` accept a folder with `work\` and `research\` and refuse one without. The `bf1943` tier also runs
+`ppcdis.py` from the research workspace (`BF1943_RESEARCH`, else operation-rising-sun next to the suite) on the
+decoded image; it is skipped without one.
+
 ## Checked
 
 Moved and run from operation-rising-sun on 2026-10-23: `map_functions.py` and `inspect_decoded.py` give the same

@@ -9,7 +9,8 @@
                                               over them; --pitch 0.8 or 0.2 runs that pass only
   python navkit.py build   wake_island_s      the navigation build with BF1943's soldier (soldier1943.py):
                                               0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn
-                                              seeds, ladder links
+                                              seeds, ladder links, jump links to ships' AA gun platforms
+                                              (jumplinks1943.py), seam gap nodes (navbuild.SEAM_GAP_NODES)
   python navkit.py check   wake_island_s      structure (hpdcheck.py) and routes (routecheck1943.py): every
                                               spawn on the network, a route between every pair of flags
   python navkit.py all     wake_island_s      prepare, sample, build, check
@@ -20,9 +21,9 @@ Options: --game <dist\\xenon folder> (default: BF1943_GAME, else bf1943-xenia-ki
 The game copy is only read and no game is started: everything is computed from the level's data. Files, under
 the suite's work folder (BF1943_WORK overrides): work\\levels\\<level>\\objects\\ (levelobjects1943.py's files,
 heightfield.res, water_mesh.res), samples\\ (samples*.bin and their logs), navkit\\ (navkit.json settings,
-<level>.hpd, build.log, check.txt / check.json). A Wake Island run takes about 45 minutes on 8 cores, most of it
-the 0.2 m sampling. The build is the input of our own navigation runtime; BF1943 has no Kynapse runtime, so there
-is nothing to install in the game.
+<level>.hpd, build.log, check.txt / check.json, jump_links.json). A Wake Island run takes about 45 minutes on 8
+cores, most of it the 0.2 m sampling. The build is the input of our own navigation runtime; BF1943 has no Kynapse
+runtime, so there is nothing to install in the game.
 """
 import json
 import math
@@ -211,12 +212,18 @@ def build(game, lv, log=print):
         lines.append(m)
         log(m)
     t0 = time.time()
+    # jump links: the AA gun platforms of ships, under their decks (jumplinks1943); built as ladders of kind 'jump'
+    import jumplinks1943
+    jumps = jumplinks1943.level_links(lv, blog)
+    with open(os.path.join(p['navkit'], 'jump_links.json'), 'w', encoding='utf-8') as f:
+        json.dump(jumps, f, indent=1)
+    ladders = json.load(open(os.path.join(o, 'ladders.json'))) + jumps
     navbuild.build(os.path.join(sm, 'samples.bin'), os.path.join(o, 'forbid_tris.npy'), xoff, zoff, p['hpd'],
                    step=soldier1943.STEP, dynamic_path=os.path.join(o, 'dynamic_tris.npy'),
                    exclude_path=os.path.join(o, 'exclude_tris.npy'), exclude_foot_path=os.path.join(o, 'exclude_footprint_tris.npy'),
                    seeds=json.load(open(os.path.join(o, 'soldier_spawns.json'))), water=mesh,
                    max_water_depth=soldier1943.WATER_DEPTH, high_path=os.path.join(sm, 'samples_high.bin'),
-                   detailed=detailed, ladders=json.load(open(os.path.join(o, 'ladders.json'))), log=blog)
+                   detailed=detailed, ladders=ladders, log=blog)
     open(os.path.join(p['navkit'], 'build.log'), 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
     s['built'] = time.strftime('%Y-%m-%d %H:%M')
     save_settings(lv, s)

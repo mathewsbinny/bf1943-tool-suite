@@ -191,6 +191,8 @@ DETAILED_PITCH = 0.2            # DICE's detailed zones: whole sectors at pitch 
                                 # (header rect -0.2 .. 100.22; KYNAPSE_SPEC.md 4.5). Built in a second pass (build(...,
                                 # detailed=...)) from a pitch-0.2 sampling run, merged with the normal build.
 CARRY_RADIUS = 1.0              # a shared node carried across a mixed-pitch seam is attached to ground within this (m)
+SEAM_GAP_NODES = True           # mixed-pitch seams: a shared node wherever kept ground meets the seam on both grids
+                                # and no carried node joins it (seam_gap_nodes)
 DETAILED_LINK_STEP = 0.3        # LINK_STEP in detailed zones: DICE's one-cell height steps inside its pitch-0.2 areas
                                 # (ONS_MP_002, 10,353 outline segments) p99 0.31, p99.9 0.42, max 0.49 m - about half its
                                 # pitch-0.8 values (p99 0.96, max 1.03), not a quarter: the same slope (0.15 m) cut sloped
@@ -1048,8 +1050,134 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
             gone = {q for q, p in enumerate(pts_) if p[0] in drop}
             pairs = [p for p in pairs if p[0] not in gone and p[1] not in gone]
         merged.append((sid, bnd, mesh, pts_, pairs, origin))
+    if SEAM_GAP_NODES:
+        by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
+        added, runs, one_side = seam_gap_nodes(a, b, by_sec, set(b_det), xoff, zoff)
+        log(f'detailed pass: {added} seam gap nodes on mixed seams ({runs} stretches of shared ground with no linked '
+            f'shared node; {one_side} joined on one side only)')
     log(f'merged: {len(a_norm)} normal + {len(b_det)} detailed sectors')
     return merged
+
+
+SEAM_REACH = 1.0                # seam_gap_nodes: each grid's ground for a gap node lies within this of the seam (m)
+
+
+def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff):
+    """SEAM_GAP_NODES: the shared nodes of a mixed-pitch seam come from the normal build (one per BORDER_NODE_SPACING
+    of its ground along the seam) and are carried to the detailed one; detailed ground at the seam that no carried node
+    reaches - a 0.2 m opening the 0.8 m run places no node near, a carried node dropped for want of ground within
+    CARRY_RADIUS, or a copy that joined no node of its sector - was not joined across the seam at all (Wake Island's
+    Japanese carrier, Coral Sea's islets: 2026-10-24). Along every mixed seam, each stretch where both grids have
+    kept ground of their own sector within SEAM_REACH of the seam, within 0.6 m of each other's height, and no shared
+    node with edges in both sectors lies within CARRY_RADIUS + 0.8 m of it (and 0.6 m of its height), gets one shared
+    node on the seam (the stretch's middle first), joined into both
+    sector graphs by walkable lines (join_groups when none reaches). by_sec: {sector: merged graph tuple}, changed in
+    place. Returns (nodes added, stretches found, nodes that joined only the detailed side)."""
+    la, lb = a['level'], b['level']
+    next_id = [b['next_id']]
+
+    def new_id():
+        next_id[0] += 1
+        return next_id[0]
+
+    def linked_shared(sec):
+        pts, pairs = by_sec[sec][3], by_sec[sec][4]
+        has = set()
+        for u, v, _d in pairs:
+            has.update((u, v))
+        return {pts[q][0]: pts[q][1] for q in has if pts[q][0] & 0x80000000}
+
+    def ground(level, info, sec, x, z, inward, step):
+        """Kept surfaces of the sector's own areas at the column nearest the seam (within SEAM_REACH inward)."""
+        s = level.s
+        own = info[sec]['area_of']
+        for q in range(int(SEAM_REACH / step + 1e-6) + 1):
+            px, pz = x + inward[0] * q * step, z + inward[1] * q * step
+            gi, gj = int(round((px - s.min_x) / step)), int(round((pz - s.min_z) / step))
+            ks = [k for k in level.surfaces(gi, gj) if k in own]
+            if ks:
+                return [(k, gi, gj) for k in ks]
+        return []
+
+    def attach(level, info, sec, nid, pos, k, gi, gj, pitch):
+        set_pitch(pitch)
+        gi0, gj0, ox, oz = info[sec]['origin']
+        pts, pairs = by_sec[sec][3], by_sec[sec][4]
+        if any(p[2] == k for p in pts):                     # one node per surface
+            return False
+        i, j = gi - gi0, gj - gj0
+        pts.append((nid, pos, k, i, j))
+        me = len(pts) - 1
+        for q, p in enumerate(pts[:-1]):
+            d = math.dist(pos, p[1])
+            if d <= DIST_EDGE_MAX and line_walkable(level, k, (i, j), (p[3], p[4]), gi0, gj0, p[2]):
+                pairs.append((me, q, d))
+        if not any(me in (u, v) for u, v, _d in pairs):
+            join_groups(level, info[sec]['areas'], pts, pairs, gi0, gj0, ox, oz, new_id)
+        return any(me in (u, v) for u, v, _d in pairs)
+
+    added = runs_found = one_side = 0
+    pa, pb = a['pitch'], DETAILED_PITCH
+    try:
+        for S in sorted(b_secs):
+            for dX, dY in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                T = (S[0] + dX, S[1] + dY)
+                if T not in by_sec or T in b_secs or T not in a['info']:
+                    continue
+                x0, z0 = (S[0] + xoff) * 100.0, (S[1] + zoff) * 100.0
+                # the seam line, the direction along it, and inward (into S, into T)
+                if dX:
+                    xs = x0 + (100.0 if dX > 0 else 0.0)
+                    along = [(xs, z0 + t * pb) for t in range(int(100 / pb))]
+                else:
+                    zs = z0 + (100.0 if dY > 0 else 0.0)
+                    along = [(x0 + t * pb, zs) for t in range(int(100 / pb))]
+                into_s, into_t = (-dX, -dY), (dX, dY)
+                shared = {nid: pos for nid, pos in linked_shared(S).items() if nid in linked_shared(T)}
+                runs, active = [], []
+                for t, (x, z) in enumerate(along):
+                    gb = ground(lb, b['info'], S, x, z, into_s, pb)
+                    ga = ground(la, a['info'], T, x, z, into_t, pa)
+                    nxt = []
+                    for k, gi, gj in gb:
+                        yb = float(lb.y[k])
+                        ka = [m for m in ga if abs(float(la.y[m[0]]) - yb) <= 0.6]
+                        if not ka:
+                            continue
+                        m = min(ka, key=lambda m: abs(float(la.y[m[0]]) - yb))
+                        item = (t, x, z, yb, (k, gi, gj), m)
+                        for r in active:
+                            if r[-1][0] == t - 1 and abs(r[-1][3] - yb) <= DETAILED_LINK_STEP:
+                                r.append(item)
+                                nxt.append(r)
+                                active.remove(r)
+                                break
+                        else:
+                            r = [item]
+                            runs.append(r)
+                            nxt.append(r)
+                    active = nxt
+                for r in runs:
+                    covered = any(min(math.hypot(p[0] - it[1], p[2] - it[2]) for it in r) <= CARRY_RADIUS + 0.8 and
+                                  min(abs(p[1] - Y_OFFSET - it[3]) for it in r) <= 0.6 for p in shared.values())
+                    if covered:
+                        continue
+                    runs_found += 1
+                    mid = len(r) // 2
+                    for it in sorted(r, key=lambda it: abs(it[0] - r[mid][0])):
+                        _t, x, z, yb, (kb, gib, gjb), (ka, gia, gja) = it
+                        nid = 0x80000000 | new_id()
+                        pos = (x, yb + Y_OFFSET, z)
+                        if not attach(lb, b['info'], S, nid, pos, kb, gib, gjb, pb):
+                            continue
+                        if attach(la, a['info'], T, nid, pos, ka, gia, gja, pa):
+                            added += 1
+                        else:
+                            one_side += 1
+                        break
+    finally:
+        set_pitch(DETAILED_PITCH)
+    return added, runs_found, one_side
 
 
 def write_file(graphs, out_path, log, t0):
@@ -1090,76 +1218,10 @@ def line_walkable(level, k0, a, b, gi0, gj0, k1):
     return k == k1 or abs(level.y[k] - level.y[k1]) <= 0.6
 
 
-def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id, orders=(), ladders=()):
-    pts = []    # (id, pos, k, local i, local j)
-    # one node per surface: an area-centre or portal node whose surface already holds a node (another area's or
-    # portal's, or a border node) is not added - DICE's route graphs have no two nodes at one position except a
-    # border node in both of its sectors (sp_004_b: 1,515 shared positions, all border pairs with one id); NavKit
-    # had 377 duplicate pairs joined by zero-length edges (2026-10-20)
-    taken = {k for _nid, _pos, k in borders} if DEDUP_GRAPH_NODES else set()
-
-    def add(i, j, k):
-        if DEDUP_GRAPH_NODES:
-            if k in taken:
-                return
-            taken.add(k)
-        pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
-    for a in areas:
-        if len(a['cells']) < 4:
-            continue
-        ci = sum(c[0] for c in a['cells']) / len(a['cells'])
-        cj = sum(c[1] for c in a['cells']) / len(a['cells'])
-        i, j, k = min(a['cells'], key=lambda c: (c[0] - ci) ** 2 + (c[1] - cj) ** 2)
-        add(i, j, k)
-    cell_of = {c[2]: (c[0], c[1]) for a in areas for c in a['cells']}
-    for ai, (portals, _b, _o) in enumerate(traced):
-        for p in portals:
-            if p.target < ai:
-                continue          # one node per portal pair
-            mx, mz = (p.p0[0] + p.p1[0]) / 2, (p.p0[2] + p.p1[2]) / 2
-            best = min(areas[ai]['cells'], key=lambda c: (ox + c[0] * PITCH - mx) ** 2 + (oz + c[1] * PITCH - mz) ** 2)
-            i, j, k = best
-            add(i, j, k)
-    for nid, pos, k in borders:
-        # the node's own surface cell (a node carried from another pitch's build sits up to CARRY_RADIUS from it;
-        # walkable lines must start on that cell, not on the cell under the position)
-        i, j = cell_of.get(k) or (int(round((pos[0] - ox) / PITCH)), int(round((pos[2] - oz) / PITCH)))
-        pts.append((nid, pos, k, i, j))
-    cover = NODE_COVER.get('detailed' if abs(PITCH - DETAILED_PITCH) < 1e-6 else 'normal')
-    if cover:
-        add_cover_nodes(level, areas, pts, add, ox, oz, cover)
-    # edges: pairs within DIST_EDGE_MAX whose straight line is walkable
-    cell = DIST_EDGE_MAX
-    grid = defaultdict(list)
-    for idx, p in enumerate(pts):
-        grid[(int(p[1][0] // cell), int(p[1][2] // cell))].append(idx)
-    pairs = []
-    for idx, p in enumerate(pts):
-        gx, gz = int(p[1][0] // cell), int(p[1][2] // cell)
-        for dx in (-1, 0, 1):
-            for dz in (-1, 0, 1):
-                for q in grid.get((gx + dx, gz + dz), ()):
-                    if q <= idx:
-                        continue
-                    d = math.dist(p[1], pts[q][1])
-                    if d <= DIST_EDGE_MAX and line_walkable(level, p[2], (p[3], p[4]), (pts[q][3], pts[q][4]), gi0, gj0, pts[q][2]):
-                        pairs.append((idx, q, d))
-    if GABRIEL_EDGES == 'all' or (GABRIEL_EDGES == 'detailed' and abs(PITCH - DETAILED_PITCH) < 1e-6):
-        pairs = gabriel_prune(pts, pairs)
-    for kf, kt in ladders:
-        # a ladder link: a node on the ground at its foot and at its top, joined directly (the climb is no walkable
-        # line); the runtime's mover walks the bot into the ladder, which takes any soldier who walks into it
-        ends = []
-        for k in (kf, kt):
-            idx = next((q for q, p in enumerate(pts) if p[2] == k), None)
-            if idx is None:
-                i, j = cell_of[k]
-                pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
-                idx = len(pts) - 1
-            ends.append(idx)
-        pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
-    # Connect remaining groups: grid search (8-connected, step rule) from one group to the nearest node
-    # of another, then string-pull the path into straight walkable legs with waypoint nodes.
+def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id):
+    """Connect a sector graph's remaining groups: grid search (8-connected, step rule, within the sector's
+    WINDOW) from one group to the nearest node of another, then string-pull the path into straight walkable legs
+    with waypoint nodes. pts and pairs grow in place. Returns (node_at, cell_ij) for the passes after it."""
     parent = list(range(len(pts)))
 
     def find(x):
@@ -1237,6 +1299,79 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
                 pairs.append((u, v, math.dist(pts[u][1], pts[v][1])))
                 parent[find(u)] = find(v)
             changed = True
+    return node_at, cell_ij
+
+
+def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id, orders=(), ladders=()):
+    pts = []    # (id, pos, k, local i, local j)
+    # one node per surface: an area-centre or portal node whose surface already holds a node (another area's or
+    # portal's, or a border node) is not added - DICE's route graphs have no two nodes at one position except a
+    # border node in both of its sectors (sp_004_b: 1,515 shared positions, all border pairs with one id); NavKit
+    # had 377 duplicate pairs joined by zero-length edges (2026-10-20)
+    taken = {k for _nid, _pos, k in borders} if DEDUP_GRAPH_NODES else set()
+
+    def add(i, j, k):
+        if DEDUP_GRAPH_NODES:
+            if k in taken:
+                return
+            taken.add(k)
+        pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
+    for a in areas:
+        if len(a['cells']) < 4:
+            continue
+        ci = sum(c[0] for c in a['cells']) / len(a['cells'])
+        cj = sum(c[1] for c in a['cells']) / len(a['cells'])
+        i, j, k = min(a['cells'], key=lambda c: (c[0] - ci) ** 2 + (c[1] - cj) ** 2)
+        add(i, j, k)
+    cell_of = {c[2]: (c[0], c[1]) for a in areas for c in a['cells']}
+    for ai, (portals, _b, _o) in enumerate(traced):
+        for p in portals:
+            if p.target < ai:
+                continue          # one node per portal pair
+            mx, mz = (p.p0[0] + p.p1[0]) / 2, (p.p0[2] + p.p1[2]) / 2
+            best = min(areas[ai]['cells'], key=lambda c: (ox + c[0] * PITCH - mx) ** 2 + (oz + c[1] * PITCH - mz) ** 2)
+            i, j, k = best
+            add(i, j, k)
+    for nid, pos, k in borders:
+        # the node's own surface cell (a node carried from another pitch's build sits up to CARRY_RADIUS from it;
+        # walkable lines must start on that cell, not on the cell under the position)
+        i, j = cell_of.get(k) or (int(round((pos[0] - ox) / PITCH)), int(round((pos[2] - oz) / PITCH)))
+        pts.append((nid, pos, k, i, j))
+    cover = NODE_COVER.get('detailed' if abs(PITCH - DETAILED_PITCH) < 1e-6 else 'normal')
+    if cover:
+        add_cover_nodes(level, areas, pts, add, ox, oz, cover)
+    # edges: pairs within DIST_EDGE_MAX whose straight line is walkable
+    cell = DIST_EDGE_MAX
+    grid = defaultdict(list)
+    for idx, p in enumerate(pts):
+        grid[(int(p[1][0] // cell), int(p[1][2] // cell))].append(idx)
+    pairs = []
+    for idx, p in enumerate(pts):
+        gx, gz = int(p[1][0] // cell), int(p[1][2] // cell)
+        for dx in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                for q in grid.get((gx + dx, gz + dz), ()):
+                    if q <= idx:
+                        continue
+                    d = math.dist(p[1], pts[q][1])
+                    if d <= DIST_EDGE_MAX and line_walkable(level, p[2], (p[3], p[4]), (pts[q][3], pts[q][4]), gi0, gj0, pts[q][2]):
+                        pairs.append((idx, q, d))
+    if GABRIEL_EDGES == 'all' or (GABRIEL_EDGES == 'detailed' and abs(PITCH - DETAILED_PITCH) < 1e-6):
+        pairs = gabriel_prune(pts, pairs)
+    for kf, kt in ladders:
+        # a ladder link: a node on the ground at its foot and at its top, joined directly (the climb is no walkable
+        # line); the runtime's mover walks the bot into the ladder, which takes any soldier who walks into it
+        ends = []
+        for k in (kf, kt):
+            idx = next((q for q, p in enumerate(pts) if p[2] == k), None)
+            if idx is None:
+                i, j = cell_of[k]
+                pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
+                idx = len(pts) - 1
+            ends.append(idx)
+        pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
+    # connect remaining groups (join_groups)
+    node_at, cell_ij = join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id)
     if DETOUR_REPAIR:
         for p in range(DETOUR_PASSES):
             added = repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id)

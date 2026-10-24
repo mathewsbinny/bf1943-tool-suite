@@ -348,15 +348,24 @@ LADDER_FOOT = (-1.0, 1.0)       # ... at the foot: from 1 m below to 1 m above t
 LADDER_TOP = (-1.5, 0.5)        # ... at the top: 1.5 m below to 0.5 m above its top (its rails stick out over the deck)
 
 
-def ladder_ends(s, ok, keep, lad, reach=LADDER_REACH):
-    """(foot surface, top surface) of a ladder {'lo', 'hi'} (ladders.py): at each end the surface allowed by the rules
-    (ok) nearest the ladder's box, within reach horizontally and the end's height band; kept ground first. None where
-    there is none."""
+def _bands(lad, reach):
+    """A link's end height bands and reach: a ladder's (LADDER_FOOT, LADDER_TOP, the reach given), or a jump link's own
+    (jumplinks1943: foot_band, top_band, reach - tight, so a link cannot take another floor)."""
     lo, hi = lad['lo'], lad['hi']
+    fb, tb = lad.get('foot_band', LADDER_FOOT), lad.get('top_band', LADDER_TOP)
+    return ((lo[1] + fb[0], lo[1] + fb[1]), (hi[1] + tb[0], hi[1] + tb[1])), lad.get('reach', reach)
+
+
+def ladder_ends(s, ok, keep, lad, reach=LADDER_REACH):
+    """(foot surface, top surface) of a ladder {'lo', 'hi'} (ladders.json, from levelobjects1943.py): at each end the
+    surface allowed by the rules (ok) nearest the ladder's box, within reach horizontally and the end's height band;
+    kept ground first. None where there is none. A jump link (jumplinks1943) gives its own bands and reach."""
+    lo, hi = lad['lo'], lad['hi']
+    bands, reach = _bands(lad, reach)
     i0, i1 = int(math.floor((lo[0] - reach - s.min_x) / s.pitch)), int(math.ceil((hi[0] + reach - s.min_x) / s.pitch))
     j0, j1 = int(math.floor((lo[2] - reach - s.min_z) / s.pitch)), int(math.ceil((hi[2] + reach - s.min_z) / s.pitch))
     out = []
-    for y0, y1 in ((lo[1] + LADDER_FOOT[0], lo[1] + LADDER_FOOT[1]), (hi[1] + LADDER_TOP[0], hi[1] + LADDER_TOP[1])):
+    for y0, y1 in bands:
         best = None
         for j in range(max(j0, 0), min(j1, s.nz - 1) + 1):
             for i in range(max(i0, 0), min(i1, s.nx - 1) + 1):
@@ -385,11 +394,12 @@ def ladder_end_options(s, keep, gx, gz, stair, step, lad, reach=LADDER_REACH, lo
     the nearer (the enclosed floor) left the ladder out of the network."""
     lo, hi = lad['lo'], lad['hi']
     y = s.y
+    bands, reach = _bands(lad, reach)
     pad = reach + local
     i0, i1 = max(int(math.floor((lo[0] - pad - s.min_x) / s.pitch)), 0), min(int(math.ceil((hi[0] + pad - s.min_x) / s.pitch)), s.nx - 1)
     j0, j1 = max(int(math.floor((lo[2] - pad - s.min_z) / s.pitch)), 0), min(int(math.ceil((hi[2] + pad - s.min_z) / s.pitch)), s.nz - 1)
     out = []
-    for y0, y1 in ((lo[1] + LADDER_FOOT[0], lo[1] + LADDER_FOOT[1]), (hi[1] + LADDER_TOP[0], hi[1] + LADDER_TOP[1])):
+    for y0, y1 in bands:
         cand = []                                   # (distance, surface)
         for j in range(j0, j1 + 1):
             for i in range(i0, i1 + 1):

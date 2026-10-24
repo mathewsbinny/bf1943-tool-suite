@@ -21,7 +21,9 @@ Repeatable tests of maps and bots, with results compared between builds (OPFOR's
 - Bot tests in Xenia are, for now, `bf1943-xenia-kit`'s (`tests/test_bots.py`) and its `rs-bots:` log lines, which
   `xenia-run` reads.
 - Offline navigation checks: `bf1943-auto-navkit-big-endian`'s `navkit.py check` (every spawn and flag on the route
-  graph, a route between every pair of flags), and `tools/enclosure_probe1943.py` for a spot that is cut off.
+  graph, a route between every pair of flags), `tools/navaudit1943.py` (a build audited against its level: every
+  required position, reachability, islands, consistency; 2026-10-24), and `tools/enclosure_probe1943.py` for a spot
+  that is cut off.
 
 **Planned (milestone M5)**
 

@@ -6,13 +6,15 @@ navdiff); the format is in bf1943-auto-navkit-little-endian/research/KYNAPSE_SPE
     nav.areas[k]                 NavArea: sector, tile, layer, pitch, boundary pieces, island
     nav.cell_xz, nav.cell_y      every walkable cell on the 0.8 m grid (navdiff's cells), its ground height
     nav.cell_area                the area each cell belongs to
-    nav.node_pos, nav.edges      route graph: node positions (ground + 0.95 m, as stored), edges as index pairs
+    nav.node_pos, nav.edges      route graph: node positions (ground + Y_OFFSET, as stored), edges as index pairs
     nav.edge_cost                each edge's cost in metres, as stored
     nav.node_island, nav.islands islands (connected parts of the graph), largest first
+    nav.ladder_edge              the edges that are ladder links (LADDER_DY / LADDER_SLOPE)
 
-Cells come from navdiff.area_cells (samples inside an area's boundary, height from the nearest boundary point);
-where a cell lies on terrain, the terrain height field's height is used instead. That step is slow for a
-whole level (10-40 s), so it is cached per file (size and date) when cache_dir is given.
+Cells come from navdiff.area_cells (samples inside an area's boundary, height from the nearest boundary point, less
+Y_OFFSET); where a cell and that boundary point lie on terrain (_ground), the terrain height field's height is used
+instead. That step is slow for a whole level (10-40 s), so it is cached per file (size and date) and Y_OFFSET when
+cache_dir is given.
 """
 import hashlib
 import json
@@ -32,9 +34,12 @@ import kymesh  # noqa: E402
 import navdiff  # noqa: E402
 
 GRID = navdiff.GRID
-Y_OFFSET = navdiff.Y_OFFSET                 # boundaries and nodes are stored 0.95 m above the ground
+Y_OFFSET = navdiff.Y_OFFSET                 # boundaries and nodes are stored this far above the ground: DICE's 0.95;
+                                            # BF1943 builds 0.9 (callers set it: soldier1943.HEIGHT / 2). Cell heights
+                                            # use it too (navdiff.area_cells)
 DETAILED = 0.5                              # areas with a smaller pitch are detailed zones (DICE: 0.2 m)
-CACHE_VERSION = 3                           # 3: ladder links and ladder ground
+CACHE_VERSION = 5                           # 3: ladder links and ladder ground; 4: cell heights use Y_OFFSET;
+                                            # 5: terrain heights only where the boundary lies on the terrain
 LADDER_DY = 2.5                             # a ladder link: a route edge climbing more than this (m) ...
 LADDER_SLOPE = 1.5                          # ... and more than this many metres per metre across - no walkable link is
                                             # that steep (DICE's files have none; NavKit's ladder links, ladders.py)
@@ -92,16 +97,28 @@ class NavData:
 def _key(path, heightfield=None):
     st = os.stat(path)
     hf = 'hf' if heightfield is not None else 'est'
-    return hashlib.sha1(f'{CACHE_VERSION}|{os.path.abspath(path).lower()}|{st.st_size}|{st.st_mtime_ns}|{hf}'.encode()).hexdigest()[:20]
+    return hashlib.sha1(f'{CACHE_VERSION}|{os.path.abspath(path).lower()}|{st.st_size}|{st.st_mtime_ns}|{hf}|{Y_OFFSET}'.encode()).hexdigest()[:20]
 
 
-def _ground(xz, est, heightfield):
-    """Cell heights: the terrain height field's where the cell lies on terrain (within 1.5 m of navdiff's
-    estimate), else the estimate."""
+ON_TERRAIN = 0.1                            # m: a boundary point lies on the terrain when its ground height is within
+                                            # the terrain's height range half a cell around it, plus this
+
+
+def _ground(xz, est, heightfield, near=None):
+    """Cell heights: the terrain height field's where the cell lies on terrain, else navdiff's estimate (the nearest
+    boundary point's ground height). On terrain: the estimate is within 1.5 m of the terrain at the cell, and the
+    boundary point the estimate came from (near, (n, 2) x, z) lies on the terrain itself - without that test a floor
+    up to 1.5 m above the terrain (a house's, Wake Island's beach houses: 1.0 m) took the terrain's height."""
     if heightfield is None or not len(xz):
         return est
     t = heightfield.height(xz[:, 0], xz[:, 1])
-    return np.where(np.abs(t - est) < 1.5, t, est)
+    on = np.abs(t - est) < 1.5
+    if near is not None:
+        h = GRID / 2
+        ring = np.stack([heightfield.height(near[:, 0] + dx, near[:, 1] + dz)
+                         for dx, dz in ((0, 0), (h, 0), (-h, 0), (0, h), (0, -h))])
+        on &= (est >= ring.min(0) - ON_TERRAIN) & (est <= ring.max(0) + ON_TERRAIN)
+    return np.where(on, t, est)
 
 
 def _cells(f, heightfield, cache_dir, path):
@@ -109,25 +126,28 @@ def _cells(f, heightfield, cache_dir, path):
         cp = os.path.join(cache_dir, _key(path) + '.npz')
         if os.path.isfile(cp):
             z = np.load(cp)
-            return z['xz'], _ground(z['xz'], z['est'], heightfield), z['area'], z['est']
-    xz, ys, area_of = [], [], []
+            return z['xz'], _ground(z['xz'], z['est'], heightfield, z['near']), z['area'], z['est']
+    xz, ys, nears, area_of = [], [], [], []
     k = 0
     for s in f.sectors:
         for a in kymesh.parse_mesh(s.mesh).areas:
-            c = navdiff.area_cells(a)
+            c = navdiff.area_cells(a, Y_OFFSET, points=True)
             if c:
                 ij = np.array(list(c.keys()), dtype=np.float64)
+                v = np.array(list(c.values()), dtype=np.float64)
                 xz.append(ij * GRID)
-                ys.append(np.array(list(c.values()), dtype=np.float64))
+                ys.append(v[:, 0])
+                nears.append(v[:, 1:])
                 area_of.append(np.full(len(c), k, dtype=np.int32))
             k += 1
     xz = np.concatenate(xz) if xz else np.zeros((0, 2))
     est = np.concatenate(ys) if ys else np.zeros(0)
+    near = np.concatenate(nears) if nears else np.zeros((0, 2))
     area = np.concatenate(area_of) if area_of else np.zeros(0, np.int32)
-    y = _ground(xz, est, heightfield)
+    y = _ground(xz, est, heightfield, near)
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
-        np.savez(os.path.join(cache_dir, _key(path) + '.npz'), xz=xz, y=y, area=area, est=est)
+        np.savez(os.path.join(cache_dir, _key(path) + '.npz'), xz=xz, y=y, area=area, est=est, near=near)
     return xz, y, area, est
 
 

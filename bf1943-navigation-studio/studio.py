@@ -1,8 +1,10 @@
 """BF1943 Navigation Studio: a BF1943 level's navigation build in 3D, with its bases, flags, spawns and ladders.
 
-  python studio.py <level> [--hpd <file.hpd>] [--color island|sector|pitch|small-islands]
+  python studio.py <level> [--hpd <file.hpd>] [--color island|sector|pitch|small-islands] [--game <folder>]
   python studio.py <level> --screenshot out.png [--frames N] [--color ...] [--island N] [--path "x,y,z;x,y,z"]
-                   [--focus x,y,z] [--hide <layer>,...]   (tests)
+                   [--focus x,y,z [--distance m]] [--yaw rad] [--pitch rad] [--hide <layer>,...]
+                   (tests and pictures; the orbit camera's angles in radians, pitch held within +-1.55: 1.5 looks
+                   almost straight down)
 
 The level comes from your copy's bundles (core level1943.py); the build is NavKit's (bf1943-auto-navkit-big-endian:
 navkit.py build <level> writes work\\levels\\<level>\\navkit\\<level>.hpd, the default; nodes stand half the
@@ -411,6 +413,10 @@ def main(argv):
         print('path: ' + (f'cost {r.cost:.1f} m, {len(r.nodes)} nodes' if r.found else f'none - {r.reason}'))
     if '--focus' in opts:                                   # tests: the camera on a point
         v.camera.focus(np.array([float(c) for c in opts['--focus'].split(',')]), float(opts.get('--distance', 45)))
+    if '--yaw' in opts:                                     # the orbit camera's angles (radians; pitch 1.5 looks down)
+        v.camera.yaw = float(opts['--yaw'])
+    if '--pitch' in opts:
+        v.camera.pitch = max(-1.55, min(1.55, float(opts['--pitch'])))
     if '--screenshot' in opts:
         v.exit_after = int(opts.get('--frames', 40))
     v.run()

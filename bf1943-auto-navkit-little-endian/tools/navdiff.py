@@ -66,9 +66,11 @@ def segments(area):
     return segs
 
 
-def area_cells(area):
+def area_cells(area, y_offset=None, points=False):
     """Samples inside the area's boundary (even-odd rule on the xz plane), with a ground height estimate from the
-    nearest boundary point."""
+    nearest boundary point: its height less y_offset (default Y_OFFSET, DICE's 0.95; BF1943 builds store 0.9).
+    points: the values are (estimate, x, z of that boundary point)."""
+    y_offset = Y_OFFSET if y_offset is None else y_offset
     segs = segments(area)
     if not segs:
         return {}
@@ -101,9 +103,11 @@ def area_cells(area):
     out = {}
     for k in range(0, len(sel_i), 2048):
         d = (sx[k:k + 2048, None] - pts[None, :, 0]) ** 2 + (sz[k:k + 2048, None] - pts[None, :, 2]) ** 2
-        near = pts[np.argmin(d, axis=1), 1] - Y_OFFSET
+        q = np.argmin(d, axis=1)
+        near = pts[q, 1] - y_offset
         for n in range(len(near)):
-            out[(int(sel_i[k + n]), int(sel_j[k + n]))] = float(near[n])
+            key = (int(sel_i[k + n]), int(sel_j[k + n]))
+            out[key] = (float(near[n]), float(pts[q[n], 0]), float(pts[q[n], 2])) if points else float(near[n])
     return out
 
 

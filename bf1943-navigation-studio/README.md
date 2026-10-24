@@ -21,7 +21,8 @@ python studio.py <level> [--hpd <file.hpd>] [--color island|sector|pitch|small-i
 studio says so and exits. Route nodes stand 0.9 m above the ground (half the soldier's 1.8 m).
 
 **Layers:** terrain, water, collision; the build's walkable ground (its 0.8 m cells, on the exact terrain height
-where they lie on terrain), outlines, portals, border portals, the route graph, ladder ground (violet: ground
+where their area's outline lies on the terrain, else at the area's own height: floors above the terrain, such as
+house floors, show at their height since 2026-10-24), outlines, portals, border portals, the route graph, ladder ground (violet: ground
 reached only through a ladder link) and ladder links; soldier spawns of team 1 (US), of team 2 (Japan) and at
 flags; bases, flags and ladders. Collision, outlines, portals, border portals and the route graph are hidden at
 start.
@@ -55,8 +56,10 @@ for tests.)
 - *Path test:* see above.
 
 The camera works as in the Map Inspector (left drag rotates, right drag pans, wheel zooms, double-click flies
-to a point, F for fly mode). For tests: `--screenshot out.png [--frames N] [--color ...] [--island N]
-[--path "x,y,z;x,y,z"] [--focus x,y,z] [--hide <layer>,...]`.
+to a point, F for fly mode). For tests and pictures: `--screenshot out.png [--frames N] [--color ...] [--island N]
+[--path "x,y,z;x,y,z"] [--focus x,y,z [--distance m]] [--yaw rad] [--pitch rad] [--hide <layer>,...]` (`--pitch 1.45`
+looks almost straight down; the audit's pictures of the seam breaks and the Iwo Jima beach pocket were made this way,
+`work\levels\<level>\audit\pictures\`).
 
 The navigation data comes from `core/bfbc2core/navdata.py`, which reads the file with NavKit's byte-exact reader.
 

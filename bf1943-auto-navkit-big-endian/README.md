@@ -2,9 +2,9 @@
 
 > **This variant reads big-endian data:** BF1943's Xbox 360 levels (terrain heightfields; Havok 4.6.1 packfiles). It began as a copy of `bf1943-auto-navkit-little-endian` on 2026-10-23. OPFOR's changes reach it through that variant, not directly.
 
-Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-23) - `navkit.py` and `navkitGUI.pyw` are the
-BF1943 pipeline: from a level of your BF1943 copy to a checked navigation build. **To use it, start with
-[QUICKSTART.md](QUICKSTART.md).**
+Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-24) - `navkit.py` and `navkitGUI.pyw` are the
+BF1943 pipeline: from a level of your BF1943 copy to a checked navigation build, and `tools\navaudit1943.py`
+audits a build against its level. **To use it, start with [QUICKSTART.md](QUICKSTART.md).**
 
 ```
 python navkit.py levels                   the copy's levels, and what has been done for each
@@ -25,20 +25,37 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **Files** go under the suite's work folder (`BF1943_WORK` overrides `<suite>\work`):
   `work\levels\<level>\objects\` (`levelobjects1943.py`'s files, `heightfield.res`, `water_mesh.res`),
   `samples\` (`samples*.bin` and their logs), `navkit\` (`navkit.json` settings, `<level>.hpd`, `build.log`,
-  `check.txt` / `check.json`).
+  `check.txt` / `check.json`, `jump_links.json`), `audit\` (the audit's masks, `audit.json` and `audit.md`).
 - **Steps.** *prepare* reads the level's objects and collision (`tools\levelobjects1943.py`), its height field and
   water, and sets the sea level and sector offsets. *sample* computes the collision samples offline
   (`tools\navsample1943.py`): two runs at 0.8 m (BF1943's soldier, and a 0.6 m step for stairs), the detailed
   sectors (`tools\detailed1943.py`), then two runs at 0.2 m over them. *build* runs `tools\navbuild.py` with
   BF1943's soldier (`tools\soldier1943.py`): 0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn seeds,
-  ladder links. *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
+  ladder links, jump links to ships' AA gun platforms (`tools\jumplinks1943.py`), and a shared node wherever the
+  two grids' ground meets a mixed-pitch seam with no node joining it (`navbuild.SEAM_GAP_NODES`). *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
   to the route graph, and a route between every pair of flags. A Wake Island run takes about 45 minutes on 8
   cores, most of it the 0.2 m sampling.
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.
-- **Wake Island, today's build (2026-10-23):** 12,629 nodes, 44,922 edges, 70 islands; the main network has 11,371
-  nodes; 16 of 16 ladders linked from the main network; all 10 flag pairs routed; `hpdcheck` passes.
+- **Wake Island, today's build (2026-10-24):** 12,652 nodes, 44,980 edges, 69 islands; the main network has 11,371
+  nodes; 16 of 16 ladders linked from the main network, and the 4 carrier AA guns by jump links; all 10 flag pairs
+  routed; `hpdcheck` passes.
+- **The audit** (`tools\navaudit1943.py`, new 2026-10-24; operation-rising-sun `research/NAVMESH_AUDIT.md`):
+  `navaudit1943.py masks <level>` recomputes the build's walkable surfaces exactly as the build does (and once per
+  rule with the rule off: headroom, lips, water, ladders); `navaudit1943.py audit <level>` then checks the build
+  against the level's own data - every capture area, spawn, mounted gun and repair station on an area of its own floor,
+  every vehicle with walkable ground within its own EntryRadius of an entry point (the vehicle's
+  PlayerEntryComponentData; `VEHICLE_REACH`, 4 m from the spawn, only where a blueprint gives none), routes from every infantry spawn to every capture area and back, islands classified (main,
+  vehicle-only zone, separate landmass, raised surface, gap candidate), file consistency and crossings (touching
+  ground on two islands, tested on the samples), 0.8 m against 0.2 m, the wading band, where each rule fired and its
+  near-misses, and the playable area. Reports: `work\levels\<level>\audit\audit.{json,md}`.
+- **The export for our navigation runtime** (`tools\navexport1943.py`, new 2026-10-24): `navexport1943.py <level>
+  [--big-endian] [--check]` writes `work\levels\<level>\navkit\<level>.rsnv` (`.be.rsnv` big-endian), the build in
+  the runtime's own format (core `rsnv.py`): the route graph with integer costs (1/16 m) and edge kinds (walk, ladder
+  up and down, jump), each area's walkable cells and their heights, a grid to find the areas near a point, the
+  islands, and the build's hash. `--check` reads the file back and compares it with the build. On 2026-10-24 all four
+  MP maps export (2.1-2.8 MB) and check with no problems; 0 nodes outside an area on Wake Island, 4-10 on the others.
 
 **Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
 20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by
@@ -56,7 +73,8 @@ are not checked on BF1943.
 
 **Tools in this variant:** `detailed.py`, `detailed1943.py`, `havok461.py`, `hkpack.py`, `hpdcheck.py`,
 `hpdtool.py`, `hpdview.py`, `kymesh.py`, `levelobjects.py`, `levelobjects1943.py`, `navbuild.py`, `navedits.py`,
-`navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `enclosure_probe1943.py`
+`navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `jumplinks1943.py`,
+`navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `enclosure_probe1943.py`
 (`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a spot is cut off from the network). Removed from this variant:
 `graphstats`, `sample_all`, `navwater`, `navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navdiff`,
 `navparity`, `navregress`, `ordercheck` and `ladders.py`. They remain in `bf1943-auto-navkit-little-endian`, which
@@ -86,9 +104,14 @@ tools\               NavKit tools (Python 3 + numpy)
   kymesh.py            per-sector mesh: parse_mesh / write_mesh (byte-exact)
   hpdcheck.py          structure checks (closed boundaries, edges, node order, zero-length edges)
   routecheck1943.py    BF1943: spawns and flags on the route graph, routes between every pair of flags
+  jumplinks1943.py     BF1943: jump links from ships' decks to their AA gun platforms (ladder records of kind 'jump');
+                       a raised-floor rule (RAISED_FLOORS) is kept but off - see operation-rising-sun NAVMESH_AUDIT.md
+  navaudit1943.py      BF1943: the audit - the build's walkable masks, then the checks (navaudit1943_checks.py)
+  navexport1943.py     BF1943: the build exported for our navigation runtime (<level>.rsnv, core rsnv.py)
   enclosure_probe1943.py  BF1943: why a spot is cut off (flood fill over the 0.2 m samples, the blocking objects, a map)
   hpdview.py           render one sector to PNG
-tests\               the rule tests (made-up data), the sampler, Havok 4.6.1 and Wake Island's objects
+tests\               the rule tests (made-up data), the sampler, jump links, mixed-pitch seams, Havok 4.6.1, Wake
+                     Island's objects and the RSNV export
 ```
 
 What follows is OPFOR's NavKit description, which this variant shares. Its commands, steps and tools are the

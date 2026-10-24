@@ -35,7 +35,8 @@ top, then the steps, and a log of what NavKit is doing at the bottom.
 3. Click **2. Sample.** NavKit computes the collision samples from the level's data: twice at 0.8 m, then twice
    at 0.2 m in the detailed sectors (buildings and other places with floors above floors, which NavKit finds by
    itself). This is the long step: about 30 minutes on Wake Island.
-4. Click **3. Build.** NavKit makes `<level>.hpd` with BF1943's soldier. About 15 minutes on Wake Island.
+4. Click **3. Build.** NavKit makes `<level>.hpd` with BF1943's soldier, its ladders, and jump links from ships'
+   decks down to their AA gun platforms. About 15 minutes on Wake Island.
 5. Click **4. Check.** NavKit checks the file's structure and its routes (see [Reading the check](#reading-the-check)).
 6. Click **Show in 3D** to open the build in the Navigation Studio.
 
@@ -69,15 +70,43 @@ Check runs two checks:
 - **routes** (`tools\routecheck1943.py`): every soldier spawn of each base and flag is joined to the route graph
   (the nearest node within 15 m across and 4 m in height), and a route is looked for between every pair of flags.
 
-For Wake Island's build of 2026-10-23 it reports 12,629 nodes, 44,922 edges and 70 islands; the main network has
+For Wake Island's build of 2026-10-24 it reports 12,652 nodes, 44,980 edges and 69 islands; the main network has
 11,371 nodes; 16 of 16 ladders are linked from the main network; all 10 flag pairs are routed; the structure check
-passes.
+passes. (The ladder count does not include the jump links to the carriers' AA guns, which are in
+`jump_links.json`.)
 
 A spawn that is not on the main network is listed with the size of its island. A base on a carrier is its own
 network (the sea divides it); that is expected and listed apart. The check fails when a flag's spawn is off the
 main network or a flag pair has no route.
 
 The full report is in `check.txt`, and the same in `check.json`.
+
+## Auditing a build
+
+The check covers flags, spawns and routes. For a fuller test of a build against its level, run the audit from the
+variant's folder (the masks take about 30 minutes per level, once per build; an audit then about a minute):
+
+```
+python tools\navaudit1943.py masks wake_island_s     the build's walkable surfaces, and once per rule turned off
+python tools\navaudit1943.py audit wake_island_s     the checks: work\levels\wake_island_s\audit\audit.md
+```
+
+`masks --variants base` makes only the build's own mask (about 6 minutes on Wake Island); the audit then leaves out
+where each rule fired. The audit lists every capture area, spawn, vehicle spawn, mounted gun and repair station that
+is not on walkable ground of its own floor - a vehicle: no walkable ground within its own entry radius of one of its
+entry points, from the vehicle's data (with the sample columns there and why each surface is or is not walkable),
+routes from every infantry spawn to every capture area and back, every island and what kind it is (a
+carrier deck is a vehicle-only zone, not a fault), the file's consistency and the places the route graph does not
+cross, and more. Run the masks again after every build: they belong to one build.
+
+## Exporting for the navigation runtime
+
+```
+python tools\navexport1943.py wake_island_s --check     work\levels\wake_island_s\navkit\wake_island_s.rsnv
+python tools\navexport1943.py wake_island_s --big-endian   wake_island_s.be.rsnv, for experiments in Xenia
+```
+
+`--check` reads the file back and compares it with the build. Export again after every build (under a minute on Wake Island).
 
 ## Where the files go
 
@@ -91,6 +120,8 @@ All of these are in the suite's work folder (`<suite>\work`; the environment var
 | `work\levels\<level>\navkit\<level>.hpd` | **the result** |
 | `work\levels\<level>\navkit\build.log` | the build's log |
 | `work\levels\<level>\navkit\check.txt`, `check.json` | the check report |
+| `work\levels\<level>\navkit\jump_links.json` | the jump links Build made (ships' AA gun platforms) |
+| `work\levels\<level>\audit\` | the audit's masks (`masks\`) and report (`audit.json`, `audit.md`) |
 
 NavKit never changes your game folder.
 

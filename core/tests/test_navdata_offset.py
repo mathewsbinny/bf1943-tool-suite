@@ -1,0 +1,75 @@
+"""navdata's cell heights use navdata.Y_OFFSET (no game data): a made-up area whose outline stands 0.9 m above
+ground at y 10 gives cells at y 10 when Y_OFFSET is BF1943's 0.9, and the cache key changes with the offset.
+navdiff's own default (DICE's 0.95) is unchanged for the little-endian variant's BFBC2 comparisons.
+
+  python -B test_navdata_offset.py
+"""
+import os
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+
+sys.dont_write_bytecode = True
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+from bfbc2core import navdata  # noqa: E402
+import navdiff  # noqa: E402  (navdata puts its folder on the path)
+
+failures = []
+
+
+def check(ok, what):
+    print(('ok   ' if ok else 'FAIL ') + what)
+    if not ok:
+        failures.append(what)
+
+
+if __name__ == '__main__':
+    ring = [(0.0, 10.9, 0.0), (8.0, 10.9, 0.0), (8.0, 10.9, 8.0), (0.0, 10.9, 8.0), (0.0, 10.9, 0.0)]
+    area = SimpleNamespace(outline=[ring], portals=[], border_portals=[])
+    c9 = navdiff.area_cells(area, 0.9)
+    check(len(c9) > 50 and all(abs(v - 10.0) < 1e-6 for v in c9.values()), f'{len(c9)} cells at ground y 10.0 with offset 0.9')
+    c95 = navdiff.area_cells(area)
+    check(all(abs(v - 9.95) < 1e-6 for v in c95.values()), "navdiff's default offset is still DICE's 0.95")
+    # terrain snapping: a floor 1.0 m over flat terrain keeps its height (Wake Island's beach house, South Base spawn
+    # alternate 2: the reader put the house's area at the terrain under it); terrain areas, sloped too, take the
+    # terrain's exact height
+    class Flat:
+        def height(self, x, z):
+            return np.zeros(np.shape(x))
+
+    class Slope:                                     # 20 degrees along x (steeper: the 1.5 m rule, unchanged,
+                                                     # keeps estimates 3 m inside an 8 m area)
+        def height(self, x, z):
+            return np.asarray(x, float) * 0.364
+
+    floor = SimpleNamespace(outline=[[(0.0, 1.9, 0.0), (8.0, 1.9, 0.0), (8.0, 1.9, 8.0), (0.0, 1.9, 8.0), (0.0, 1.9, 0.0)]],
+                            portals=[], border_portals=[])
+    c = navdiff.area_cells(floor, 0.9, points=True)
+    v = np.array(list(c.values()))
+    xz = np.array(list(c.keys()), float) * navdata.GRID
+    y = navdata._ground(xz, v[:, 0], Flat(), v[:, 1:])
+    check(np.allclose(y, 1.0), f'a floor 1.0 m over flat terrain stays at 1.0 (got {y.min():.2f}..{y.max():.2f})')
+    y_old = navdata._ground(xz, v[:, 0], Flat())
+    check(np.allclose(y_old, 0.0), 'without the boundary points the old rule snaps it to the terrain (the bug reproduced)')
+    ring = [(t, 0.0) for t in np.arange(0, 8, 0.4)] + [(8.0, t) for t in np.arange(0, 8, 0.4)] + \
+           [(8.0 - t, 8.0) for t in np.arange(0, 8, 0.4)] + [(0.0, 8.0 - t) for t in np.arange(0, 8.4, 0.4)]
+    edge = [(x, 0.364 * x + 0.9, z) for x, z in ring]     # vertices along the edge, as built outlines have
+    hill = SimpleNamespace(outline=[edge], portals=[], border_portals=[])
+    c = navdiff.area_cells(hill, 0.9, points=True)
+    v = np.array(list(c.values()))
+    xz = np.array(list(c.keys()), float) * navdata.GRID
+    y = navdata._ground(xz, v[:, 0], Slope(), v[:, 1:])
+    check(np.allclose(y, xz[:, 0] * 0.364), 'cells of an area on 20-degree terrain take the exact terrain height')
+    old = navdata.Y_OFFSET
+    try:
+        path = os.path.abspath(__file__)
+        navdata.Y_OFFSET = 0.95
+        k95 = navdata._key(path)
+        navdata.Y_OFFSET = 0.9
+        check(navdata._key(path) != k95, 'the cache key changes with Y_OFFSET (no stale 0.95 heights)')
+    finally:
+        navdata.Y_OFFSET = old
+    print('all passed' if not failures else f'{len(failures)} failed')
+    sys.exit(1 if failures else 0)

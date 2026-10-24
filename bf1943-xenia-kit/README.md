@@ -23,7 +23,7 @@ python -B xeniakit.py build "<path to the package>" "<Xenia folder>"
 output\launch.cmd
 ```
 
-`build` takes about half a minute; `--out <folder>` builds somewhere other than `output\`. `verify` re-checks everything the build made, and `launch` verifies and then starts the game. Both take `--out`, and `--gpu d3d12` switches from Vulkan to DirectX 12.
+`build` takes about half a minute; `--out <folder>` builds somewhere other than `output\`. `verify` re-checks everything the build made, and `launch` verifies and then starts the game. All three take `--out`. `--gpu d3d12` switches from Vulkan to DirectX 12: on `build` it goes into `launch.cmd`, on `launch` it applies to that start.
 
 The kit refuses rather than guesses: another game version, another Xenia build, a damaged package, an edited result or an existing patch file with other contents (unless you pass `--replace-patch`) all stop it with a message. Your package and `xenia_canary.exe` are only read.
 
@@ -93,4 +93,7 @@ The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): eac
 - `python -B tests\test_xeniakit.py` checks the patch file, the port edit and the Xenia fix without game data.
 - With `--game` it also runs a full build from your package into a temporary folder: every edited file must match `known.json`, `verify` must accept the build, and `verify` must notice a changed file.
 
-Both tests are in the suite's `run_tests.py` (quick and bf1943 tiers).
+- `python -B tests\test_ppcasm.py` checks the PowerPC assembler against capstone (an independent decoder; skipped with a note when capstone is not installed).
+- `python -B tests\test_bots.py` checks that the bots code assembles, fits its code cave, and that the hook branches to it; `--image` also checks it against the decoded BF1943 image.
+
+All of them are in the suite's `run_tests.py`: the three without game data in the quick tier, `test_xeniakit.py --game` in the bf1943 tier.
