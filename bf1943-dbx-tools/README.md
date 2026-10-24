@@ -1,14 +1,30 @@
 # BF1943 DBX tools (DbxEdit)
 
-Part of the BF1943 Tool Suite. **BF1943 status: not adapted yet** - this is OPFOR's BFBC2 DbxEdit, and
-everything below describes it on BFBC2 data. BF1943 uses the same binary DBX format (operation-rising-sun
-`research/BFBC2_LEVEL_COMPARISON.md`), and the suite's Python reader (`core/bfbc2core/dbx.py`, written from
-[FORMAT.md](FORMAT.md)) already reads BF1943 level partitions for the spawn map, but DbxEdit itself is not
-tested on BF1943 files, and its level checks (`check`, `fixslots`) are BFBC2 rules.
+Part of the BF1943 Tool Suite. **BF1943 status: partly** (2026-10-23) - DbxEdit and DbxEditGUI read, write and
+edit BF1943's binary DBX partitions; the level check's rules and the slot fixer are BFBC2's.
 
-**DbxEdit** reads, converts, checks and edits Battlefield: Bad Company 2's binary `.dbx` files (Frostbite 1
-data as a tokenised XML tree), from the command line or in a window (**DbxEditGUI**). The format is the
-same on PC and Xbox 360.
+**Tested on BF1943** (all 4,062 partitions of Wake Island's bundles and the shared level bundle, 2026-10-23;
+the suite's `tests\test_bf1943_tools.py dbxedit` repeats it on 1,133 of them):
+- every partition round-trips byte for byte (`roundtrip`);
+- DbxEdit's XML equals core `dbx.py`'s on every one (`xml`);
+- the level check reports 0 errors on Wake Island's level partition (`check`).
+
+**Not verified on BF1943:** the rules of `check` and the slot fixer (`fixslots`) were derived from crashes of
+BFBC2 PC. A clean check on a BF1943 level means only that none of BFBC2's problems were found.
+
+**Workflow for BF1943:**
+1. Extract the partitions from a bundle: `python ..\bf1943-fbrb-tool\fbrb1943.py extract <bundle.fbrb> <out dir> [filter]`.
+2. Edit them with DbxEdit (commands or the window), or convert to XML and back.
+3. Put them back into a copy of the bundle: `python ..\bf1943-fbrb-tool\fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> ...`.
+   The game folder is only read; the copy goes elsewhere.
+
+DbxEdit runs on .NET Framework, which cannot open paths longer than 260 characters. BF1943's partition names are
+long: extract into a short folder (for example `C:\dbx`).
+
+What follows is OPFOR's DbxEdit description. Its counts and the level check's crashes are BFBC2's.
+
+**DbxEdit** reads, converts, checks and edits binary `.dbx` files (Frostbite 1 data as a tokenised XML tree), from
+the command line or in a window (**DbxEditGUI**). The format is the same in BFBC2 (PC and Xbox 360) and BF1943.
 
 | Command | What it does |
 |---|---|
@@ -55,7 +71,7 @@ DbxEdit import <file.xml> <out.dbx> [--like <original.dbx>] [--types <file.dbx |
 
 `xml` converts every binary `.dbx` file it finds (folders are searched recursively) and skips plain-XML
 ones. Empty files are skipped and counted, not reported as errors: they are bundles' `*deleted*` entries,
-which FbrbTool versions before 2026-10-16 unpacked as zero-byte files (current ones list them in
+which OPFOR's BFBC2 FbrbTool versions before 2026-10-16 unpacked as zero-byte files (current ones list them in
 `fbrb.manifest` only). `roundtrip` counts them the same way.
 
 The XML doesn't record every type. For example, `1` may be the integer 1 or the decimal 1.0. So `import`
@@ -147,10 +163,11 @@ memory) and what to do - with the log's path: on the command line with exit code
 
 ## Tests
 
-None in this suite yet: DbxEdit's tests were BFBC2's (its unit tests, the PC game's files and their fingerprints)
-and were removed with the suite's other BFBC2 tests. BF1943's `.dbx` partitions are checked by the Python reader
-(`tests\test_bf1943_data.py dbx`); DbxEdit gets BF1943 tests when it is adapted. The original tests are in OPFOR's
-`bfbc2-tool-suite` and in this repository's history.
+`python -B ..\tests\test_bf1943_tools.py dbxedit` (in the `bf1943` tier of `run_tests.py`; it runs `build.bat` if
+`DbxEdit.exe` is missing): DbxEdit on Wake Island's partitions, as above, and LevelDiff on a partition against
+itself. BF1943's `.dbx` partitions are also checked by the Python reader (the suite's `tests\test_bf1943_data.py dbx`).
+DbxEdit's own tests were BFBC2's (its unit tests, the PC game's files and their fingerprints) and were removed with
+the suite's other BFBC2 tests; they are in OPFOR's `bfbc2-tool-suite` and in this repository's history.
 
 ## Tested (BFBC2, in OPFOR)
 

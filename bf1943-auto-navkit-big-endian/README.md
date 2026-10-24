@@ -2,40 +2,103 @@
 
 > **This variant reads big-endian data:** BF1943's Xbox 360 levels (terrain heightfields; Havok 4.6.1 packfiles). It began as a copy of `bf1943-auto-navkit-little-endian` on 2026-10-23. OPFOR's changes reach it through that variant, not directly.
 
-Part of the BF1943 Tool Suite. **BF1943 status: partly adapted, work in progress.**
-- **Reads BF1943 today:** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
-  20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by
-  `tools\havok461.py` (checked by `tests\test_havok461.py` on all 807 meshes of Wake Island's 97 Havok files).
-  `tools\levelobjects1943.py` reads a level's object placements and collision straight from BF1943's bundles
-  (convex shapes such as boxes are not read yet). `tools\navsample1943.py` computes the collision samples
-  offline from the terrain and that collision, in place of OPFOR's in-game sampler, which BF1943 does not have.
-  Core's `terrain.py` and `water.py` detect the byte order.
-- **BF1943's soldier, not NavKit's BFBC2 settings:** `tools\soldier1943.py` holds the soldier's physics
-  (`DefaultSoldierPhysics`: radius 0.35 m, step 0.3 m plus a 0.07 m tolerance, height 1.8 m, 45 deg, water depth
-  1.4 m), and its `configure()` sets the NavKit settings that follow from it over the BFBC2 defaults: slope limit
-  (build and detailed-sector choice), the detailed zones' link step (0.37 m), node height (0.9 m), and the headroom
-  band (0.5-1.8 m). `navsample1943.py` and `detailed1943.py` use it; a BF1943 build calls `configure()` first.
-  NavKit's other values were fitted to DICE's BFBC2 path data and are not yet checked on BF1943.
-- **Ladders:** `levelobjects1943.py` writes `ladders.json` from the placed objects whose blueprint has a
-  `LadderEntityData` (Wake Island: 16, on bunkers and air towers), in the format NavKit's `ladders.py` writes, for
-  navbuild's ladder links.
-- **Still BFBC2:** `navkit.py`, the window, QUICKSTART and the steps described below (`prepare`, `sample`,
-  `install`, ...) still expect a BFBC2 level in Project OPFOR's copy, OPFOR's in-game sampler, FbrbTool and
-  DbxEdit. The measurements below are on BFBC2 levels.
-- **Output for BF1943:** bots will not run Kynapse. They will use our own navigation runtime: a per-level graph
-  (areas, portals, nodes and edges, a grid lookup) exported from NavKit's builder and queried with A*
-  (operation-rising-sun `research/evidence/navigation-runtime-options.json`). The `pathdata.hpd` writer stays
-  as the BFBC2 reference.
+Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-23) - `navkit.py` and `navkitGUI.pyw` are the
+BF1943 pipeline: from a level of your BF1943 copy to a checked navigation build. **To use it, start with
+[QUICKSTART.md](QUICKSTART.md).**
 
-What follows is OPFOR's NavKit description, which this variant shares. Standalone tooling to create AI navigation
-data (`pathdata.hpd`) for Battlefield: Bad Company 2
-levels – including multiplayer maps that never shipped with any – so the game's own AI can move on
-them. Developed for Project OPFOR and published for other modders as `bfbc2-auto-navkit`, the automated
-navigation-data generator of the BFBC2 suite. It measures levels through Project OPFOR's in-game sampler,
-so it needs an OPFOR install, plus the suite's FbrbTool and DbxEdit.
+```
+python navkit.py levels                   the copy's levels, and what has been done for each
+python navkit.py prepare wake_island_s    objects, collision, flags, ladders, terrain and water from the bundles
+python navkit.py sample  wake_island_s    the collision samples, computed offline (--pitch 0.8 or 0.2: that pass only)
+python navkit.py build   wake_island_s    the navigation build with BF1943's soldier
+python navkit.py check   wake_island_s    structure (hpdcheck.py) and routes (routecheck1943.py)
+python navkit.py all     wake_island_s    prepare, sample, build, check
+python navkit.py status  wake_island_s    what has been done for a level
+```
 
-**To use it, start with [QUICKSTART.md](QUICKSTART.md).** Double-click `navkitGUI.pyw` for the window, or
-run `python navkit.py` from a command prompt.
+Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia-kit`'s output).
+
+- **Nothing is started in the game.** The game copy is only read; everything is computed from the level's data.
+  There is no `install` or `restore`: BF1943 has no Kynapse runtime. The build is the input of our own navigation
+  runtime (a per-level graph queried with A*; operation-rising-sun
+  `research/evidence/navigation-runtime-options.json`).
+- **Files** go under the suite's work folder (`BF1943_WORK` overrides `<suite>\work`):
+  `work\levels\<level>\objects\` (`levelobjects1943.py`'s files, `heightfield.res`, `water_mesh.res`),
+  `samples\` (`samples*.bin` and their logs), `navkit\` (`navkit.json` settings, `<level>.hpd`, `build.log`,
+  `check.txt` / `check.json`).
+- **Steps.** *prepare* reads the level's objects and collision (`tools\levelobjects1943.py`), its height field and
+  water, and sets the sea level and sector offsets. *sample* computes the collision samples offline
+  (`tools\navsample1943.py`): two runs at 0.8 m (BF1943's soldier, and a 0.6 m step for stairs), the detailed
+  sectors (`tools\detailed1943.py`), then two runs at 0.2 m over them. *build* runs `tools\navbuild.py` with
+  BF1943's soldier (`tools\soldier1943.py`): 0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn seeds,
+  ladder links. *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
+  to the route graph, and a route between every pair of flags. A Wake Island run takes about 45 minutes on 8
+  cores, most of it the 0.2 m sampling.
+- **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
+  step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
+  Navigation Studio on the build) and **Open output folder**.
+- **Wake Island, today's build (2026-10-23):** 12,629 nodes, 44,922 edges, 70 islands; the main network has 11,371
+  nodes; 16 of 16 ladders linked from the main network; all 10 flag pairs routed; `hpdcheck` passes.
+
+**Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
+20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by
+`tools\havok461.py` (checked by `tests\test_havok461.py` on all 807 meshes of Wake Island's 97 Havok files).
+`tools\levelobjects1943.py` reads object placements and collision straight from the bundles (meshes and
+`hkConvexVerticesShape` boxes; `hkBoxShape` and `hkConvexTranslateShape` are not read yet and are reported), and
+writes `ladders.json` from the placed objects whose blueprint has a `LadderEntityData` (Wake Island: 16). Core's
+`terrain.py` and `water.py` detect the byte order.
+
+**BF1943's soldier.** `tools\soldier1943.py` holds the soldier's physics (`DefaultSoldierPhysics`: radius 0.35 m,
+step 0.3 m plus a 0.07 m tolerance, height 1.8 m, 45 deg, water depth 1.4 m), and its `configure()` sets the NavKit
+settings that follow from it over the BFBC2 defaults: slope limit, the detailed zones' link step (0.37 m), node
+height (0.9 m), and the headroom band (0.5-1.8 m). NavKit's other values were fitted to DICE's BFBC2 path data and
+are not checked on BF1943.
+
+**Tools in this variant:** `detailed.py`, `detailed1943.py`, `havok461.py`, `hkpack.py`, `hpdcheck.py`,
+`hpdtool.py`, `hpdview.py`, `kymesh.py`, `levelobjects.py`, `levelobjects1943.py`, `navbuild.py`, `navedits.py`,
+`navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `enclosure_probe1943.py`
+(`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a spot is cut off from the network). Removed from this variant:
+`graphstats`, `sample_all`, `navwater`, `navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navdiff`,
+`navparity`, `navregress`, `ordercheck` and `ladders.py`. They remain in `bf1943-auto-navkit-little-endian`, which
+stays OPFOR's BFBC2 NavKit.
+
+**Layout of this variant:**
+
+```
+QUICKSTART.md        how to build a BF1943 level's navigation, step by step
+navkitGUI.pyw        the NavKit window (Tkinter): the steps as buttons
+navkit.py            driver: levels / prepare / sample / build / check / all / status
+research\            specification of the path-data format (KYNAPSE_SPEC.md) and images (img\)
+tools\               NavKit tools (Python 3 + numpy)
+  levelobjects1943.py  BF1943: object placements, collision, flags and ladders straight from the level's bundles
+  havok461.py          class layouts for Havok 4.6.1 packfiles, which have no __types__ section
+  hkpack.py            Havok binary packfile reader: 5.5 (BFBC2) and 4.6.1 (BF1943), byte order from the file
+  levelobjects.py      the pathfinding-flag rules levelobjects1943.py shares (and BFBC2's XML reader)
+  navsample1943.py     BF1943: collision samples computed offline (terrain + collision)
+  navsample.py         the samples file format: read, and compare with a path-data file
+  detailed1943.py      BF1943: which sectors are built at 0.2 m (detailed.py's rule on BF1943 data)
+  detailed.py          the detailed-sector rule
+  soldier1943.py       BF1943's soldier and the NavKit settings that follow from it
+  navwalk.py           walkability rules
+  navbuild.py          the generator: samples + level objects -> a navigation file (pathdata.hpd layout)
+  navedits.py          walkability edits as generator inputs
+  hpdtool.py           the navigation file: info / sector / roundtrip / coverage / meshtrip
+  kymesh.py            per-sector mesh: parse_mesh / write_mesh (byte-exact)
+  hpdcheck.py          structure checks (closed boundaries, edges, node order, zero-length edges)
+  routecheck1943.py    BF1943: spawns and flags on the route graph, routes between every pair of flags
+  enclosure_probe1943.py  BF1943: why a spot is cut off (flood fill over the 0.2 m samples, the blocking objects, a map)
+  hpdview.py           render one sector to PNG
+tests\               the rule tests (made-up data), the sampler, Havok 4.6.1 and Wake Island's objects
+```
+
+What follows is OPFOR's NavKit description, which this variant shares. Its commands, steps and tools are the
+little-endian variant's (`bf1943-auto-navkit-little-endian`), not this variant's: where it names tools this
+variant no longer has (`ladders.py`, `navregress.py`, `navparity.py` and the others listed above) or OPFOR's in-game
+sampler, FbrbTool and DbxEdit, those are BFBC2's pipeline. Standalone tooling to create AI navigation data
+(`pathdata.hpd`) for Battlefield: Bad Company 2 levels – including multiplayer maps that never shipped with any – so
+the game's own AI can move on them. Developed for Project OPFOR and published for other modders as
+`bfbc2-auto-navkit`, the automated navigation-data generator of the BFBC2 suite. For BF1943, use this variant's
+[QUICKSTART.md](QUICKSTART.md); BFBC2's is the little-endian variant's.
 
 ## Why
 
@@ -63,38 +126,7 @@ licence error. NavKit replaces it with independent code.
 
 ## Layout
 
-```
-QUICKSTART.md        how to build path data for a level, step by step
-navkitGUI.pyw        the NavKit window (Tkinter): the steps below as buttons
-navkit.py            driver: levels / prepare / sample / build / check / install / restore / status / all
-research\            specification (KYNAPSE_SPEC.md) and images (img\)
-tools\               NavKit tools (Python 3.13 + numpy / matplotlib)
-  hpdtool.py         pathdata.hpd: info / sector / roundtrip / coverage / meshtrip
-  kymesh.py          per-sector runtime mesh: parse_mesh / write_mesh (byte-exact)
-  hpdview.py         render a sector to PNG (outlines, portals, graph)
-  navsample.py       read in-game collision samples; compare with a pathdata.hpd
-  hkpack.py          Havok binary packfile reader (the level's *_Havok.res collision assets): Havok 5.5
-                     (BFBC2) and 4.6.1 (BF1943), byte order from the file
-  havok461.py        class layouts for Havok 4.6.1 packfiles, which have no __types__ section
-  levelobjects1943.py BF1943: object placements and collision straight from the level's bundles
-  navsample1943.py   BF1943: collision samples computed offline (terrain + levelobjects1943 collision)
-  levelobjects.py    object placements, pathfinding flags, forbidden-object triangles of a level
-                     (reads the level XML through core's bfbc2core/xmlinst.py: instances and field refs in any
-                     attribute order - DICE's tools write guid / ref first, Napisal's type / name first)
-  navwalk.py         walkability rules + scoring against existing path data
-  navbuild.py        the generator: samples + level objects -> pathdata.hpd
-  ordercheck.py      scoring: AI order positions on the areas, pairwise route check, self-check
-  navcompare.py      two files on a level's AI positions: coverage, main network, pairwise, size
-  navdiff.py         two files layer by layer: sectors, walkable cells, areas, boundaries, route graph
-  navparity.py       DICE-parity report over many levels, saved per named run
-  navregress.py      regression test: rebuild levels with the current code, fail if a parity measure got worse
-  navwater.py        water depth against path-data coverage (does the data leave out ground under water?)
-  navboundary.py     area boundaries cell by cell against DICE's: matching / missing / extra edges, merged areas, portals; CSV + maps
-  navedits.py        the walkability edits of a navigation side file as generator inputs (navkit.py apply)
-  navlinks.py        a side file's links and route edges written into a path-data file's route graph
-  navtraversal.py    a side file's traversal annotations (ladders, jumps ...) as <level>.traversal.json
-src\, tests\         (reserved for the generator proper and its tests)
-```
+This variant's layout is at the top of this README; OPFOR's full BFBC2 layout is in the little-endian variant's README.
 
 ## Detailed zones, ladders and walkability rules (2026-10-21 / 22)
 
@@ -120,8 +152,9 @@ DICE has none).
   blueprint sets `NeedsDetailedPathfinding`, and sectors with 100+ stacked-floor columns in the 0.8 m samples (93 % of
   DICE's choice on 14 levels). Built with 6 x 6 tiles, link step 0.3 m, a Gabriel-pruned route graph and coverage
   nodes every 4 m.
-- **Ladder links:** `navkit.py prepare` writes `ladders.json` (`tools\ladders.py`: placed ladder objects and their
-  collision boxes); the build seeds the far end of a ladder whose near end is walkable and links a node at each end.
+- **Ladder links:** `navkit.py prepare` writes `ladders.json` (BFBC2: `tools\ladders.py`; in this variant
+  `tools\levelobjects1943.py`, from the objects whose blueprint has a `LadderEntityData`: placed ladders and their
+  collision boxes, a buried foot raised to the terrain); the build seeds the far end of a ladder whose near end is walkable and links a node at each end.
   DICE's path data has none; the game puts any soldier who walks into a ladder on it.
 - **Walkability rules added 2026-10-22** (`tools\navwalk.py`, each with a switch and its measurements in the code):
   - `LIP_WIDTH`: at 0.2 m, a band of up to two samples steeper than 40 deg between walkable ground (a lip the 0.8 m
@@ -387,7 +420,8 @@ DICE has none).
      parity only (conditional, one axis; not what broke the sp_004_b routes).
    - **Accepted limits:** hand edits, and geometry that differs from the shipped game.
 
-Credits: level data is read with the suite's FbrbTool and DbxEdit, based on **Frankelstner**'s format
+Credits: in BFBC2, level data is read with the suite's FbrbTool and DbxEdit (in this variant, with
+`fbrb1943.py` and core `dbx.py` through `game1943.py`), based on **Frankelstner**'s format
 documentation and **Heico**'s BFBC2 Toolkit. **Napisal**'s path data for multiplayer maps (BBC2 ModPack)
 showed that BC2's AI can run on them. Kynapse is a trademark of Autodesk; Battlefield: Bad Company 2 is
 © Electronic Arts / DICE.

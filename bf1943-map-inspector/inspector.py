@@ -1,6 +1,7 @@
-"""BFBC2 Map Inspector: browse a level in 3D and inspect every object's source and properties.
+"""BF1943 Map Inspector: browse a BF1943 level in 3D and inspect every object's source and properties.
 
-  python inspector.py <level>                 e.g. inspector.py sp_01 or mp_005 (prepared on first use)
+  python inspector.py <level>                 e.g. inspector.py wake_island_s (read from your copy's bundles,
+                                              core level1943.py; BF1943_GAME selects the game folder)
   python inspector.py <level> --screenshot out.png [--select <guid>] [--frames N]   draw, save, exit (tests)
                      [--measure "x,y,z;x,y,z;..."]   with measure points (tests)
 
@@ -21,7 +22,7 @@ if __name__ == '__main__':                      # the log and error reports star
 import numpy as np  # noqa: E402
 from imgui_bundle import imgui  # noqa: E402
 
-from bfbc2core import dbx, level as levelmod, viewer  # noqa: E402
+from bfbc2core import dbx, level1943 as levelmod, viewer  # noqa: E402
 
 TERRAIN_ID = 0xFFFFFE
 WATER_ID = 0xFFFF00          # + the index of the triangle's shader in Inspector.water_shaders
@@ -41,16 +42,18 @@ LAYERS = [
     ('vehicle spawn, team 1', (0.35, 0.80, 1.00), 2.5),
     ('vehicle spawn, team 2', (1.00, 0.58, 0.35), 2.5),
     ('vehicle spawn, neutral', (0.75, 0.85, 0.80), 2.5),
-    ('objective', (1.00, 0.60, 0.10), 2.0),
-    ('capture point', (1.00, 0.85, 0.20), 2.0),
+    ('end-of-round spawn', (0.85, 0.85, 0.55), 0.8),
+    ('base', (1.00, 0.60, 0.10), 3.0),
+    ('flag', (1.00, 0.85, 0.20), 2.5),
     ('combat area', (0.85, 0.25, 0.85), 1.5),
-    ('ai order', (0.55, 0.90, 0.30), 1.0),
-    ('effect', (0.60, 0.80, 0.95), 0.6),
+    ('dmz', (0.30, 0.85, 0.65), 1.5),
+    ('map marker', (0.80, 0.80, 0.95), 1.0),
     ('area point', (0.70, 0.70, 0.95), 0.6),
     ('other', (0.60, 0.60, 0.60), 0.6),
 ]
-HIDDEN_AT_START = {'area point', 'other', 'effect'}
-TEAM_NAME = {1: 'team 1', 2: 'team 2', 0: 'neutral', None: 'no team'}
+HIDDEN_AT_START = {'area point', 'other', 'end-of-round spawn', 'map marker'}
+# BF1943: Team1 holds the Allies' (US) base, Team2 the Axis' (Japanese) one
+TEAM_NAME = {1: 'team 1 (US)', 2: 'team 2 (Japan)', 0: 'neutral', None: 'no team'}
 REF_TO, REF_FROM, MEASURE = (1.0, 0.9, 0.2), (0.3, 0.95, 1.0), (1.0, 1.0, 1.0)
 
 
@@ -397,14 +400,14 @@ def main(argv):
             k += 1
     if not args:                                            # started without a level: ask for one
         from bfbc2core import pick
-        lv = pick.pick_level('BFBC2 Map Inspector')
+        lv = pick.pick_level('BF1943 Map Inspector')
         if not lv:
             return 1
         args = [lv]
     lvl = levelmod.load(args[0])
     ins = Inspector(lvl)
     ins.scene_triangles = ins.scene.triangle_count()
-    v = viewer.Viewer(ins.scene, f'BFBC2 Map Inspector - {lvl.name}',
+    v = viewer.Viewer(ins.scene, f'BF1943 Map Inspector - {lvl.name}',
                       panels=[ins.panel_layers, ins.panel_selection, ins.panel_measure, ins.panel_status])
     v.on_pick = ins.on_pick(v)
     for name in HIDDEN_AT_START:

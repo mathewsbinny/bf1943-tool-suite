@@ -81,8 +81,8 @@ Once you have a soldier in a match, the bot code adds 23 bots for a full 24-play
 
 | Working (2026-10-23) | Not yet |
 |---|---|
-| The bots join (the game announces "Bot 1 USMC Rifleman connected."), take their team's kit and appear on the scoreboard | No decisions yet: for the test they only walk forward and jump, so some walk off their carrier |
-| Each server tick they get an input frame and their soldier is stepped with it, as a human's is when that player's input arrives: they walk and jump | No aiming or facing, navigation or objectives yet |
+| The bots join (the game announces "Bot 1 USMC Rifleman connected."), take their team's kit and appear on the scoreboard | No decisions yet: the build gives them no input (`THROTTLE = 0` in `bots.py`), so they stand; with test input (walk forward, jump) they walked and jumped, and some walked off their carrier |
+| Each server tick they get an input frame and their soldier is stepped with it, as a human's is when that player's input arrives | No aiming or facing, navigation or objectives yet |
 | Each spawns at its own team's base and respawns after dying | A fixed 23 bots; a chosen count comes later |
 | They are friendly or hostile to you according to their side, and stand on the deck | |
 

@@ -1,14 +1,16 @@
 # LevelDiff (BF1943 Tool Suite, diff workbench)
 
-**BF1943 status: not adapted yet** - OPFOR's BFBC2 tool; it reads BFBC2 `.dbx` files through DbxEdit's code and
-is not tested on BF1943's (which use the same binary DBX format). Everything below describes it on BFBC2 data.
+**BF1943 status: ready** (2026-10-23) - it reads BF1943's binary partitions through DbxEdit's code. Tested on
+BF1943: Wake Island's level partition against itself shows no change (the suite's `tests\test_bf1943_tools.py dbxedit`).
 
-Compares two Battlefield: Bad Company 2 binary `.dbx` files instance by instance: what was added, what was
-removed, and which fields changed. It works on levels and on any other partition. Typical uses:
+Compares two binary `.dbx` partitions instance by instance: what was added, what was removed, and which fields
+changed. It works on levels and on any other partition. Typical uses:
 
-- the same map in two builds (PC, Xbox 360, Linux server);
-- a level before and after an edit or a mod;
-- Napisal's levels against the stock ones.
+- a level before and after an edit with DbxEdit;
+- two partitions of the game, for example two levels' shared blueprints.
+
+Get the partitions out of a bundle with `..\..\bf1943-fbrb-tool\fbrb1943.py extract`. Like DbxEdit it runs on
+.NET Framework, which cannot open paths longer than 260 characters: extract into a short folder.
 
 ## Build
 
@@ -37,22 +39,21 @@ Instances are matched by GUID. Each changed instance lists its fields as `path: 
 references (like a level's `Objects`) are compared as sets: `-` for entries only in A, `+` for entries only
 in B. A list with the same entries in another order is reported as such.
 
-Example: PC Nelson Bay against the Linux server's version. All 318 placed objects that look new are the
-same objects under new GUIDs:
+Example: Wake Island's level partition before and after an edit (extracted into `C:\dbx`, edited into
+`C:\dbx-edited`):
 
 ```
-LevelDiff MP_008_pc.dbx MP_008_linux.dbx --match-objects --type ReferenceObjectData --ignore Enumeration
-same instance in both: 1681 (318 placed objects paired by blueprint + position); changed: 174; ...
-ReferenceObjectData    C3A93730-7A4B-488D-A41A-8ACE4F7D3695
-    - ObjectSets: 0b523726-1582-11df-be34-cb90b801a0f9
-    + ObjectSets: 0058f00b-01de-11e0-aba9-cc78fd21fd3a
+python ..\..\bf1943-fbrb-tool\fbrb1943.py extract <game>\levels\wake_island_s\reduced-level-00.fbrb C:\dbx levels/wake_island_s
+LevelDiff C:\dbx\levels\wake_island_s.dbx C:\dbx-edited\levels\wake_island_s.dbx --type ReferenceObjectData
 ```
+
+A partition compared with itself reports `changed: 0` with `--summary`.
 
 ## Errors and logs
 
 LevelDiff keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools (`ToolLog`, shared
 with DbxEdit). When it cannot do something it prints the cause, what to do and the log's path, and exits with
-code 1. Tests: none here yet (its tests were on BFBC2 levels and were removed; it gets BF1943 tests when adapted).
+code 1. Tests: `tests\test_bf1943_tools.py dbxedit` in the suite (the `bf1943` tier); its BFBC2 tests were removed.
 
 ## Credits
 

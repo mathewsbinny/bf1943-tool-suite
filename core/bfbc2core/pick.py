@@ -1,21 +1,20 @@
 """A small level picker for the suite's 3D tools, shown when they are started without a level (a double-click,
-or `python studio.py` alone): the levels of Project OPFOR's game copy, double-click or OK to open one.
+or `python studio.py` alone): the levels of your BF1943 copy (game1943.find_game), double-click or OK to open one.
 
-    lv = pick_level('BFBC2 Navigation Studio')      # the level name, or None when cancelled
+    lv = pick_level('BF1943 Navigation Studio')     # the level name, or None when cancelled
 """
 import os
-import sys
+
+from . import game1943
 
 
 def levels():
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'bf1943-auto-navkit-little-endian'))
-    import navkit
-    pr = navkit.Project()
+    """[(level, state)]: each level of the game copy, and whether NavKit has built its navigation (work folder)."""
     out = []
-    for lv in pr.level_dirs():
-        prepared = os.path.isdir(os.path.join(pr.work, 'levels', lv, 'dist'))
-        out.append((lv, ('prepared' if prepared else 'not prepared yet - about 20 s the first time') +
-                    (', DICE path data' if pr.dice_pathdata(lv) else '')))
+    for lv in game1943.levels():
+        built = os.path.isfile(os.path.join(game1943.level_work(lv), 'navkit', f'{lv}.hpd'))
+        kind = 'multiplayer map' if lv in game1943.MP_LEVELS else 'other level'
+        out.append((lv, kind + (', navigation built' if built else '')))
     return out
 
 
@@ -37,8 +36,7 @@ def pick_level(title):
     try:
         items = levels()
     except Exception as e:
-        messagebox.showerror(title, f'No game copy found: {e}\nPut the suite next to the "Project OPFOR" folder, '
-                                    f'or set OPFOR_ROOT.')
+        messagebox.showerror(title, f'No BF1943 game copy found: {e}')
         root.destroy()
         return None
     chosen = []

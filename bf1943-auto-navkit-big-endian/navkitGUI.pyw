@@ -1,6 +1,7 @@
-"""NavKit - a small Windows front end for navkit.py (double-click to start; needs Python 3 with numpy).
+"""NavKit (BF1943) - a small Windows front end for navkit.py (double-click to start; needs Python 3 with numpy).
 
-Every button runs the matching navkit.py step for the chosen level and shows its output; see QUICKSTART.md.
+Every button runs the matching navkit.py step for the chosen level of your BF1943 copy and shows its output. Nothing
+is started in the game: the samples are computed from the level's data.
 """
 import json
 import os
@@ -14,70 +15,60 @@ from tkinter import messagebox, ttk
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, '..', 'core'))
-from bfbc2core import errors  # noqa: E402
+from bfbc2core import errors, game1943  # noqa: E402
 import navkit  # noqa: E402
 
 PYTHON = os.path.join(os.path.dirname(sys.executable), 'python.exe')   # console python for the steps
 if not os.path.isfile(PYTHON):
     PYTHON = sys.executable
+STUDIO = os.path.join(HERE, '..', 'bf1943-navigation-studio', 'studio.py')
 
-STEPS = [('prepare', '1. Prepare', 'Unpack the level, extract its objects, choose the sampling box'),
-         ('sample', '2. Sample in game', 'Starts the game twice to sample the level\'s collision (a few minutes)'),
-         ('build', '3. Build', 'Generate pathdata.hpd from the samples'),
-         ('check', '4. Check', 'Score the result (against the original path data if the level has one)')]
+STEPS = [('prepare', '1. Prepare', 'Objects, collision, flags, ladders, terrain and water from the level\'s bundles'),
+         ('sample', '2. Sample', 'Collision samples computed offline: 0.8 m, then 0.2 m in detailed sectors (about 30 min)'),
+         ('build', '3. Build', 'The navigation build with BF1943\'s soldier (about 15 min)'),
+         ('check', '4. Check', 'Structure, and every spawn and pair of flags joined by a route')]
+DONE_KEY = {'prepare': 'prepared', 'sample': 'sampled', 'build': 'built', 'check': 'checked'}
 
 
 class App:
     def __init__(self, root):
         self.root = root
         self.proc = None
-        self.saved = []
         self.lines = queue.Queue()
-        root.title('BC2 NavKit')
-        root.minsize(760, 520)
+        root.title('BF1943 NavKit')
+        root.minsize(780, 520)
         try:
             ttk.Style().theme_use('vista')
         except tk.TclError:
             pass
         try:
-            self.pr = navkit.Project()
-        except navkit.NavKitError as e:
+            self.game = game1943.find_game()
+        except FileNotFoundError as e:
             messagebox.showerror('NavKit', str(e))
             root.destroy()
             return
 
         top = ttk.Frame(root, padding=10)
         top.pack(fill='both', expand=True)
-
         row = ttk.Frame(top)
         row.pack(fill='x')
         ttk.Label(row, text='Level:').pack(side='left')
         self.level = tk.StringVar()
-        self.combo = ttk.Combobox(row, textvariable=self.level, state='readonly', width=34)
+        self.combo = ttk.Combobox(row, textvariable=self.level, state='readonly', width=30,
+                                  values=game1943.levels(self.game))
         self.combo.pack(side='left', padx=(6, 6))
         self.combo.bind('<<ComboboxSelected>>', lambda e: self.refresh())
-        self.only_ai = tk.BooleanVar(value=True)
-        ttk.Checkbutton(row, text='Only levels with AI', variable=self.only_ai,
-                        command=self.fill_levels).pack(side='left')
         ttk.Button(row, text='Open output folder', command=self.open_folder).pack(side='right')
-
-        box = ttk.LabelFrame(top, text='Sampling area (filled in by Prepare; edit to override)', padding=8)
-        box.pack(fill='x', pady=(10, 0))
-        self.vars = {}
-        for i, (key, label) in enumerate((('minx', 'min X'), ('minz', 'min Z'), ('maxx', 'max X'), ('maxz', 'max Z'),
-                                          ('ybot', 'bottom Y'), ('ytop', 'top Y'))):
-            ttk.Label(box, text=label).grid(row=0, column=i * 2, sticky='e', padx=(8 if i else 0, 4))
-            v = tk.StringVar()
-            ttk.Entry(box, textvariable=v, width=8).grid(row=0, column=i * 2 + 1)
-            self.vars[key] = v
-        self.area_note = ttk.Label(box, text='', foreground='#555')
-        self.area_note.grid(row=1, column=0, columnspan=12, sticky='w', pady=(6, 0))
+        self.view = ttk.Button(row, text='Show in 3D', command=self.show_3d)
+        self.view.pack(side='right', padx=6)
+        self.info = ttk.Label(top, text='', foreground='#555')
+        self.info.pack(fill='x', pady=(8, 0))
 
         steps = ttk.LabelFrame(top, text='Steps', padding=8)
         steps.pack(fill='x', pady=(10, 0))
         self.buttons, self.marks = [], {}
         for r, (cmd, label, tip) in enumerate(STEPS):
-            b = ttk.Button(steps, text=label, width=20, command=lambda c=cmd: self.run_step(c))
+            b = ttk.Button(steps, text=label, width=16, command=lambda c=cmd: self.run_step(c))
             b.grid(row=r, column=0, sticky='w', pady=2)
             self.buttons.append(b)
             m = ttk.Label(steps, text='', width=3)
@@ -87,14 +78,11 @@ class App:
         side = ttk.Frame(steps)
         side.grid(row=0, column=3, rowspan=4, sticky='ne', padx=(20, 0))
         steps.columnconfigure(2, weight=1)
-        for label, cmd in (('Run all (1-4)', 'all'), ('Install in game', 'install'), ('Restore original', 'restore')):
-            b = ttk.Button(side, text=label, width=18, command=lambda c=cmd: self.run_step(c))
-            b.pack(pady=2)
-            self.buttons.append(b)
-        self.cancel = ttk.Button(side, text='Cancel', width=18, command=self.stop, state='disabled')
+        b = ttk.Button(side, text='Run all (1-4)', width=16, command=lambda: self.run_step('all'))
+        b.pack(pady=2)
+        self.buttons.append(b)
+        self.cancel = ttk.Button(side, text='Cancel', width=16, command=self.stop, state='disabled')
         self.cancel.pack(pady=(10, 2))
-        self.installed = ttk.Label(steps, text='', foreground='#555')
-        self.installed.grid(row=4, column=0, columnspan=3, sticky='w', pady=(6, 0))
 
         logf = ttk.Frame(top)
         logf.pack(fill='both', expand=True, pady=(10, 0))
@@ -105,90 +93,40 @@ class App:
         self.log.pack(side='left', fill='both', expand=True)
         self.status = ttk.Label(top, text='Ready', anchor='w')
         self.status.pack(fill='x', pady=(6, 0))
-
-        self.fill_levels()
+        if self.combo['values']:
+            self.level.set(self.combo['values'][0])
+        self.refresh()
         root.after(100, self.pump)
         root.protocol('WM_DELETE_WINDOW', self.close)
 
     # --- levels and state ------------------------------------------------------------------------------
-    def fill_levels(self):
-        names = navkit.level_names(self.pr)
-        shown = [lv for lv, ai in names if ai or not self.only_ai.get()]
-        self.combo['values'] = shown
-        if self.level.get() not in shown:
-            self.level.set(shown[0] if shown else '')
-        self.refresh()
-
     def refresh(self):
         lv = self.level.get()
         if not lv:
             return
-        out = os.path.join(self.pr.work, 'navkit', lv)
-        s = None
-        self.saved = []
-        if os.path.isfile(os.path.join(out, 'navkit.json')):
-            s = json.load(open(os.path.join(out, 'navkit.json')))
-            for k, v in zip(('minx', 'minz', 'maxx', 'maxz'), s['box']):
-                self.vars[k].set(f'{v:g}')
-            self.vars['ybot'].set(f'{s["y"][0]:g}')
-            self.vars['ytop'].set(f'{s["y"][1]:g}')
-            self.saved = [self.vars[k].get() for k in ('minx', 'minz', 'maxx', 'maxz', 'ybot', 'ytop')]
-            self.area_note['text'] = (f'Box from: {s["box_source"]}.  Sector offsets {s["xoff"]}, {s["zoff"]} '
-                                      f'({s["offsets_source"]}).')
+        p = navkit.paths(lv)
+        s = json.load(open(p['settings'], encoding='utf-8')) if os.path.isfile(p['settings']) else {}
+        for cmd, m in self.marks.items():
+            v = s.get(DONE_KEY[cmd])
+            m['text'] = ('✔' if 'FAILED' not in v else '✘') if v else ''
+        if s:
+            ds = s.get('detailed_sectors')
+            self.info['text'] = (f'Sea level {s.get("sea_level")} m, sector offsets {s["sector_offsets"][0]} / '
+                                 f'{s["sector_offsets"][1]}' + (f', {len(ds)} detailed sectors' if ds is not None else '') +
+                                 (f'.  Checked {s["checked"]}.' if 'checked' in s else '.'))
         else:
-            for v in self.vars.values():
-                v.set('')
-            self.area_note['text'] = 'Run Prepare to fill these in (or type your own and Prepare keeps them).'
-        done = {'prepare': s is not None,
-                'sample': all(os.path.isfile(self.pr.samples(lv, a[2])) for a in navkit.AGENTS),
-                'build': os.path.isfile(os.path.join(out, 'pathdata.hpd')),
-                'check': os.path.isfile(os.path.join(out, 'check.txt'))}
-        for k, m in self.marks.items():
-            m['text'] = '✔' if done[k] else ''
-        inst = os.path.isfile(self.pr.pathdata(lv) + navkit.BACKUP_SUFFIX)
-        orig = self.pr.dice_pathdata(lv)
-        self.installed['text'] = ('NavKit\'s path data is INSTALLED in the game for this level.' if inst else
-                                  'The game uses the level\'s original path data.' if orig else
-                                  'This level has no AI path data in the game (see QUICKSTART.md: levels without AI).')
-
-    def area_args(self):
-        vals = [self.vars[k].get().strip() for k in ('minx', 'minz', 'maxx', 'maxz', 'ybot', 'ytop')]
-        if not all(vals) or vals == self.saved:
-            return []   # empty or unchanged: navkit.py uses its own / the saved area
-        try:
-            [float(v) for v in vals]
-        except ValueError:
-            raise ValueError('The sampling area must be numbers.')
-        return ['--box', ','.join(vals[:4]), '--y', ','.join(vals[4:])]
+            self.info['text'] = 'Not prepared yet.'
+        self.view['state'] = 'normal' if os.path.isfile(p['hpd']) else 'disabled'
 
     # --- running steps ---------------------------------------------------------------------------------
     def run_step(self, cmd):
         lv = self.level.get()
         if not lv or self.proc:
             return
-        args = [PYTHON, '-u', os.path.join(HERE, 'navkit.py'), cmd, lv]
-        try:
-            if cmd in ('prepare', 'sample', 'all'):
-                args += self.area_args()
-        except ValueError as e:
-            messagebox.showerror('NavKit', str(e))
-            return
-        if cmd in ('sample', 'all'):
-            if not messagebox.askokcancel('NavKit', f'NavKit will now start the game twice to sample {lv.upper()}.\n\n'
-                                          'Each run takes a few minutes; the game window may stay black. '
-                                          'Do not use the game while it runs - NavKit closes it when done.\n\n'
-                                          'Close the game first if it is open.'):
-                return
-            args.append('--yes')
-        if cmd == 'install' and not messagebox.askokcancel(
-                'NavKit', f'Install NavKit\'s path data for {lv.upper()} into the game?\n\n'
-                          'The original file is kept and can be put back with "Restore original".'):
-            return
-        if cmd == 'restore' and not messagebox.askokcancel('NavKit', f'Put the original path data of {lv.upper()} back?'):
-            return
-        self.write(f'\n> navkit.py {" ".join(args[3:])}\n')
+        args = [PYTHON, '-B', '-u', os.path.join(HERE, 'navkit.py'), cmd, lv, '--game', self.game]
+        self.write(f'\n> navkit.py {cmd} {lv}\n')
         self.set_busy(True, f'Running {cmd} on {lv} ...')
-        self.proc = subprocess.Popen(args, cwd=self.pr.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        self.proc = subprocess.Popen(args, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         threading.Thread(target=self.reader, args=(self.proc, cmd), daemon=True).start()
 
@@ -227,11 +165,8 @@ class App:
         if not self.proc:
             return
         self.cancelled = True
-        self.proc.kill()
+        navkit.end(self.proc)                   # the step and the samplers it started
         self.write('\ncancelled\n')
-        # a sampling run killed mid-way leaves the game open and opfor.ini changed
-        navkit.close_game()
-        navkit.recover_ini(self.pr, lambda m: self.write(m + '\n'))
 
     def set_busy(self, busy, text):
         for b in self.buttons:
@@ -248,9 +183,15 @@ class App:
 
     def open_folder(self):
         lv = self.level.get()
-        d = os.path.join(self.pr.work, 'navkit', lv) if lv else os.path.join(self.pr.work, 'navkit')
+        d = navkit.paths(lv)['work'] if lv else game1943.work_root()
         os.makedirs(d, exist_ok=True)
         os.startfile(d)
+
+    def show_3d(self):
+        lv = self.level.get()
+        p = navkit.paths(lv)
+        subprocess.Popen([PYTHON, '-B', STUDIO, lv, '--hpd', p['hpd'], '--game', self.game],
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 
     def close(self):
         if self.proc and not messagebox.askyesno('NavKit', 'A step is still running. Cancel it and quit?'):

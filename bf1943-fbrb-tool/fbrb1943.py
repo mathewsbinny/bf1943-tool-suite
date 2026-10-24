@@ -10,8 +10,25 @@ are contiguous in directory order, without alignment. gzip members carry mtime 0
 `Bundle.build` rewrites only offsets and sizes; with no replaced entries it reproduces the original directory and
 (decompressed) payload byte-for-byte. A compressed bundle's gzip bytes differ, since zlib is not the encoder DICE's
 tools used; the game reads the decompressed content (checked on all 82 bundles by tests/test_bf1943_data.py bundles).
+
+Command line:
+
+  python fbrb1943.py list <bundle.fbrb> [filter]          entries: size, type, name (filter: part of the name)
+  python fbrb1943.py info <bundle.fbrb>                    counts, sizes, compression
+  python fbrb1943.py extract <bundle.fbrb> <out dir> [filter]
+                                                           the entries as files under their names, and
+                                                           fbrb.manifest.json (name, type, flags, size, sha256)
+  python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
+                                                           a copy with entries replaced (names as listed);
+                                                           never written into the game folder or over the input
+
+The game folder (core game1943.find_game) is only read: a changed bundle goes elsewhere, for the Xenia kit or a
+mod folder to use.
 """
 import gzip
+import hashlib
+import json
+import os
 import struct
 import sys
 import zlib
@@ -84,3 +101,92 @@ class Bundle:
         directory = gzip_member(bytes(d), self.dir_header)
         body = gzip_member(bytes(payload), self.payload_header) if self.compressed else bytes(payload)
         return b'FbRB' + struct.pack('>I', len(directory)) + directory + body, bytes(d), bytes(payload)
+
+
+def safe_path(out_dir, name):
+    """Where entry <name> goes under out_dir; refuses names that would leave it."""
+    p = os.path.normpath(os.path.join(out_dir, *name.replace('\\', '/').split('/')))
+    if os.path.commonpath([os.path.abspath(p), os.path.abspath(out_dir)]) != os.path.abspath(out_dir):
+        raise ValueError(f'entry name leaves the output folder: {name}')
+    return p
+
+
+def inside_game(path):
+    """True when path lies in the BF1943 game folder (game1943.find_game), which the tools only read."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'core'))
+    try:
+        from bfbc2core import game1943
+        game = game1943.find_game()
+    except (ImportError, FileNotFoundError):
+        return False
+    a, g = os.path.abspath(path), os.path.abspath(game)
+    return os.path.commonpath([a, g]) == g
+
+
+def main(argv):
+    if len(argv) < 3 or argv[1] not in ('list', 'info', 'extract', 'replace'):
+        print(__doc__)
+        return 1
+    cmd, path = argv[1], argv[2]
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    b = Bundle(open(path, 'rb').read())
+    if cmd == 'list':
+        flt = argv[3].lower() if len(argv) > 3 else ''
+        for e in b.entries:
+            if flt in e['name'].lower():
+                print(f"{e['size']:10d}  {e['type']:24s}  {e['name']}")
+    elif cmd == 'info':
+        types = {}
+        for e in b.entries:
+            types[e['type']] = types.get(e['type'], 0) + 1
+        print(f'{os.path.basename(path)}: {len(b.entries)} entries, payload {len(b.payload):,} bytes '
+              f'({"gzip" if b.compressed else "stored"}), file {len(b.raw):,} bytes')
+        for t, n in sorted(types.items(), key=lambda kv: -kv[1]):
+            print(f'  {n:5d}  {t}')
+    elif cmd == 'extract':
+        if len(argv) < 4:
+            print(__doc__)
+            return 1
+        out, flt = argv[3], (argv[4].lower() if len(argv) > 4 else '')
+        manifest = []
+        for e in b.entries:
+            if flt not in e['name'].lower():
+                continue
+            data = b.data(e['name'])
+            p = safe_path(out, e['name'])
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, 'wb').write(data)
+            manifest.append(dict(name=e['name'], type=e['type'], flags=e['flags'], size=len(data),
+                                 sha256=hashlib.sha256(data).hexdigest()))
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, 'fbrb.manifest.json'), 'w', encoding='utf-8') as f:
+            json.dump(dict(bundle=os.path.abspath(path), sha256=hashlib.sha256(b.raw).hexdigest(), entries=manifest), f, indent=1)
+        print(f'extracted {len(manifest)} entries into {out}')
+    elif cmd == 'replace':
+        if len(argv) < 5:
+            print(__doc__)
+            return 1
+        out = argv[3]
+        if os.path.abspath(out) == os.path.abspath(path):
+            raise ValueError('the output would overwrite the input bundle; write a copy elsewhere')
+        if inside_game(out):
+            raise ValueError(f'{out} is in the game folder, which the tools only read; write the bundle elsewhere')
+        rep = {}
+        for spec in argv[4:]:
+            name, _, file = spec.partition('=')
+            if not file:
+                raise ValueError(f'expected <entry name>=<file>, got {spec!r}')
+            rep[name] = open(file, 'rb').read()
+        raw, _, _ = b.build(rep)
+        open(out, 'wb').write(raw)
+        print(f'wrote {out}: {len(rep)} entries replaced')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'core'))
+    from bfbc2core import errors
+    errors.setup('fbrb1943', gui=False)
+    with errors.guard():
+        sys.exit(main(sys.argv))

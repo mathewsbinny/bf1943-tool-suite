@@ -1032,6 +1032,45 @@
           ]
         }
       ]
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-navigation-studio",
+      "paths": [
+        "editing.py",
+        "overlay.py"
+      ],
+      "removed": "2026-10-23T19:27:29-04:00",
+      "note": "BFBC2-only: edits through navkit.py apply / install into BFBC2, and DICE / Xbox reference overlays; the studio is rebuilt for BF1943 (studio.py)"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-automated-map-and-bot-test-harness",
+      "paths": [
+        "crash-reader/crashreader.py",
+        "crash-reader/symbols_795745.txt"
+      ],
+      "removed": "2026-10-23T19:32:00-04:00",
+      "note": "BFBC2-only (BFBC2Game.exe's crashreport.xml); replaced by xenia-run/xeniarun.py for BF1943 runs in Xenia"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-console-readers",
+      "paths": [
+        "xiso/xiso.py"
+      ],
+      "removed": "2026-10-23T19:34:14-04:00",
+      "note": "Xbox disc images: BF1943 is download-only (its STFS package is read by stfs/stfs.py)"
+    },
+    {
+      "kind": "remove",
+      "destination": "bf1943-fbrb-tool",
+      "paths": [
+        "FbrbTool.cs",
+        "build.bat"
+      ],
+      "removed": "2026-10-23T19:34:14-04:00",
+      "note": "BFBC2 PC's .fbrb tool; BF1943's FbRB v2 bundles are read and written by fbrb1943.py"
     }
   ]
 }

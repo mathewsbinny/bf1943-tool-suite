@@ -41,30 +41,11 @@ sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-f
 import havok461  # noqa: E402
 import hkpack  # noqa: E402
 from bfbc2core import dbx  # noqa: E402
-from fbrb1943 import Bundle  # noqa: E402
 from bfbc2core import terrain  # noqa: E402
 
 
-class Game:
-    """Every entry of the level's bundles and the shared level bundle, by lower-case name."""
-
-    def __init__(self, game, level):
-        self.entries = {}
-        folder = os.path.join(game, 'levels', level)
-        paths = [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if n.endswith('.fbrb')]
-        paths.append(os.path.join(game, 'levels', 'levels-common-00.fbrb'))
-        for p in paths:
-            b = Bundle(open(p, 'rb').read())
-            for e in b.entries:
-                self.entries.setdefault(e['name'].lower(), (b, e['name']))
-
-    def data(self, name):
-        hit = self.entries.get(name.lower())
-        return hit[0].data(hit[1]) if hit else None
-
-    def partition(self, name):
-        d = self.data(name + '.dbx')
-        return dbx.parse(d) if d else None
+# the level's bundles and the shared level bundle, by entry name (core game1943.py)
+from bfbc2core.game1943 import Game  # noqa: E402,F401
 
 
 def kind(e):

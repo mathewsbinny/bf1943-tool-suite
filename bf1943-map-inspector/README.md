@@ -1,40 +1,40 @@
 # BF1943 Map Inspector (bf1943-map-inspector)
 
-Part of the BF1943 Tool Suite. **BF1943 status: not adapted yet** - it still opens BFBC2 levels from
-Project OPFOR's game copy (through `core/bfbc2core/level.py` and NavKit's `prepare` step), and everything below
-describes it on BFBC2 data. It does not open BF1943 levels yet.
+Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-23) - it opens BF1943 levels from your own copy,
+read straight from the bundles through `core/bfbc2core/level1943.py`.
 
-Browse a Battlefield: Bad Company 2 level in 3D and inspect every object: where it is, what it is, which
-file it comes from, its full property tree, and how it links to other objects.
+Browse a Battlefield 1943 level in 3D and inspect every object: where it is, what it is, which file it comes from,
+its full property tree, and how it links to other objects.
 
 **Opening it:** in the suite window (`BF1943 Tool Suite.pyw`), Levels tab: choose a level, then **Open in Map
-Inspector** (or double-click the level). Or double-click `inspector.py` here: a level picker opens. Or from
-a command line:
+Inspector** (or double-click the level). Or double-click `inspector.py` here: a picker of your copy's levels opens.
+Or from a command line:
 
 ```
-python inspector.py <level>          e.g. python inspector.py mp_005   or   sp_01, mp_009gr, ons_mp_004
+python inspector.py <level>          e.g. python inspector.py wake_island_s   (or guadal_canal, iwo_jima_s, coral_sea)
 ```
 
-The level is read from Project OPFOR's game copy. The first time a level is opened, it is unpacked
-(NavKit's offline `prepare` step plus the terrain bundle, about 20 s; no game launch). Needs Python 3.10+
-with `numpy`, `moderngl`, `glfw` and `imgui-bundle` (`pip install numpy moderngl glfw imgui-bundle`).
+The level is read from the game folder `bf1943-xenia-kit` extracts (`BF1943_GAME` selects another). The copy is
+only read; nothing is unpacked or written. Needs Python 3.10+ with `numpy`, `moderngl`, `glfw` and `imgui-bundle`
+(`pip install numpy moderngl glfw imgui-bundle`).
 
 ## What it shows
 
 | Layer | From |
 |---|---|
-| terrain | the level's height field (`core/bfbc2core/terrain.py`), exact to a few centimetres |
-| placed objects, destructibles, dynamic objects, ladders | `ReferenceObjectData` collision; the group comes from the blueprint's object type (destructible: a static model with health states or breakable parts) |
-| group members | static model groups (`*_HavokAsset`) |
-| soldier and vehicle spawns, per team | `SoldierSpawn`, `AlternateSpawn` (team of the spawner that lists it), `VehicleSpawn`; a short line shows the facing |
-| objectives | Rush M-COMs (`mpobjective` blueprints), campaign `MissionObjective` and `ArmDisarmAward` entities |
-| capture points | Conquest flags (`CapturePointEntityData`) and their capture areas |
-| combat areas | `CombatAreaTrigger` (and its outer area) and `DamageAreaTrigger` outlines |
-| AI orders | area, patrol, interlude and fire-at-area orders; patrol routes as lines |
-| effects, area points, other | hidden at start |
+| terrain, water | the level's height field (`core/bfbc2core/terrain.py`, big-endian) and sea surface (`water.py`) |
+| placed objects, destructibles, dynamic objects, ladders | collision of the placed objects; the group comes from the blueprint (ladder: `LadderEntityData`; destructible: two or more health states) |
+| group members | static model groups |
+| soldier and vehicle spawns, per team | team 1 (US) blue, team 2 (Japan) red; a short line shows the facing |
+| end-of-round spawns | `EndOfRoundSoldierSpawnEntityData` (hidden at start) |
+| bases, flags | the capture points, as `bf1943-spawn-map` reads them (a base cannot change team) |
+| combat areas, DMZs | their outlines (`DmzEntityData` names its team) |
+| map markers | `MapMarkerEntityData` (hidden at start) |
+| area points, other | hidden at start |
 
-Areas and routes are chains of `AreaGeometryEntityData` points (their `Next` links): a chain that returns
-to its start is an area (drawn with its height as a prism), an open one is a route.
+BF1943's spawns are all `TeamNeutral` in the data, so a spawn takes the side of the base that owns it, or of the
+carrier it stands on. BF1943's levels have no Rush objectives, AI orders or effects, so the inspector has no such
+layers.
 
 ## Using it
 
@@ -53,6 +53,3 @@ Window layout is kept in `%APPDATA%\bf1943-tool-suite\`.
 
 For tests: `inspector.py <level> --screenshot out.png [--frames N] [--select <guid>] [--measure "x,y,z;x,y,z"]`
 draws, saves a screenshot and exits.
-
-"Player type" shows the spawn's `PlayerType` field as stored: most of MP_005's multiplayer spawns say
-`SSAiPlayer`, so it does not tell who actually spawns there.

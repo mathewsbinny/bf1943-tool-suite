@@ -1,10 +1,11 @@
 """BF1943 Tool Suite - one window for every tool (double-click to start; needs Python 3 with numpy, and for the 3D
 tools moderngl, glfw and imgui-bundle).
 
-Tabs: Levels (open a level in the Map Inspector or the Navigation Studio), Bundles (FbrbTool), Level diff
-(LevelDiff), Crash reader, Xbox files (STFS packages and disc images), Tests (run_tests.py), More tools
-(DbxEditGUI, NavKit's window). Every tool runs as its own process; its output appears in the pane at the bottom.
-The tools read your own game copy (Project OPFOR's) - nothing is sent anywhere.
+Tabs: Levels (your BF1943 copy's levels: open one in the Map Inspector or the Navigation Studio, build its
+navigation), Bundles (fbrb1943.py), Level diff (LevelDiff), Xenia run (what happened in the last session), Xbox
+files (STFS content packages), Tests (run_tests.py), More tools (DbxEditGUI, NavKit's window). Every tool runs as
+its own process; its output appears in the pane at the bottom. The tools read your own game copy (the folder
+bf1943-xenia-kit extracts, or BF1943_GAME) - nothing is sent anywhere, and the copy is never changed.
 """
 import json
 import os
@@ -16,21 +17,19 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 SUITE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian'))
+NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit-big-endian')
 sys.path.insert(0, os.path.join(SUITE, 'core'))
-from bfbc2core import errors  # noqa: E402
+from bfbc2core import errors, game1943  # noqa: E402
 
 # library -> what needs it (checked when the window opens)
-LIBRARIES = [('numpy', 'every tool'), ('matplotlib', 'NavKit, screenshots'), ('moderngl', 'the 3D tools'),
-             ('glfw', 'the 3D tools'), ('imgui_bundle', 'the 3D tools'), ('pefile', 'the crash reader\'s code view'),
-             ('capstone', 'the crash reader\'s code view')]
+LIBRARIES = [('numpy', 'every tool'), ('matplotlib', 'screenshots'), ('moderngl', 'the 3D tools'),
+             ('glfw', 'the 3D tools'), ('imgui_bundle', 'the 3D tools'), ('capstone', 'the Xenia kit\'s assembler test')]
 PYTHON = os.path.join(os.path.dirname(sys.executable), 'python.exe')        # console python for the tools
 if not os.path.isfile(PYTHON):
     PYTHON = sys.executable
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 TOOLS = {
-    'fbrb': (os.path.join(SUITE, 'bf1943-fbrb-tool', 'FbrbTool.exe'), os.path.join(SUITE, 'bf1943-fbrb-tool', 'build.bat')),
     'leveldiff': (os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'LevelDiff.exe'),
                   os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'build.bat')),
     'dbxgui': (os.path.join(SUITE, 'bf1943-dbx-tools', 'DbxEditGUI.exe'), os.path.join(SUITE, 'bf1943-dbx-tools', 'build.bat')),
@@ -38,13 +37,14 @@ TOOLS = {
 SCRIPTS = {
     'inspector': os.path.join(SUITE, 'bf1943-map-inspector', 'inspector.py'),
     'studio': os.path.join(SUITE, 'bf1943-navigation-studio', 'studio.py'),
-    'navkit': os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'navkit.py'),
-    'navkitgui': os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'navkitGUI.pyw'),
-    'crash': os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'crash-reader', 'crashreader.py'),
+    'navkit': os.path.join(NAVKIT, 'navkit.py'),
+    'navkitgui': os.path.join(NAVKIT, 'navkitGUI.pyw'),
+    'xeniarun': os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'xeniarun.py'),
+    'fbrb': os.path.join(SUITE, 'bf1943-fbrb-tool', 'fbrb1943.py'),
     'stfs': os.path.join(SUITE, 'bf1943-console-readers', 'stfs', 'stfs.py'),
-    'xiso': os.path.join(SUITE, 'bf1943-console-readers', 'xiso', 'xiso.py'),
     'tests': os.path.join(SUITE, 'run_tests.py'),
 }
+NAV_STEPS = ('prepared', 'sampled', 'built', 'checked')          # navkit.json keys, in order
 
 
 def tool(name):
@@ -70,12 +70,11 @@ class Hub:
             ttk.Style().theme_use('vista')
         except tk.TclError:
             pass
-        self.pr = None
+        self.game = None
         try:
-            import navkit
-            self.pr = navkit.Project()
-        except Exception as e:                 # the suite still opens; the Levels tab explains
-            self.pr_error = str(e)
+            self.game = game1943.find_game()
+        except FileNotFoundError as e:         # the suite still opens; the Levels tab explains
+            self.game_error = str(e)
 
         pane = ttk.PanedWindow(root, orient='vertical')
         pane.pack(fill='both', expand=True, padx=8, pady=8)
@@ -99,7 +98,7 @@ class Hub:
         self.tab_levels()
         self.tab_bundles()
         self.tab_diff()
-        self.tab_crash()
+        self.tab_xenia()
         self.tab_xbox()
         self.tab_tests()
         self.tab_more()
@@ -151,7 +150,7 @@ class Hub:
         self.write(f'\n> {label}\n')
         errors.logger().info(f'launch: {label}: {subprocess.list2cmdline([str(a) for a in args])}')
         self.tails[label] = []
-        log = tempfile.NamedTemporaryFile(prefix='bfbc2suite_', suffix='.log', delete=False)
+        log = tempfile.NamedTemporaryFile(prefix='bf1943suite_', suffix='.log', delete=False)
         try:
             p = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, cwd=SUITE, creationflags=NO_WINDOW,
                                  env={**os.environ, 'PYTHONUNBUFFERED': '1'})
@@ -233,7 +232,8 @@ class Hub:
     def stop(self):
         if self.proc is not None and self.proc.poll() is None:
             self.stopped = True
-            self.proc.terminate()
+            # the tool and what it started (NavKit's samplers): ending the tool alone leaves those running
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.proc.pid)], capture_output=True, creationflags=NO_WINDOW)
             self.write('stopped.\n')
             errors.logger().info('stopped by the user')
 
@@ -273,18 +273,18 @@ class Hub:
 
     # --- Levels: the 3D tools -----------------------------------------------------------------------
     def tab_levels(self):
-        f = self.form('Levels', 'Pick a level, then open it in the Map Inspector (the level in 3D: every object, its '
-                                'properties and links; measuring) or in the Navigation Studio (the AI\'s navigation '
-                                'data: NavKit\'s and DICE\'s, islands, path test, edits). A level is unpacked the first '
-                                'time it is opened (offline, about 20 s); the first opening of its navigation data takes '
-                                'up to a minute, later ones seconds. The tool\'s progress shows below.')
-        cols = ('prepared', 'dice', 'navkit', 'edits')
-        self.tree = ttk.Treeview(f, columns=cols, height=12, selectmode='browse')
+        f = self.form('Levels', 'Your BF1943 copy\'s levels. Open one in the Map Inspector (the level in 3D: every object, '
+                                'its properties and links; bases, flags and spawns; measuring) or in the Navigation Studio '
+                                '(its navigation build: islands, spawns and flags on the network, the path test). The '
+                                'Studio needs a build: "Build navigation" runs NavKit\'s steps (prepare, sample, build, '
+                                'check; about 45 minutes, computed from the level\'s data). Progress shows below.')
+        cols = ('kind',) + NAV_STEPS
+        self.tree = ttk.Treeview(f, columns=cols, height=10, selectmode='browse')
         self.tree.heading('#0', text='Level')
-        for c, title in zip(cols, ('Prepared', 'DICE path data', 'NavKit build', 'Saved edits')):
+        for c, title in zip(cols, ('', 'Prepared', 'Sampled', 'Built', 'Checked')):
             self.tree.heading(c, text=title)
-            self.tree.column(c, width=120, anchor='center')
-        self.tree.column('#0', width=160)
+            self.tree.column(c, width=130, anchor='center')
+        self.tree.column('#0', width=170)
         self.tree.grid(row=1, column=0, columnspan=3, sticky='nsew')
         self.tree.bind('<Double-1>', lambda e: self.open_3d('inspector'))
         f.rowconfigure(1, weight=1)
@@ -292,40 +292,34 @@ class Hub:
         btns.grid(row=2, column=0, columnspan=3, sticky='w', pady=8)
         ttk.Button(btns, text='Open in Map Inspector', command=lambda: self.open_3d('inspector')).pack(side='left')
         ttk.Button(btns, text='Open in Navigation Studio', command=lambda: self.open_3d('studio')).pack(side='left', padx=6)
-        ttk.Button(btns, text='Prepare level', command=self.prepare).pack(side='left', padx=6)
+        ttk.Button(btns, text='Build navigation', command=self.build_navigation).pack(side='left', padx=6)
         ttk.Button(btns, text='Open level folder', command=self.open_level_folder).pack(side='left', padx=6)
         ttk.Button(btns, text='Refresh', command=self.fill_levels).pack(side='left', padx=6)
         self.nav_file = tk.StringVar()
-        self.file_row(f, 3, 'NavKit file for the Studio (optional; default: the newest build):', self.nav_file,
-                      types=(('Path data', '*.hpd'), ('All files', '*.*')))
+        self.file_row(f, 3, 'Navigation build for the Studio (optional; default: NavKit\'s):', self.nav_file,
+                      types=(('Navigation builds', '*.hpd'), ('All files', '*.*')))
         self.fill_levels()
 
     def fill_levels(self):
         self.tree.delete(*self.tree.get_children())
-        if self.pr is None:
-            self.tree.insert('', 'end', text='(no game copy found)', values=('', '', '', ''))
-            self.write(f'Levels: {getattr(self, "pr_error", "Project OPFOR not found")}\n'
-                       'Put the suite next to the "Project OPFOR" folder, or set OPFOR_ROOT.\n')
+        if self.game is None:
+            self.tree.insert('', 'end', text='(no game copy found)', values=('',) * 5)
+            self.write(f'Levels: {getattr(self, "game_error", "no BF1943 game folder")}\n')
             return
-        for lv in self.pr.level_dirs():
-            work = os.path.join(self.pr.work, 'levels', lv)
-            nk = os.path.join(self.pr.work, 'navkit', lv)
-            builds = [p for p in (os.path.join(nk, 'pathdata.hpd'), os.path.join(self.pr.work, 'navkit', 'regress', f'{lv}.hpd'),
-                                  os.path.join(self.pr.work, 'navbuild', f'{lv}_W.hpd')) if os.path.isfile(p)]
-            edits = os.path.join(nk, f'{lv}.navtune.json')
-            n_edits = ''
-            if os.path.isfile(edits):
+        for lv in game1943.levels(self.game):
+            p = os.path.join(game1943.level_work(lv), 'navkit', 'navkit.json')
+            s = {}
+            if os.path.isfile(p):
                 try:
-                    n_edits = str(len(json.load(open(edits, encoding='utf-8')).get('operations', [])))
+                    s = json.load(open(p, encoding='utf-8'))
                 except (OSError, ValueError):
-                    n_edits = '?'
-            self.tree.insert('', 'end', iid=lv, text=lv, values=(
-                'yes' if os.path.isdir(os.path.join(work, 'dist')) else '-',
-                'yes' if self.pr.dice_pathdata(lv) else '-', 'yes' if builds else '-', n_edits or '-'))
+                    s = {}
+            kind = 'multiplayer map' if lv in game1943.MP_LEVELS else 'other level'
+            self.tree.insert('', 'end', iid=lv, text=lv, values=(kind,) + tuple(s.get(k, '-') for k in NAV_STEPS))
 
     def chosen_level(self):
         sel = self.tree.selection()
-        if not sel or self.pr is None:
+        if not sel or self.game is None:
             messagebox.showinfo('BF1943 Tool Suite', 'Choose a level in the list first.')
             return None
         return sel[0]
@@ -336,41 +330,44 @@ class Hub:
             return
         args = [PYTHON, SCRIPTS[which], lv]
         if which == 'studio' and self.nav_file.get().strip():
-            args += ['--candidate', self.nav_file.get().strip()]
+            args += ['--hpd', self.nav_file.get().strip()]
         name = 'Map Inspector' if which == 'inspector' else 'Navigation Studio'
         self.launch(args, f'{name}: {lv} (the window opens when the level is loaded)')
 
-    def prepare(self):
+    def build_navigation(self):
         lv = self.chosen_level()
-        if lv:
-            self.run([PYTHON, SCRIPTS['navkit'], 'prepare', lv], f'Levels: prepare {lv}')
+        if lv and messagebox.askokcancel('BF1943 Tool Suite', f'Build the navigation of {lv}?\n\nNavKit prepares, samples, '
+                                         'builds and checks it from the level\'s data: about 45 minutes, using every '
+                                         'core. The game is not started.'):
+            self.run([PYTHON, '-u', SCRIPTS['navkit'], 'all', lv], f'Levels: navigation of {lv}')
 
     def open_level_folder(self):
         lv = self.chosen_level()
         if lv:
-            d = os.path.join(self.pr.work, 'levels', lv)
-            os.startfile(d if os.path.isdir(d) else self.pr.work)
+            d = game1943.level_work(lv)
+            os.makedirs(d, exist_ok=True)
+            os.startfile(d)
 
-    # --- Bundles: FbrbTool --------------------------------------------------------------------------
+    # --- Bundles: fbrb1943 --------------------------------------------------------------------------
     def tab_bundles(self):
-        f = self.form('Bundles', 'Look inside the game\'s .fbrb bundles, unpack them to a folder, or pack an unpacked '
-                                 'folder back into a bundle (FbrbTool). Packing needs the folder\'s fbrb.manifest, '
-                                 'which unpacking writes.')
-        self.fb_file, self.fb_dir, self.fb_out = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        f = self.form('Bundles', 'Look inside your copy\'s .fbrb bundles (BF1943\'s FbRB v2), or extract their entries to a '
+                                 'folder - all, or only names containing the filter text - with a manifest of their sizes '
+                                 'and hashes (fbrb1943.py). The bundles are only read.')
+        self.fb_file, self.fb_dir, self.fb_filter = tk.StringVar(), tk.StringVar(), tk.StringVar()
         self.file_row(f, 1, 'Bundle (.fbrb):', self.fb_file, types=(('Bundles', '*.fbrb'), ('All files', '*.*')))
-        self.file_row(f, 2, 'Folder to unpack into:', self.fb_dir, kind='dir')
+        self.file_row(f, 2, 'Folder to extract into:', self.fb_dir, kind='dir')
+        ttk.Label(f, text='Filter (optional):').grid(row=3, column=0, sticky='w')
+        ttk.Entry(f, textvariable=self.fb_filter, width=30).grid(row=3, column=1, sticky='w', padx=6)
         b = ttk.Frame(f)
-        b.grid(row=3, column=1, sticky='w', pady=6)
+        b.grid(row=4, column=1, sticky='w', pady=6)
+        flt = lambda: [self.fb_filter.get().strip()] if self.fb_filter.get().strip() else []
+        ttk.Button(b, text='Info', command=lambda: self.need(('a bundle', self.fb_file)) and
+                   self.run([PYTHON, SCRIPTS['fbrb'], 'info', self.fb_file.get()], 'Bundle info')).pack(side='left')
         ttk.Button(b, text='List entries', command=lambda: self.need(('a bundle', self.fb_file)) and
-                   self.run([tool('fbrb'), 'list', self.fb_file.get()], 'FbrbTool list')).pack(side='left')
-        ttk.Button(b, text='Unpack', command=lambda: self.need(('a bundle', self.fb_file), ('a folder', self.fb_dir)) and
-                   self.run([tool('fbrb'), 'unpack', self.fb_file.get(), self.fb_dir.get()], 'FbrbTool unpack')).pack(side='left', padx=6)
-        ttk.Separator(f).grid(row=4, column=0, columnspan=3, sticky='we', pady=8)
-        self.fb_src = tk.StringVar()
-        self.file_row(f, 5, 'Unpacked folder to pack:', self.fb_src, kind='dir')
-        self.file_row(f, 6, 'New bundle:', self.fb_out, kind='save', types=(('Bundles', '*.fbrb'),))
-        ttk.Button(f, text='Pack', command=lambda: self.need(('a folder', self.fb_src), ('a new bundle', self.fb_out)) and
-                   self.run([tool('fbrb'), 'pack', self.fb_src.get(), self.fb_out.get()], 'FbrbTool pack')).grid(row=7, column=1, sticky='w', pady=6)
+                   self.run([PYTHON, SCRIPTS['fbrb'], 'list', self.fb_file.get()] + flt(), 'Bundle list')).pack(side='left', padx=6)
+        ttk.Button(b, text='Extract', command=lambda: self.need(('a bundle', self.fb_file), ('a folder', self.fb_dir)) and
+                   self.run([PYTHON, SCRIPTS['fbrb'], 'extract', self.fb_file.get(), self.fb_dir.get()] + flt(),
+                            'Bundle extract')).pack(side='left')
 
     # --- Level diff ---------------------------------------------------------------------------------
     def tab_diff(self):
@@ -412,41 +409,34 @@ class Hub:
             args += ['--json', self.ld_json.get().strip()]
         self.run(args, 'LevelDiff')
 
-    # --- Crash reader -------------------------------------------------------------------------------
-    def tab_crash(self):
-        f = self.form('Crash reader', 'After the game crashes, this turns its crashreport.xml into something you can act '
-                                      'on: where it crashed (function names), the code there, null pointers, the call '
-                                      'stack, hints for known crash causes and the log lines before the crash. Leave the '
-                                      'report empty to read the newest one.')
-        self.cr_file, self.cr_log = tk.StringVar(), tk.StringVar()
-        self.file_row(f, 1, 'crashreport.xml (optional):', self.cr_file, types=(('Crash reports', '*.xml'), ('All files', '*.*')))
-        self.file_row(f, 2, 'Game log (optional):', self.cr_log, types=(('Logs', '*.log *.txt'), ('All files', '*.*')))
-        self.cr_nocode = tk.BooleanVar()
-        ttk.Checkbutton(f, text='Without the code view (it needs: pip install pefile capstone)', variable=self.cr_nocode).grid(row=3, column=1, sticky='w')
-        ttk.Button(f, text='Read the crash report', command=self.crash).grid(row=4, column=1, sticky='w', pady=6)
+    # --- Xenia run ----------------------------------------------------------------------------------
+    def tab_xenia(self):
+        f = self.form('Xenia run', 'What happened in the last Xenia session of the Xenia kit\'s build: Xenia\'s version, the '
+                                   'patches applied, warnings, the bots experiment\'s reports (teams, kits, spawns, the last '
+                                   'positions of you and every bot), and whether Xenia crashed - from Windows\' record of it, '
+                                   'since Xenia writes no crash report (xeniarun.py). Only reads.')
+        self.xr_log = tk.StringVar()
+        self.file_row(f, 1, 'xenia.log (optional; default: the kit\'s Xenia folder):', self.xr_log,
+                      types=(('Logs', '*.log'), ('All files', '*.*')))
+        self.xr_pos = tk.BooleanVar()
+        ttk.Checkbutton(f, text='List every bot\'s last position', variable=self.xr_pos).grid(row=2, column=1, sticky='w')
+        ttk.Button(f, text='Read the last session', command=self.xenia_run).grid(row=3, column=1, sticky='w', pady=6)
 
-    def crash(self):
-        args = [PYTHON, SCRIPTS['crash']]
-        if self.cr_file.get().strip():
-            args.append(self.cr_file.get().strip())
-        if self.cr_log.get().strip():
-            args += ['--log', self.cr_log.get().strip()]
-        if self.cr_nocode.get():
-            args.append('--no-code')
-        self.run(args, 'Crash reader')
+    def xenia_run(self):
+        args = [PYTHON, SCRIPTS['xeniarun']]
+        if self.xr_log.get().strip():
+            args += ['--log', self.xr_log.get().strip()]
+        if self.xr_pos.get():
+            args.append('--positions')
+        self.run(args, 'Xenia run')
 
     # --- Xbox files ---------------------------------------------------------------------------------
     def tab_xbox(self):
-        f = self.form('Xbox files', 'Read your own Xbox 360 files (read-only): content packages such as the game\'s '
-                                    'DLC updates (STFS), and disc images (.iso). List what is inside, or extract it - all, '
-                                    'or only paths containing the filter text.')
+        f = self.form('Xbox files', 'Read your own Xbox 360 content packages (STFS, read-only) - BF1943\'s game package '
+                                    'among them. List what is inside, or extract it - all, or only paths containing the '
+                                    'filter text. (The Xenia kit extracts the game package for you.)')
         self.xb_file, self.xb_dir, self.xb_filter = tk.StringVar(), tk.StringVar(), tk.StringVar()
-        self.xb_kind = tk.StringVar(value='package')
-        k = ttk.Frame(f)
-        k.grid(row=1, column=1, sticky='w')
-        ttk.Radiobutton(k, text='Content package (STFS)', value='package', variable=self.xb_kind).pack(side='left')
-        ttk.Radiobutton(k, text='Disc image (.iso)', value='iso', variable=self.xb_kind).pack(side='left', padx=8)
-        self.file_row(f, 2, 'File:', self.xb_file)
+        self.file_row(f, 2, 'Package:', self.xb_file)
         self.file_row(f, 3, 'Extract into:', self.xb_dir, kind='dir')
         ttk.Label(f, text='Filter (optional):').grid(row=4, column=0, sticky='w')
         ttk.Entry(f, textvariable=self.xb_filter, width=30).grid(row=4, column=1, sticky='w', padx=6)
@@ -457,29 +447,26 @@ class Hub:
         ttk.Button(b, text='Extract', command=lambda: self.xbox('extract')).pack(side='left')
 
     def xbox(self, cmd):
-        if not self.need(('a file', self.xb_file)):
+        if not self.need(('a package', self.xb_file)):
             return
-        iso = self.xb_kind.get() == 'iso'
-        if cmd == 'info' and iso:
-            cmd = 'list'
-        args = [PYTHON, SCRIPTS['xiso' if iso else 'stfs'], cmd, self.xb_file.get()]
+        args = [PYTHON, SCRIPTS['stfs'], cmd, self.xb_file.get()]
         if cmd == 'extract':
             if not self.need(('a folder to extract into', self.xb_dir)):
                 return
             args.append(self.xb_dir.get())
         if cmd != 'info' and self.xb_filter.get().strip():
             args.append(self.xb_filter.get().strip())
-        self.run(args, f'{"Disc image" if iso else "Package"} {cmd}')
+        self.run(args, f'Package {cmd}')
 
     # --- Tests --------------------------------------------------------------------------------------
     def tab_tests(self):
-        f = self.form('Tests', 'Check that the tools work on this PC: quick (about a minute, no game data), game (your '
-                               'game copy, about 15 minutes) or full (everything, about 90 minutes). One line per test; '
-                               'a failure shows its output at the end.')
+        f = self.form('Tests', 'Check that the tools work on this PC: quick (under a minute, no game data) or bf1943 (on '
+                               'your BF1943 copy as the Xenia kit extracts it, a few minutes). One line per test; a failure '
+                               'shows its output at the end.')
         self.t_tier = tk.StringVar(value='quick')
         r = ttk.Frame(f)
         r.grid(row=1, column=1, sticky='w')
-        for t in ('quick', 'game', 'full'):
+        for t in ('quick', 'bf1943'):
             ttk.Radiobutton(r, text=t, value=t, variable=self.t_tier).pack(side='left', padx=(0, 10))
         b = ttk.Frame(f)
         b.grid(row=2, column=1, sticky='w', pady=6)
@@ -491,11 +478,12 @@ class Hub:
     # --- More tools ---------------------------------------------------------------------------------
     def tab_more(self):
         f = self.form('More tools', 'Tools with windows of their own.')
-        rows = [('DbxEditGUI', 'View, edit, check and repair binary .dbx files; XML export and import.',
+        rows = [('DbxEditGUI', 'View, edit and check binary .dbx partitions (BF1943\'s too; extract them with the Bundles '
+                               'tab first); XML export and import.',
                  lambda: self.launch([tool('dbxgui')], 'DbxEditGUI')),
-                ('NavKit', 'Generate AI navigation data for a level: prepare, sample in game, build, check, install.',
+                ('NavKit', 'Build a level\'s navigation step by step: prepare, sample, build, check; show it in 3D.',
                  lambda: self.launch([PYTHON, SCRIPTS['navkitgui']], 'NavKit')),
-                ('Suite folder', 'The suite\'s files, READMEs and DESIGN.md.', lambda: os.startfile(SUITE))]
+                ('Suite folder', 'The suite\'s files and READMEs.', lambda: os.startfile(SUITE))]
         for k, (name, text, cmd) in enumerate(rows, 1):
             ttk.Button(f, text=f'Open {name}', command=cmd, width=22).grid(row=k, column=0, sticky='w', pady=4)
             ttk.Label(f, text=text).grid(row=k, column=1, sticky='w', padx=8)

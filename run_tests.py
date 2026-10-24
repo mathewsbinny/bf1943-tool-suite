@@ -6,10 +6,13 @@ Every test is about BF1943 or the tools that work on it; tests for BFBC2 data an
 adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
   quick   no game data, about a minute: repository rules, error handling, the STFS reader on packages it builds,
           the Xenia kit's patch file, assembler and bot code, NavKit's builder rules (both variants) and the offline
-          sampler on a made-up level
-  bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), a few minutes: the kit's
+          sampler on a made-up level, the Xenia run reader on a log it writes, the executable tools' workspace lookup
+  bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), about 5 minutes: the kit's
           full build, every BF1943 bundle and DBX partition, terrain and water on every level, the menu movies, the
-          spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit
+          spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit; the level loader on every map, DbxEdit
+          and LevelDiff on BF1943 partitions, the bundle tool's command line, NavKit's prepare step, the hub, and the
+          3D tools (the Navigation Studio when a Wake Island build exists), the enclosure probe on Wake Island's
+          samples, the executable tools from a research workspace (skipped without one)
 
 Run `quick` before every commit and `bf1943` before every push.
 """
@@ -28,11 +31,14 @@ SELECT = {'quick': {'quick'}, 'bf1943': {'quick', 'bf1943'}}
 def tests():
     """(name, tier, argv)."""
     data = os.path.join(SUITE, 'tests', 'test_bf1943_data.py')
+    tools = os.path.join(SUITE, 'tests', 'test_bf1943_tools.py')
     return [
         ('repository rules', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_repo.py')]),
         ('error handling and logs', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_errors.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
         ('STFS reader, built packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
+        ('Xenia run reader, a written log', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_xeniarun.py')]),
+        ('executable tools: research workspace lookup', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_workspace.py')]),
         ('Xenia kit: patch file, port edit, Xenia fix', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py')]),
         ('Xenia kit: PowerPC assembler against capstone', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_ppcasm.py')]),
         ('Xenia kit: bots experiment layout', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py')]),
@@ -68,6 +74,14 @@ def tests():
         ('NavKit big-endian: Wake Island objects', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_levelobjects1943.py')]),
         ('NavKit big-endian: Havok 4.6.1 meshes', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_havok461.py')]),
         ('NavKit little-endian: Havok 4.6.1 meshes', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_havok461.py')]),
+        ('Level loader: every multiplayer map', 'bf1943', [PY, tools, 'level']),
+        ('DbxEdit and LevelDiff on BF1943 partitions', 'bf1943', [PY, tools, 'dbxedit']),
+        ('Bundle tool command line', 'bf1943', [PY, tools, 'fbrb']),
+        ('NavKit big-endian: navkit.py prepare', 'bf1943', [PY, tools, 'navkit']),
+        ('the suite window (hub)', 'bf1943', [PY, tools, 'hub']),
+        ('3D tools: Map Inspector, Navigation Studio', 'bf1943', [PY, tools, 'viewers']),
+        ('NavKit big-endian: enclosure probe on Wake Island', 'bf1943', [PY, tools, 'probe']),
+        ('executable tools from the research workspace', 'bf1943', [PY, tools, 'xex']),
     ]
 
 

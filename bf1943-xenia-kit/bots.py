@@ -33,12 +33,12 @@ Stepping: a soldier is advanced only by its virtual +0x104 (822f05c8), which the
 input frame it drains from a connection (823b2c80, at 823b2ed4). The physics world skips characters while the
 setting Physics.SingleStepCharacter is on (8253e4c8 tests the character's +0xd2, which the soldier constructor sets
 from it), and the per-tick update 822f1d70 runs only the last part of the step (+0x114), and only for players with
-the AI flag (+0x214). BFBC2 turns the setting off in levels with AI, so its physics world steps AI soldiers
-(research/evidence/ai-soldier-control.json). The bots therefore call +0x104 after each frame they push, and keep
+the AI flag (+0x214). In BFBC2 the setting is probably turned off in levels with AI (LevelData.HasAI; a BFBC2 lead,
+unverified), so its physics world steps AI soldiers (research/evidence/ai-soldier-control.json). The bots therefore call +0x104 after each frame they push, and keep
 the AI flag at 0 so that 822f1d70 does not apply the input a second time. (Runs of 2026-10-23: without stepping,
 with the flag 0 the bots stood at their spawn transform 0.8 m above the deck; with it 1 they stood on the deck
 but ignored all input.) Evidence and addresses: operation-rising-sun/research/AGENT_PROGRESS.md (2026-10-22,
-"Bots: injection recipe"). The addresses are this build's (module hash 872BBE31C0FBA21B) only.
+"Bots: the server player pipeline", and the 2026-10-23 bot entries). The addresses are this build's (module hash 872BBE31C0FBA21B) only.
 """
 import struct
 import sys

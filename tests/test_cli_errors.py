@@ -37,6 +37,7 @@ def main(argv):
         ('level objects, a missing game folder', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'levelobjects1943.py'), missing, 'wake_island_s', tmp], 'levelobjects1943', 'missing'),
         ('sampler, a level folder without objects', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navsample1943.py'), tmp, missing, junk + '.out'], 'navsample1943', 'missing'),
         ('detailed sectors, a level folder without objects', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'detailed1943.py'), tmp, missing, '0', '0'], 'detailed1943', 'missing'),
+        ('enclosure probe, a level not sampled', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'enclosure_probe1943.py'), 'no_such_level', '0', '0', '0'], 'enclosure_probe1943', 'missing'),
         ('test runner, an unknown test name', [PY, os.path.join(SUITE, 'run_tests.py'), 'quick', '--only'], 'run-tests', 'what to do'),
     ]
     try:
