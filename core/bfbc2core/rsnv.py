@@ -176,8 +176,8 @@ class World:
 
     def ground(self, a: Area, x, z):
         """The area's ground height near (x, z) from its 4 m height grid (the nearest filled entry)."""
-        gi = min(max(int((x - a.x0) // BUCKET), 0), a.hw - 1)
-        gj = min(max(int((z - a.z0) // BUCKET), 0), a.hh - 1)
+        gi = min(max(math.floor((x - a.x0) / BUCKET), 0), a.hw - 1)
+        gj = min(max(math.floor((z - a.z0) / BUCKET), 0), a.hh - 1)
         best = None
         for dj in range(-1, 2):
             for di in range(-1, 2):
@@ -189,41 +189,56 @@ class World:
         return best[1] if best else a.min_y
 
     def areas_near(self, x, z):
-        """Area ids of the 4 m bucket holding (x, z), lowest first."""
-        for si, s in enumerate(self.sectors):
+        """Area ids of the 4 m bucket holding (x, z) in every sector that contains it, each bucket's lowest first."""
+        out = []
+        for s in self.sectors:
             _id, _layer, _pc, x0, z0, x1, z1, first_bucket, _fa, _na, _r = s
             if x0 <= x < x1 and z0 <= z < z1:
-                bi = min(int((x - x0) // BUCKET), BUCKETS - 1)
-                bj = min(int((z - z0) // BUCKET), BUCKETS - 1)
+                bi = min(math.floor((x - x0) / BUCKET), BUCKETS - 1)
+                bj = min(math.floor((z - z0) / BUCKET), BUCKETS - 1)
                 first, count = self.gbkt[first_bucket + bj * BUCKETS + bi]
-                return [int(a) for a in self.glst[first:first + count]]
-        return []
+                out += [int(a) for a in self.glst[first:first + count]]
+        return out
 
     def locate(self, x, y, z, max_dist=3.0, dy=None):
         """(area index, (i, j), horizontal distance) of the walkable cell nearest (x, z) whose area's ground is within
-        dy of y (default: the step plus half a metre), searching outward up to max_dist; None when there is none."""
+        dy of y (default: the step plus half a metre), searching outward up to max_dist; None when there is none.
+        Areas in index order, cells by rows then columns, the first nearest kept; all in double precision with a fixed
+        order of operations, so the C runtime (rsnav) gives the same answer."""
         dy = self.step + 0.5 if dy is None else dy
         best = None
         cand = set()
-        r = int(math.ceil(max_dist / BUCKET))
+        r = math.ceil(max_dist / BUCKET)
         for bj in range(-r, r + 1):
             for bi in range(-r, r + 1):
                 cand.update(self.areas_near(x + bi * BUCKET, z + bj * BUCKET))
-        for k in cand:
+        for k in sorted(cand):
             a = self.areas[k]
             if not (a.min_y - dy <= y <= a.max_y + dy):
                 continue
             if abs(self.ground(a, x, z) - y) > dy:
                 continue
-            n = int(math.ceil(max_dist / a.pitch))
-            ci, cj = int(round((x - a.x0) / a.pitch)), int(round((z - a.z0) / a.pitch))
+            n = math.ceil(max_dist / a.pitch)
+            ci, cj = math.floor((x - a.x0) / a.pitch + 0.5), math.floor((z - a.z0) / a.pitch + 0.5)
             for j in range(max(cj - n, 0), min(cj + n, a.height - 1) + 1):
                 for i in range(max(ci - n, 0), min(ci + n, a.width - 1) + 1):
                     if self.walkable(a, i, j):
-                        d = math.hypot(a.x0 + i * a.pitch - x, a.z0 + j * a.pitch - z)
+                        dx, dz = a.x0 + i * a.pitch - x, a.z0 + j * a.pitch - z
+                        d = math.sqrt(dx * dx + dz * dz)
                         if d <= max_dist and (best is None or d < best[2]):
                             best = (k, (i, j), d)
         return best
+
+    def nearest_node(self, k, x, z):
+        """The node of area k nearest (x, z) horizontally (the first in ANOD order on a tie), or None."""
+        a, best = self.areas[k], None
+        for t in range(a.first_node, a.first_node + a.nodes):
+            nd = int(self.anod[t])
+            dx, dz = self.node_pos[nd][0] - x, self.node_pos[nd][2] - z
+            d = dx * dx + dz * dz
+            if best is None or d < best[1]:
+                best = (nd, d)
+        return best[0] if best else None
 
     def validate(self):
         """Problems with the file's internal consistency ([] when none)."""
@@ -320,42 +335,71 @@ def load(src):
     return w
 
 
-def astar(w, start, goal, max_expansions=1 << 30, kind_mask=None):
-    """The Python reference search (design section 6.3): integer costs in 1/16 m, heuristic floor(16 x Euclidean) x
-    0.999, ties broken by node index. Returns (cost, [nodes], expansions) or (None, [], expansions)."""
+DONE, PARTIAL = 'done', 'partial'
+
+
+def search(w, start, goal, max_expansions=1 << 30, kind_mask=None):
+    """The reference search (design sections 2.6 and 6.3), which the C runtime (rsnav) must match exactly: integer
+    costs in 1/16 m; heuristic floor(16 x Euclidean x 0.999) in double precision, summed x, y, then z; the open list
+    ordered by (f, node); a closed node is never reopened; an equal-cost parent is replaced by a lower-indexed one.
+    The goal reached when popped is DONE; otherwise, once max_expansions nodes are expanded or the open list runs out,
+    PARTIAL: the path to the expanded node with the least heuristic (then cost, then index), or [start] if none.
+    Returns (status, cost, [nodes], expansions)."""
     import heapq
     pos = w.node_pos
     fe, tgt, cost, kind = w.node_first_edge, w.edge_target, w.edge_cost, w.edge_kind
-    gx = pos[goal]
+    gx, gy, gz = (float(v) for v in pos[goal])
 
     def h(n):
-        d = pos[n] - gx
-        return int(math.floor(16.0 * math.sqrt(float(d @ d)) * 0.999))
+        dx, dy, dz = float(pos[n][0]) - gx, float(pos[n][1]) - gy, float(pos[n][2]) - gz
+        return math.floor(16.0 * math.sqrt((dx * dx + dy * dy) + dz * dz) * 0.999)
     g = {start: 0}
+    hv = {start: h(start)}
     parent = {start: -1}
-    heap = [(h(start), start)]
+    heap = [(hv[start], start)]
     closed = set()
     exp = 0
+    best = None
+
+    def path_to(n):
+        p = [n]
+        while parent[p[-1]] != -1:
+            p.append(parent[p[-1]])
+        return p[::-1]
     while heap:
-        f, n = heapq.heappop(heap)
+        f, n = heap[0]
         if n in closed:
+            heapq.heappop(heap)
             continue
         if n == goal:
-            path = [n]
-            while parent[path[-1]] != -1:
-                path.append(parent[path[-1]])
-            return g[n], path[::-1], exp
+            return DONE, g[n], path_to(n), exp
+        if exp >= max_expansions:
+            break
+        heapq.heappop(heap)
         closed.add(n)
         exp += 1
-        if exp > max_expansions:
-            break
+        if best is None or (hv[n], g[n], n) < best:
+            best = (hv[n], g[n], n)
         for k in range(fe[n], fe[n + 1]):
             if kind_mask is not None and not (kind_mask >> int(kind[k]) & 1):
                 continue
             m = int(tgt[k])
+            if m in closed:
+                continue
             ng = g[n] + int(cost[k])
             if m not in g or ng < g[m] or (ng == g[m] and n < parent[m]):
+                if m not in hv:
+                    hv[m] = h(m)
+                if m not in g or ng < g[m]:
+                    heapq.heappush(heap, (ng + hv[m], m))
                 g[m] = ng
                 parent[m] = n
-                heapq.heappush(heap, (ng + h(m), m))
-    return None, [], exp
+    end = best[2] if best else start
+    return PARTIAL, g[end], path_to(end), exp
+
+
+def astar(w, start, goal, max_expansions=1 << 30, kind_mask=None):
+    """search() for a complete path: (cost, [nodes], expansions), or (None, [], expansions) when the goal is not
+    reached."""
+    status, c, path, exp = search(w, start, goal, max_expansions, kind_mask)
+    return (c, path, exp) if status == DONE else (None, [], exp)

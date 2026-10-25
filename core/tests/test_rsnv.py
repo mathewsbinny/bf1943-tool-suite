@@ -75,6 +75,13 @@ if __name__ == '__main__':
     check(path == [0, 1, 2], 'a kind mask without jumps keeps to walk edges')
     cost, path, _ = rsnv.astar(a, 1, 3, kind_mask=1 << rsnv.EDGE_WALK)
     check(path == [1, 0, 3] and cost == 134, f'without jump edges 1 -> 3 goes round (cost {cost})')
+    st, cost, path, exp = rsnv.search(a, 0, 2, max_expansions=1)
+    check(st == rsnv.PARTIAL and path == [0] and exp == 1, f'capped at 1 expansion: only the start expanded {path}')
+    st, cost, path, exp = rsnv.search(a, 0, 2, max_expansions=2)
+    check(st == rsnv.DONE and path == [0, 1, 2] and exp == 2,
+          f'capped at 2: the goal is reached when popped, not expanded ({st}, {exp} expansions)')
+    st, cost, path, _ = rsnv.search(a, 0, 3, kind_mask=0)
+    check(st == rsnv.PARTIAL and path == [0], f'no usable edges: partial path [start] ({path})')
     loc = a.locate(1.7, 10.0, 1.7)
     check(loc is not None and loc[0] == 0 and loc[1] == (2, 2), f'locate a walkable cell: {loc}')
     loc = a.locate(2.4, 10.0, 2.4, max_dist=0.1)
