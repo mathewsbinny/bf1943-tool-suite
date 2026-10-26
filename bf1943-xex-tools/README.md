@@ -53,7 +53,11 @@ python -B <suite>\bf1943-xex-tools\export_callgraph_strings.py --ghidra-call-ref
 `run_batch_decompile.ps1 -Out <folder> -Module <language module>` runs the batch with another (saved) language into
 `work\xex-analysis\<folder>`; a folder named `batch-baseline-<date>` is what `record_batch_decompile.py` compares
 against. The batch also writes `fpvmx-mnemonics.tsv` (floating-point and vector instructions, modelled or opaque) and
-`ghidra-call-refs.tsv` (the listing's call references, a cross-check for the call graph).
+`ghidra-call-refs.tsv` (the listing's call references, a cross-check for the call graph). `-Extra <tsv> -OnlyExtra` creates functions in-session
+(start, end, name, source; e.g. `callgraph\inferred-functions.tsv`, the leaf functions without `.pdata`), refusing any
+that overlap an existing function, and decompiles only them; `-Heap` sets the Java heap (default `6g`). Each function's
+listing is cleared before flow disassembly (the saved project's stock-language listing stops at words that language
+cannot decode), and `unreached-words.tsv` lists every word the flow does not reach.
 
 Every step refuses to overwrite source evidence; the recorders write evidence only after a complete pass. Output is
 pseudocode, not original source.

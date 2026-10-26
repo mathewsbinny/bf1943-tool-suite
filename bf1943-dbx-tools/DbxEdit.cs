@@ -3213,8 +3213,15 @@ namespace Bfbc2Dbx
         // With --bundle: the LevelData's static cull trees (World.StaticCullTreeData: Nodes, EnumOffset). Nodes are a
         // pre-order binary tree: an inner node's Right is the offset to its right child (the left one follows it); a
         // leaf's Right has bit 31 set and its leaf number 1..L below; 256 zero nodes end the list. Leaf n is slot
-        // EnumOffset + n. SphereKeyX/Y/Z are the leaf's centre x 16 (signed 16-bit), SphereKeyW a size.
-        sealed class CullTree { public string Partition; public int EnumOffset, Nodes; public Dictionary<int, int[]> Leaves = new Dictionary<int, int[]>(); public int Duplicates; }
+        // EnumOffset + n. The game's traversal (0x825c3730) reads a node's sphere as centre SphereKeyX/Y/Z / 16 and
+        // radius SphereKeyW / 4; Max (a node's largest object radius, the maximum over its subtree) is its distance test.
+        sealed class CullTree
+        {
+            public string Partition; public int EnumOffset, Nodes; public int Duplicates;
+            public Dictionary<int, int[]> Leaves = new Dictionary<int, int[]>();
+            public Dictionary<int, float> LeafMax = new Dictionary<int, float>();
+            public List<uint> Right = new List<uint>(); public List<float> Max = new List<float>(); public List<int> W = new List<int>();
+        }
 
         static CullTree LoadTree(Ctx c, Element level, string field, Dictionary<string, string> index)
         {
@@ -3233,17 +3240,57 @@ namespace Bfbc2Dbx
             {
                 tree.Nodes++;
                 uint right = (uint)Int(d, node, "Right");
-                if ((right >> 31) == 0) continue;
-                int n = (int)(right & 0x7fffffff);
                 var key = new int[4];
                 for (int k = 0; k < 4; k++) key[k] = Short16(d, node, "SphereKey" + "XYZW"[k]);
+                float max = BitConverter.ToSingle(BitConverter.GetBytes(Int(d, node, "Max")), 0);
+                tree.Right.Add(right);
+                tree.Max.Add(max);
+                tree.W.Add(key[3]);
+                if ((right >> 31) == 0) continue;
+                int n = (int)(right & 0x7fffffff);
                 if (tree.Leaves.ContainsKey(n)) tree.Duplicates++;
-                else tree.Leaves[n] = key;
+                else { tree.Leaves[n] = key; tree.LeafMax[n] = max; }
             }
             return tree;
         }
 
         static bool Numbered(CullTree t) { return t.Duplicates == 0 && t.Leaves.Keys.All(n => n >= 1 && n <= t.Leaves.Count); }
+
+        // The tree's own consistency, as in every shipped tree: the pre-order walk from node 0 uses every node but the
+        // 256 zero ones that end the list; an inner node's Max is the larger of its children's; a leaf's radius
+        // SphereKeyW / 4 exceeds its Max by at least 1/8 m.
+        static void CheckTree(Ctx c, CullTree t, string which)
+        {
+            int count = t.Right.Count, used = 0, badMax = 0, badRadius = 0;
+            bool broken = false;
+            // pre-order: returns the index after the subtree at i (indices only grow, so it ends)
+            Func<int, int> walk = null;
+            walk = i =>
+            {
+                if (i < 0 || i >= count || broken) { broken = true; return count; }
+                used++;
+                uint r = t.Right[i];
+                if ((r >> 31) != 0)
+                {
+                    if (t.W[i] / 4.0 - t.Max[i] < 0.125 - 1e-4) badRadius++;
+                    return i + 1;
+                }
+                if (r == 0) { broken = true; return count; }
+                int endLeft = walk(i + 1);
+                if (endLeft != i + (int)r) broken = true;
+                int end = walk(i + (int)r);
+                if (!broken && t.Max[i] != Math.Max(t.Max[i + 1], t.Max[i + (int)r])) badMax++;
+                return end;
+            };
+            int last = count > 0 ? walk(0) : 0;
+            bool zeros = !broken && last == count - 256 && Enumerable.Range(last, 256).All(k => t.Right[k] == 0 && t.Max[k] == 0 && t.W[k] == 0);
+            if (broken || !zeros)
+                c.Error(t.Partition, "the " + which + " cull tree's nodes are not one pre-order tree followed by 256 zero nodes (as in every shipped tree)");
+            if (badMax > 0)
+                c.Warn(t.Partition, badMax + " inner nodes of the " + which + " cull tree have a Max that is not the larger of their children's (as it is in every shipped tree)");
+            if (badRadius > 0)
+                c.Warn(t.Partition, badRadius + " leaves of the " + which + " cull tree have a radius (SphereKeyW / 4) less than 1/8 m above their Max (in every shipped tree it is at least that)");
+        }
 
         public static void CheckCullTrees(DbxFile f, Dictionary<string, string> index, List<LevelCheck.Finding> found)
         {
@@ -3258,6 +3305,7 @@ namespace Bfbc2Dbx
             {
                 if (!Numbered(client))
                     c.Error(client.Partition, "the client cull tree's leaves are not numbered 1.." + client.Leaves.Count + ", each once (as in every shipped level)");
+                CheckTree(c, client, "client");
                 if (client.Leaves.Count != groups || client.EnumOffset != 0)
                     c.Error(client.Partition, "the client cull tree has " + client.Leaves.Count + " leaves and EnumOffset " + client.EnumOffset + "; this level has "
                             + groups + " model-group and forest instances (SpawnDatas): in every shipped level it has one leaf per instance and EnumOffset 0");
@@ -3265,6 +3313,7 @@ namespace Bfbc2Dbx
             var tree = LoadTree(c, level, "ExclusiveStaticCullTree", index);
             if (tree == null) return;
             int last = tree.EnumOffset + tree.Leaves.Count;
+            CheckTree(c, tree, "exclusive");
             if (!Numbered(tree))
                 c.Error(tree.Partition, "the exclusive cull tree's leaves are not numbered 1.." + tree.Leaves.Count + ", each once (as in every shipped level)");
             if (tree.EnumOffset != groups)
@@ -3279,12 +3328,17 @@ namespace Bfbc2Dbx
             // tiling: two leaves for a blueprint with physics, one without
             int next = tree.EnumOffset + 1;
             string missingBlueprint = null, gap = null;
+            int unequal = 0;
             foreach (var o in placed)
             {
                 var refEl = Child(f, o.Instance, "ReferencedObject");
                 string r = refEl == null ? null : f.Get(refEl, "ref"), path;
                 if (r == null || r.IndexOf('/') < 0 || !index.TryGetValue(r.Substring(0, r.LastIndexOf('/')), out path)) { missingBlueprint = r; break; }
                 int width = Width(path);
+                int[] k1, k2;
+                if (width == 2 && tree.Leaves.TryGetValue(o.SlotValue - tree.EnumOffset, out k1) && tree.Leaves.TryGetValue(o.SlotValue - tree.EnumOffset + 1, out k2)
+                    && (!k1.SequenceEqual(k2) || tree.LeafMax[o.SlotValue - tree.EnumOffset] != tree.LeafMax[o.SlotValue - tree.EnumOffset + 1]))
+                    unequal++;
                 if (o.SlotValue != next && gap == null)
                     gap = o.Blueprint + " " + o.Guid + " has slot " + o.SlotValue + ", expected " + next;
                 next = o.SlotValue + width;
@@ -3294,6 +3348,8 @@ namespace Bfbc2Dbx
             else if (gap != null || next != last + 1)
                 c.Warn("cull slots", "placed objects' slots do not cover the exclusive cull tree's leaves " + (tree.EnumOffset + 1) + ".." + last + " exactly ("
                        + (gap ?? "the last ends at " + (next - 1)) + "); in every shipped level each slotted object takes two leaves when its blueprint has a PhysicsEntityData, else one");
+            if (unequal > 0)
+                c.Warn(tree.Partition, unequal + " objects with physics have two leaves that differ; in every shipped tree an object's two leaves are the same sphere and Max");
             // each leaf's sphere at its object
             var moved = new List<PlacedObject>();
             foreach (var o in placed)
@@ -3301,11 +3357,11 @@ namespace Bfbc2Dbx
                 int[] k;
                 if (!tree.Leaves.TryGetValue(o.SlotValue - tree.EnumOffset, out k)) continue;
                 double dx = k[0] / 16.0 - o.X, dy = k[1] / 16.0 - o.Y, dz = k[2] / 16.0 - o.Z;
-                if (Math.Sqrt(dx * dx + dy * dy + dz * dz) > 6.2 * k[3] / 16.0 + 0.1) moved.Add(o);
+                if (Math.Sqrt(dx * dx + dy * dy + dz * dz) > 1.55 * k[3] / 4.0 + 0.1) moved.Add(o);
             }
             if (moved.Count > 0)
                 c.Warn("cull slots", moved.Count + " placed objects are away from their slot's cull-tree leaf (e.g. " + string.Join(", ", moved.Take(3).Select(o => o.Blueprint + " " + o.Guid))
-                       + "): moved since the tree was built, or given another object's slot; in every shipped level an object lies within 6.2 x SphereKeyW / 16 of its leaf's centre");
+                       + "): moved since the tree was built, or given another object's slot; in every shipped level an object's origin lies within 1.55 radii (SphereKeyW / 4) of its leaf's centre");
         }
 
         static readonly Dictionary<string, int> widths = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

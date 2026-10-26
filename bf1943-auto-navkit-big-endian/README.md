@@ -38,7 +38,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.
-- **Wake Island, today's build (2026-10-26):** 12,713 nodes, 45,070 edges, 65 islands; the main network has 11,374
+- **Wake Island, today's build (2026-10-26, round 2):** 12,783 nodes, 45,272 edges, 65 islands; the main network has 11,424
   nodes; 16 of 16 ladders linked from the main network, the 4 carrier AA guns and 21 carrier ledges by jump links; all 10 flag pairs
   routed; `hpdcheck` passes.
 - **The audit** (`tools\navaudit1943.py`, new 2026-10-24; operation-rising-sun `research/NAVMESH_AUDIT.md`):
@@ -70,6 +70,12 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   links) and border nodes on the seam line (`navbuild.BORDER_SEAM_LINE`, set by `soldier1943.configure`: ground that
   reaches a sector seam but not the border line one sample beyond gets a shared node; two of Coral Sea's three seam
   breaks closed).
+- **2026-10-26, round 2:** areas hold no cliff (`navbuild.AREA_CLIFF`: a surface beside a cell of its area more than
+  1 m and a 45-degree slope plus the step away in height starts its own area - a bridge deck beside the ground under
+  it); `join_groups` floods up to 2 m past a sector's window into sectors of the same pitch (`JOIN_MARGIN`); the
+  exporter gives an area 0.4 m height blocks, then one per cell, where its 1 m grid is more than 0.25 m off at one of
+  its cells (`HEIGHT_TOL`); a seam's coincident nodes are merged (`merge_coincident_border`). Tight walk edges
+  150/88/124/158 -> 8/40/26/96, pockets 0.2 % or less of each main network; exports 4.2-5.5 MB.
 
 **Vehicle navigation (new 2026-10-26).** One RSNV world per vehicle class beside the soldier's, read by rsnav like
 any other world: `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `.lcvp.rsnv`, `.plane.rsnv`, plus
@@ -99,11 +105,24 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   grown by 25 m), a cruise surface 60 m above it that climbs at most 7 deg, nodes every 64 m; take-off lanes along the
   spawn headings (decks, airfields) with a JUMP edge (climb-out) and a DROP edge (landing approach); parachute DROP
   transfers over every base, flag and non-carrier soldier island (Coral Sea's islets).
+- **Take-off lanes checked (2026-10-27):** every lane is tested against the collision on rsnav's flight-test obstacle
+  grid (4 m cells, all objects): the centre line +-2 m clear from its start to 40 m past its end, the deck or field
+  under the roll to lift-off (85 m). A blocked spawn heading is turned (up to 20 deg; then any heading: a turn on the
+  ground), started up to 16 m ahead (out of a hangar) or shortened (to 75 m), in that order; each lane's meta records
+  its offset, start, length, clearance and the highest obstacle within the half wingspan, with [O] / [H]. Changed: 7
+  of 23 (Guadalcanal 1533, 1535, 1536; Iwo Jima 1986, 2219; Coral Sea 640, 648); Guadalcanal 1581's roll leaves its
+  hilltop at 58 m (kept, flagged). The flight test takes off from all 23.
 - **Transfers** (OFFM): board (1: entry point, EntryRadius, aux = soldier node), alight (2) and drop (4: the soldier
   node), launch (3: the deck end). `core\bfbc2core\rsnvtrip.py` resolves them again against the soldier world in use
   and plans walk -> ride -> walk (rsnav's `rsn_trip_plan` gives the same answer).
 - **Writer:** `tools\rsnvgrid1943.py` (areas per 100 m sector by flood fill, one cell per column; bitmaps, per-cell
-  heights, buckets, portals, islands, tight edges by `rsnv.World.los`).
+  heights, buckets, portals, islands, tight edges by `rsnv.World.los`). Writer 1.1 (2026-10-27): a cell on a 100 m
+  sector edge goes to the sector it starts (before, i x 0.8 m rounding lost a one-cell column on every sector edge to the
+  bucket lookup).
+- **Heading-aware planning** (`core\bfbc2core\rsnvhybrid.py`, 2026-10-27): the reference of rsnav's `rsn_hybrid_plan`, a
+  lattice hybrid A* over (cell, 16 headings, direction) with motion primitives per kind (car 4.5 m, boat 8 m turning
+  radius [E], reversing at a cost; tanks pivot); rsnav's C tables are generated from it. Used locally by the drivers:
+  jeeps 120 / 120, tanks 120 / 120, landing craft 96 / 96 routes in the kinematic simulation (rsnav README).
 - **Tests:** `tests\test_vehicles_nav1943.py` (quick tier, made-up data); rsnav's `tests\test_vehicles.py` on the real
   worlds.
 - **Built (2026-10-26) [M]:** jeep 3,263 / 4,178 / 3,012 nodes (Wake / Guadalcanal / Iwo Jima; 0.08-0.11 km2
@@ -112,6 +131,20 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   per map, 5-8 take-off lanes, 10-71 drops. Every check of `navexport_vehicles1943.py` passes on all four maps; every
   carrier deck reaches every flag by the craft (Wake 10/10, Iwo Jima 20/20 trips). The soldier export changes under
   these files without harm: transfers carry positions and are resolved again.
+
+**Looking inside an export** (`tools\rsnvtool.py`, new 2026-10-26; read-only; `--class jeep|tank|lcvp|plane` reads a
+vehicle world):
+
+| Command | What it gives |
+|---|---|
+| `info <level>` | sections, counts, edge kinds, tight edges, islands, the exporter and its sources' hashes |
+| `validate <level>` | consistency (exit 1 on a problem) |
+| `locate <level> X Y Z` | the walkable cell and nearest node under a point |
+| `los <level> X,Y,Z X,Y,Z` | line of sight by the runtime's rule |
+| `route <level> FROM TO [--soldier] [--png]` | a search between nodes or points, as rsnav finds it |
+| `pockets <level>` | the main network's pieces without tight edges, the largest pockets with positions |
+| `picture <level> --at X,Z [--radius R] [--y Y] [--route FROM TO]` | a top-down PNG: cells; edges (tight red, ladders orange, jumps cyan); a route in yellow |
+| `diff <a> <b>` | what changed between two exports |
 
 **Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
 20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by
@@ -165,6 +198,7 @@ tools\               NavKit tools (Python 3 + numpy)
                        a raised-floor rule (RAISED_FLOORS) is kept but off - see operation-rising-sun NAVMESH_AUDIT.md
   navaudit1943.py      BF1943: the audit - the build's walkable masks, then the checks (navaudit1943_checks.py)
   navexport1943.py     BF1943: the build exported for our navigation runtime (<level>.rsnv, core rsnv.py)
+  rsnvtool.py          BF1943: look inside an RSNV export - info, validate, locate, los, route, pockets, picture, diff
   enclosure_probe1943.py  BF1943: why a spot is cut off (flood fill over the 0.2 m samples, the blocking objects, a map)
   hpdview.py           render one sector to PNG
 tests\               the rule tests (made-up data), the sampler, jump links, mixed-pitch seams, Havok 4.6.1, Wake

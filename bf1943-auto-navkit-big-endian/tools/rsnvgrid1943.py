@@ -31,7 +31,7 @@ SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
 from bfbc2core import rsnv  # noqa: E402
 
-EXPORTER_VERSION = '1.0 (2026-10-26: vehicle worlds from cells)'
+EXPORTER_VERSION = '1.1 (2026-10-26: cells on sector edges kept in the sector they start)'
 OFFM_ALIGHT_ZONE = 2         # design 1.3's OFFM kinds beside rsnv.py's BOARD_VEHICLE (1) and MOUNT_STATIC (5)
 ALIGHT_TARGET_REACH = 60.0   # m: a ground vehicle's alight node lies within this of its base or flag
 ALIGHT_REACH = 6.0           # m from the alight node to the soldier node
@@ -50,6 +50,7 @@ def soldier_node(S, p, reach, dy=3.5, main_only=False):
     k = np.nonzero(ok)[0]
     return int(k[np.argmin(d[k])])
 STRAIGHT = ((1, 0), (-1, 0), (0, 1), (0, -1))
+SECTOR_NUDGE = 1e-3          # m
 
 
 class CellSet:
@@ -94,8 +95,10 @@ def areas_of(cs, sector_offsets):
     xoff, zoff = sector_offsets
     x = cs.x0 + cs.i * cs.pitch
     z = cs.z0 + cs.j * cs.pitch
-    sx = np.floor(x / 100.0).astype(np.int64) - xoff
-    sz = np.floor(z / 100.0).astype(np.int64) - zoff
+    # a cell on a sector edge (x a multiple of 100 m, computed as i x 0.8 with rounding either side) goes to the sector
+    # it starts: queries nudge the same way (rsnvhybrid.BUCKET_NUDGE), so the bucket holding it is found
+    sx = np.floor((x + SECTOR_NUDGE) / 100.0).astype(np.int64) - xoff
+    sz = np.floor((z + SECTOR_NUDGE) / 100.0).astype(np.int64) - zoff
     if cs.n and (sx.min() < 0 or sz.min() < 0 or sx.max() > 255 or sz.max() > 255):
         raise ValueError(f'{cs.name}: cells outside the sector grid (X {sx.min()}..{sx.max()}, Z {sz.min()}..{sz.max()})')
     sec = sx * 256 + sz

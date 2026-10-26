@@ -50,11 +50,13 @@ public class export_all_decompiled extends GhidraScript {
         return new Outcome(f,r.decompileCompleted(),c!=null,diagnostic,c!=null&&c.contains("WARNING: Bad instruction"),warnings,style);
     }
     public void run()throws Exception{
-        String[] args=getScriptArgs();Path root=Path.of(args[0]);int limit=Integer.MAX_VALUE;
+        String[] args=getScriptArgs();Path root=Path.of(args[0]);int limit=Integer.MAX_VALUE;Path extraPath=null;boolean onlyExtra=false;
         for(int i=1;i<args.length;i++){
             if(args[i].matches("\\d+"))limit=Integer.parseInt(args[i]);
             else if(args[i].startsWith("out="))root=root.resolve(args[i].substring(4));
             else if(args[i].equals("nowrite"))write=false;
+            else if(args[i].startsWith("extra="))extraPath=Path.of(args[i].substring(6));
+            else if(args[i].equals("only-extra"))onlyExtra=true;
             else throw new Exception("Unknown argument "+args[i]);
         }
         Files.createDirectories(root);
@@ -70,14 +72,38 @@ public class export_all_decompiled extends GhidraScript {
         currentProgram.getBookmarkManager().removeBookmarks(BookmarkType.ERROR);
         List<Function> functions=new ArrayList<>();
         for(Function f:currentProgram.getFunctionManager().getFunctions(true)){if(functions.size()>=limit)break;functions.add(f);}
+        // extra=<tsv>: functions to create in this session (start, end exclusive, name, source), e.g. leaf functions without
+        // .pdata found by export_callgraph_strings.py. A start inside, or a range overlapping, an existing function is refused
+        // and reported, never merged. only-extra: decompile just the created ones (all functions are still disassembled).
+        List<Function> created=new ArrayList<>();
+        if(extraPath!=null)try(PrintWriter ex=new PrintWriter(root.resolve("extra-functions.tsv").toFile())){
+            ex.println("start\tend\tname\tsource\tresult\tdetail");
+            List<String> lines=Files.readAllLines(extraPath);
+            for(String line:lines.subList(1,lines.size())){
+                String[] c=line.split("\t");Address s=toAddr(Long.parseLong(c[0],16)),e=toAddr(Long.parseLong(c[1],16)-1);
+                AddressSet body=new AddressSet(s,e);String result,detail="";
+                Iterator<Function> over=currentProgram.getFunctionManager().getFunctionsOverlapping(body);
+                if(over.hasNext()){Function o=over.next();result="overlap";detail=o.getName()+" "+o.getBody().getMinAddress()+"-"+o.getBody().getMaxAddress();}
+                else try{created.add(currentProgram.getFunctionManager().createFunction(c[2],s,body,SourceType.ANALYSIS));result="created";}
+                catch(Exception err){result="error";detail=err.toString().replaceAll("\\s+"," ");}
+                ex.println(line+"\t"+result+"\t"+detail);
+            }
+        }
+        List<Function> scanned=new ArrayList<>(functions);scanned.addAll(created);
+        if(onlyExtra)functions=new ArrayList<>(created);else functions=scanned;
+        PrintWriter unreachedOut=new PrintWriter(root.resolve("unreached-words.tsv").toFile());unreachedOut.println("function\taddress\tword\tdecodable");
         Map<Function,Facts> facts=new HashMap<>();
         PseudoDisassembler pd=new PseudoDisassembler(currentProgram);
-        monitor.initialize(functions.size());monitor.setMessage("Disassembling");
+        monitor.initialize(scanned.size());monitor.setMessage("Disassembling");
         TreeMap<String,int[]> fpvmxByMnemonic=new TreeMap<>();
         try(PrintWriter calls=new PrintWriter(root.resolve("ghidra-call-refs.tsv").toFile())){
         calls.println("function\tinstruction\ttarget\tkind");
-        for(Function f:functions){
+        for(Function f:scanned){
             monitor.checkCancelled();monitor.incrementProgress(1);
+            // Start from a clean listing: the saved project holds the stock language's disassembly, whose flows stop at
+            // words that language cannot decode; flow disassembly does not continue past existing code, so without this
+            // the code after such a word stays unreached in the listing (found 2026-10-26 in 5 functions).
+            clearListing(f.getBody());
             new DisassembleCommand(f.getEntryPoint(),f.getBody(),true).applyTo(currentProgram,monitor);
             Facts x=new Facts();facts.put(f,x);
             // A final unconditional call ending the .pdata range cannot return into this function; stop decompiler fall-through there.
@@ -87,7 +113,8 @@ public class export_all_decompiled extends GhidraScript {
                 x.words++;Instruction ins=getInstructionAt(a);
                 if(ins==null){
                     if(getInstructionContaining(a)!=null)continue;
-                    x.unreached++;try{pd.disassemble(a);x.unreachedDecodable++;}catch(Exception ignored){}
+                    x.unreached++;boolean dec=false;try{pd.disassemble(a);x.unreachedDecodable++;dec=true;}catch(Exception ignored){}
+                    unreachedOut.println(f.getEntryPoint()+"\t"+a+"\t"+String.format("%08x",getInt(a))+"\t"+dec);
                     continue;
                 }
                 x.instructions++;
@@ -111,6 +138,7 @@ public class export_all_decompiled extends GhidraScript {
             }
         }
         }
+        unreachedOut.close();
         long disassembledAt=System.nanoTime();
         for(Bookmark b:(Iterable<Bookmark>)()->currentProgram.getBookmarkManager().getBookmarksIterator(BookmarkType.ERROR)){
             Function f=getFunctionContaining(b.getAddress());
@@ -169,12 +197,13 @@ public class export_all_decompiled extends GhidraScript {
         }
         String after=digest();if(!after.equals(IMAGE))throw new Exception("Image changed during batch");
         int total=currentProgram.getFunctionManager().getFunctionCount();
+        if(onlyExtra)total=created.size();
         boolean complete=functions.size()==total&&decodedAll==total&&withC==total&&fullStyle==total;
         Files.writeString(summary,(complete?"PASS COMPLETE ":"INCOMPLETE ")+"functions="+functions.size()+"/"+total+" decoded="+decodedAll+" with_c="+withC+" full_style="+fullStyle+" retried="+retried.size()+" terminal_call_overrides="+terminalCalls
             +" diagnostics="+diagnostics+" functions_with_c_warnings="+warned+" functions_with_opaque_vmx="+opaqueFunctions+" opaque_vmx_ops="+opaqueOps
             +" fpvmx_functions="+fpvmxFunctions+" fpvmx_functions_fully_modelled="+fpvmxFullyModelled+" fpvmx_functions_with_opaque="+fpvmxWithOpaque
             +" fp_instructions="+fpIns+" fp_opaque="+fpOpq+" vector_instructions="+vecIns+" vector_opaque="+vecOpq
             +String.format(" seconds_disassembly=%.1f seconds_parallel_decompile=%.1f seconds_retries=%.1f seconds_total=%.1f",(disassembledAt-started)/1e9,(decompiledAt-disassembledAt)/1e9,(finished-decompiledAt)/1e9,(finished-started)/1e9)
-            +" language="+LANGUAGE+" image_sha256="+after+"\n");
+            +(extraPath==null?"":" extra_created="+created.size()+(onlyExtra?" only_extra=true":""))+" language="+LANGUAGE+" image_sha256="+after+"\n");
     }
 }

@@ -41,7 +41,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
-VERSION = '1.0'
+VERSION = '1.1'
 ROOT = research_root()
 WORK = ROOT / 'work/xex-analysis'
 OUT = WORK / 'callgraph'
@@ -603,6 +603,13 @@ def main():
     while pending:
         for f in pending:
             an.run_function(f)
+        if not rounds:
+            # The graph before any inferred function exists: what the inferred entries change.
+            pdata_only = dict(call_site_kinds=dict(sorted(collections.Counter(k for *_, k, _ in an.edges).items())),
+                              graph_edges_function_to_function=len({(c, t if t in an.starts else an.containing(t).start)
+                                                                    for c, s, t, k, d in an.edges if t is not None and 'branch_unresolved' not in k
+                                                                    and (t in an.starts or an.containing(t) is not None)}),
+                              nonentry_call_sites_outside_every_function=sum(1 for *_, k, d in an.edges if k.endswith('_nonentry') and d == 'outside every function'))
         # Entry points outside every known function: direct/tail call targets, then 4-aligned data words into code
         # gaps. Leaf functions need no .pdata record, so the exception table misses them.
         candidates = {}
@@ -742,6 +749,8 @@ def main():
             n += 1
         vt.append((f'{a:08x}', n, ','.join(f'{x:08x}' for x in sorted(an.vtable_stores[a]))))
     write_tsv(OUT / 'vtable-candidates.tsv', ['address', 'leading_function_pointers', 'stored_at_offset_0_by'], vt)
+    write_tsv(OUT / 'inferred-functions.tsv', ['start', 'end', 'name', 'source'],
+              [(f'{f.start:08x}', f'{f.end:08x}', f.name, f.label) for f in functions if f.label])
     write_tsv(OUT / 'data-pointers-to-functions.tsv', ['cell', 'section', 'function'],
               sorted((f'{c:08x}', img.section(c)['name'], f'{t:08x}') for t, cells in code_pointer_cells.items() for c in cells))
 
@@ -754,7 +763,7 @@ def main():
         functions=len(functions), functions_pdata_and_helpers=pdata_count, functions_inferred=len(functions) - pdata_count,
         functions_inferred_from_calls=sum(1 for f in functions if f.label == 'inferred_call_target'),
         functions_inferred_from_data_pointers=sum(1 for f in functions if f.label == 'inferred_data_pointer'),
-        inferred_code_bytes=sum(f.end - f.start for f in functions if f.label), discovery_rounds=rounds,
+        inferred_code_bytes=sum(f.end - f.start for f in functions if f.label), discovery_rounds=rounds, pdata_only_graph=pdata_only,
         basic_blocks_seeded_unreached=an.blocks_unreached,
         call_sites=len(an.edges), call_site_kinds=dict(sorted(kinds.items())),
         functions_with_callers=sum(1 for f in functions if callers[f.start]), functions_with_callees=sum(1 for f in functions if callees[f.start]),

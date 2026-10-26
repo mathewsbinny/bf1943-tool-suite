@@ -62,5 +62,24 @@ if 'fp_instructions' in rows[0]:
             functions_still_with_opaque=report['fpvmx']['with_opaque'],
             functions_with_c_warnings_before=sum(int(r['warnings'])>0 for r in brows),functions_with_c_warnings_after=sum(int(r['warnings'])>0 for r in rows),
             diagnostics_after=[r['address']+' '+r['diagnostic'] for r in rows if r['diagnostic']])
-(ROOT/'research/evidence/xex-batch-decompile.json').write_text(json.dumps(report,indent=2)+'\n')
+# Functions created in-session from extra= (e.g. the leaf functions without .pdata), when such a run exists.
+leaves=sorted(WORK.glob('batch-leaf-*/batch-decompile.txt'))
+if leaves:
+    l=leaves[-1].parent;lrows=list(csv.DictReader((l/'decompiled-index.tsv').open(),delimiter='\t'))
+    created=list(csv.DictReader((l/'extra-functions.tsv').open(),delimiter='\t'))
+    edges=WORK/'callgraph/callgraph-edges.tsv'
+    tails=collections.defaultdict(set)
+    if edges.exists():
+        for e in csv.DictReader(edges.open(),delimiter='\t'):tails[e['caller']].add(e['kind'])
+    bad=[r['address'] for r in lrows if r['decoded']!='true']
+    report['extra_functions']=dict(folder=l.relative_to(ROOT).as_posix(),summary=(l/'batch-decompile.txt').read_text().strip(),
+        requested=len(created),creation=dict(collections.Counter(r['result'] for r in created)),
+        sources=dict(collections.Counter(r['source'] for r in created)),
+        decompiled_full_style=sum(r['decompiled']=='true' for r in lrows),with_c=sum(bool(r['file']) for r in lrows),
+        decoded=sum(r['decoded']=='true' for r in lrows),
+        bad_instruction_functions=len(bad),bad_instruction_with_import_tail_call=sum('import_tail_call' in tails.get(a,()) for a in bad),
+        bad_instruction_examples=bad[:12],diagnostics=[r['address']+' '+r['diagnostic'] for r in lrows if r['diagnostic']],
+        fpvmx=fpvmx(lrows) if 'fp_instructions' in lrows[0] else None,seconds=seconds((l/'batch-decompile.txt').read_text()),
+        index_sha256=sha(l/'decompiled-index.tsv'),extra_functions_sha256=sha(l/'extra-functions.tsv'))
+(ROOT/'research/evidence/xex-batch-decompile.json').write_bytes((json.dumps(report,indent=2)+'\n').encode())
 print(report['summary']);print('failures',failures)

@@ -68,6 +68,9 @@ LOS_DY = 0.6
 LOS_COARSE_DY = LOS_STEP + 0.8
 COARSE_GAP = 1.0
 LOS_GRACE = 0.25
+LOS_SEAM = 1.0          # m: line of sight looks for a sector's areas this far past its rectangle (2026-10-26): the
+                        # build's sample window overlaps the neighbour sector, and a line crossing a seam must find them
+LOS_NEAR = 128          # areas at most per lookup (rsnav's MAX_NEAR)
 LOS_GRAZE = 0.25        # of a cell (2026-10-26): a sample this close to a cell's side leans on that side. In a 0.2 m
                         # area a sample on a blocked cell passes when it is within this of a walkable neighbour's square
                         # (the build's own lines step diagonally between cells: navbuild.line_walkable); in a 0.8 m
@@ -328,12 +331,28 @@ class World:
     def _raw_ok(self, a, x, z):
         return self.on_cell(a, x, z)
 
+    def _near_los(self, x, z):
+        """Line of sight's area lookup (rsnav_los.c near_areas): the 4 m bucket holding (x, z) in every sector whose
+        rectangle grown by LOS_SEAM holds it, bucket indices clamped to the grid, at most LOS_NEAR areas."""
+        out = []
+        for s in self.sectors:
+            _id, _layer, _pc, x0, z0, x1, z1, first_bucket, _fa, _na, _r = s
+            if x0 - LOS_SEAM <= x < x1 + LOS_SEAM and z0 - LOS_SEAM <= z < z1 + LOS_SEAM:
+                bi = min(max(math.floor((x - x0) / BUCKET), 0), BUCKETS - 1)
+                bj = min(max(math.floor((z - z0) / BUCKET), 0), BUCKETS - 1)
+                first, count = self.gbkt[first_bucket + bj * BUCKETS + bi]
+                for a in self.glst[first:first + count]:
+                    if len(out) >= LOS_NEAR:
+                        return out
+                    out.append(int(a))
+        return out
+
     def _allowed(self, k1, k2):
         return LOS_COARSE_DY if self.areas[k1].pitch_mm_ >= COARSE_MM or self.areas[k2].pitch_mm_ >= COARSE_MM \
             else LOS_DY
 
     def _other_ok(self, skip, x, z, y):
-        for k in self.areas_near(x, z):
+        for k in self._near_los(x, z):
             b = self.areas[k]
             if k == skip or not self._raw_ok(b, x, z):
                 continue
@@ -370,7 +389,7 @@ class World:
         for p in self.ports[a.first_portal:a.first_portal + a.portals]:
             if p[6] != cur and self._compatible(cur, p[6], x, z):
                 return p[6]
-        for k in self.areas_near(x, z):
+        for k in self._near_los(x, z):
             if k != cur and self._compatible(cur, k, x, z):
                 return k
         return None
@@ -409,7 +428,7 @@ class World:
                         t2 = k2 / n
                         x2, z2 = a[0] + dx * t2, a[2] + dz * t2
                         gap = ln * (t2 - t) + step
-                        for c in self.areas_near(x2, z2):
+                        for c in self._near_los(x2, z2):
                             d2 = self.ground(self.areas[c], x2, z2) - gy
                             if self._raw_ok(self.areas[c], x2, z2) and abs(d2) <= LOS_STEP + gap:
                                 nb = c

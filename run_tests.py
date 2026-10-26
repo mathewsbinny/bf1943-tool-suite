@@ -49,6 +49,7 @@ def tests():
         ('Xenia kit: PowerPC assembler against capstone', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_ppcasm.py')]),
         ('Xenia kit: bots experiment layout', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py')]),
         ('NavKit big-endian: offline sampler (made-up level)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_sampler1943.py')]),
+        ('NavKit big-endian: rsnvtool (RSNV inspector) on a made-up file', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_rsnvtool.py')]),
         ('NavKit big-endian: jump links to ships\' AA gun platforms', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_jumplinks1943.py')]),
         ('NavKit big-endian: seams between 0.8 m and 0.2 m sectors', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_mixed_seam.py')]),
         ('NavKit big-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_water_rule.py')]),

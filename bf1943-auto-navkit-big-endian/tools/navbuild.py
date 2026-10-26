@@ -129,6 +129,13 @@ LADDER_STATS = {}               # ladder links made, and ladders whose ends lie 
 LADDER_ALL_GROUND = False       # link a ladder to each piece of ground within reach of its ends, not only the nearest
                                 # surface (navwalk.ladder_end_options; BF1943: soldier1943.configure sets it)
 BORDER_NODE_SPACING = 10.0
+JOIN_MARGIN = None              # m: join_groups floods this far past the sector's window (2026-10-26; soldier1943.configure
+                                # sets 2.0 for BF1943); None = the window only
+JOIN_CONTEXT = []               # [(X, Y), the stage's sectors] of the sector whose graph is being built (join_groups)
+JOIN_DETAILED = set()           # the sectors built at DETAILED_PITCH (build()): join_groups stays out of the other grid's
+AREA_CLIFF = None               # m: no two plan-neighbouring cells of one area further apart in height than this and than
+                                # a 45-degree slope plus the step (components, _cliff; 2026-10-26, soldier1943.configure
+                                # sets 1.0 for BF1943); None = off
 BORDER_SEAM_LINE = False        # shared border nodes also on the seam line itself for ground that does not reach the
                                 # border line one sample beyond (2026-10-26; soldier1943.configure sets it for BF1943)
 BRIDGE_UNION = True             # 45-degree bridges: outline from the exact union (bridge_union) - False: clip_bridges
@@ -313,7 +320,7 @@ def components(level, members, gi0, gj0):
             continue
         comp, q = [], deque([k0])
         seen.add(k0)
-        cols = {members[k0]}
+        cols = {members[k0]: k0}
         while q:
             k = q.popleft()
             i, j = members[k]
@@ -322,11 +329,26 @@ def components(level, members, gi0, gj0):
                 n = level.neighbour(k, gi0 + i, gj0 + j, di, dj, rule=AREA_LINK)
                 if n is not None and n in members and n not in seen and members[n] == (i + di, j + dj) \
                         and members[n] not in cols:
+                    if AREA_CLIFF and _cliff(level.y, n, members[n], cols, level.step):
+                        continue
                     seen.add(n)
-                    cols.add(members[n])
+                    cols[members[n]] = n
                     q.append(n)
         out.append(comp)
     return out
+
+
+def _cliff(y, n, ij, cols, step):
+    """AREA_CLIFF: surface n at column ij would sit beside a cell of the area higher or lower than a 45-degree slope
+    plus the step, and at least AREA_CLIFF m, away - the area reached it round a ramp (a bridge deck beside the ground
+    under it: Wake Island's com_bridge_t07, cells 6.3 m apart side by side, 2026-10-26). A height grid cannot hold
+    such an edge inside one area, so the surface goes to an area of its own."""
+    i, j = ij
+    for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+        m = cols.get((i + di, j + dj))
+        if m is not None and abs(y[n] - y[m]) > max(AREA_CLIFF, math.hypot(di, dj) * PITCH + step):
+            return True
+    return False
 
 
 def bisect(level, comp, gi0, gj0):
@@ -660,6 +682,8 @@ def build(samples_path, tris_path, xoff, zoff, out_path, step=0.28, log=print, d
     ORDER_IDS.clear()
     LADDER_STATS.clear()
     AREA_CELLS.clear()
+    JOIN_DETAILED.clear()
+    JOIN_DETAILED.update((detailed or {}).get('sectors') or ())
     a = stage(samples_path, high_path, xoff, zoff, seeds=seeds, **common)
     if detailed:
         graphs = merge_detailed(a, detailed, xoff, zoff, seeds, common, log)
@@ -924,6 +948,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         lads = [(f_, t_) for f_, t_ in ladder_pairs if f_ in area_of and t_ in area_of]
         LADDER_STATS['linked'] = LADDER_STATS.get('linked', 0) + len(lads)
         LADDER_STATS['split'] = LADDER_STATS.get('split', 0) + sum(1 for f_, t_ in ladder_pairs if (f_ in area_of) != (t_ in area_of))
+        JOIN_CONTEXT[:] = [(X, Y), set(info)]
         pts, pairs = build_graph(level, areas, area_of, traced, border_nodes[(X, Y)], gi0, gj0, ox, oz, new_id, orders,
                                  lads)
         ys = [a.min_y for a in mesh_areas] + [a.max_y for a in mesh_areas]
@@ -1140,6 +1165,7 @@ def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff):
             if d <= DIST_EDGE_MAX and line_walkable(level, k, (i, j), (p[3], p[4]), gi0, gj0, p[2]):
                 pairs.append((me, q, d))
         if not any(me in (u, v) for u, v, _d in pairs):
+            JOIN_CONTEXT[:] = [sec, set(info)]
             join_groups(level, info[sec]['areas'], pts, pairs, gi0, gj0, ox, oz, new_id)
         return any(me in (u, v) for u, v, _d in pairs)
 
@@ -1370,6 +1396,20 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id):
     cell_ij = {c[2]: (c[0], c[1]) for a in areas for c in a['cells']}
     for p in pts:
         cell_ij.setdefault(p[2], (p[3], p[4]))
+    # the flood's bounds: the sector's window, and JOIN_MARGIN beyond it (ground joined only round a corner of the
+    # neighbour sector - Coral Sea's strip beside the South Base bunker, closed inside 0b0a's window and joined 1 m past
+    # it, 2026-10-26)
+    m_ = int(math.ceil((JOIN_MARGIN or 0.0) / PITCH - 1e-9))
+    lo, hi = WINDOW[0] - m_, WINDOW[-1] + m_
+
+    def beyond_ok(i, j):
+        # past the window only into a sector of this stage (this grid's pitch): a 0.2 m flood into a 0.8 m sector
+        # would walk on samples the 0.8 m sector's cells do not show
+        if not JOIN_CONTEXT:
+            return False
+        (X, Y), secs = JOIN_CONTEXT[:2]
+        t = (X + i // SECTOR_SAMPLES, Y + j // SECTOR_SAMPLES)
+        return t in secs and (t in JOIN_DETAILED) == (abs(PITCH - DETAILED_PITCH) < 1e-6)
     changed = True
     while changed:
         changed = False
@@ -1389,7 +1429,9 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id):
                 i, j = cell_ij[k]
                 for di in (-1, 0, 1):
                     for dj in (-1, 0, 1):
-                        if not (di or dj) or (i + di) not in WINDOW or (j + dj) not in WINDOW:
+                        if not (di or dj) or not (lo <= i + di <= hi and lo <= j + dj <= hi):
+                            continue
+                        if not (i + di in WINDOW and j + dj in WINDOW) and not beyond_ok(i + di, j + dj):
                             continue
                         n = level.neighbour(k, gi0 + i, gj0 + j, di, dj)
                         if n is None or n in prev:

@@ -15,7 +15,8 @@ What it holds:
     build's own cells and ground heights (navbuild's <level>.cells.npz, exporter 1.3); for a build without that file,
     rasterised from their outlines, portals and border portals (even-odd, as navdiff.area_cells, at the area's pitch)
     with heights estimated from the nearest outline point;
-    a 4 m height grid per area; per sector, 25 x 25 buckets of 4 m listing the areas over each;
+    a height grid per area (1 m blocks at 0.2 m, finer where they misread the area: HEIGHT_TOL;
+    one block per cell at 0.8 m); per sector, 25 x 25 buckets of 4 m listing the areas over each;
   - portals between areas (both directions; border portals resolved to the neighbour sector's area across them);
   - ladders and jump links (LADR), vehicle entry points (OFFM: board a vehicle, or mount a gun, within EntryRadius of an
     entry point; core vehicles1943.py), islands (ISLD: the main network; carriers by the water under them);
@@ -103,6 +104,39 @@ def rasterise(area, pitch, y_offset, heightfield):
     return ii, jj, y
 
 
+HEIGHT_TOL = 0.25         # m: a 0.2 m area whose 1 m height grid is further off than this at one of its own cells gets a
+                          # grid of one block per cell instead (2026-10-26: at steep area edges the blocks' means put the
+                          # ground 0.3-0.7 m off and made walk edges there tight)
+
+
+def height_grid(ii, jj, y, cpb, miny):
+    """The area's height grid (blocks of cpb x cpb cells from its first cell, each its cells' mean, cm above miny;
+    0xFFFF for a block with no cell): (grid rows x columns, width, height)."""
+    hw = max(1, -(-(int(ii.max()) + 1 if len(ii) else 1) // cpb))
+    hh = max(1, -(-(int(jj.max()) + 1 if len(jj) else 1) // cpb))
+    grid = np.full((hh, hw), 0xFFFF, np.int64)
+    if len(ii):
+        gi, gj = ii // cpb, jj // cpb
+        key = gj * hw + gi
+        sums = np.bincount(key, weights=y, minlength=hw * hh)
+        cnt = np.bincount(key, minlength=hw * hh)
+        filled = cnt > 0
+        flat = grid.reshape(-1)
+        flat[filled] = np.minimum(np.round((sums[filled] / cnt[filled] - miny) * 100).astype(np.int64), 0xFFFE)
+    return grid, hw, hh
+
+
+def grid_error(ii, jj, y, grid, hw, hh, cpb, pitch, miny):
+    """The largest difference between the grid's ground (rsnv.World.ground, the runtime's reading) and the cells'
+    own heights, at the cells."""
+    a = rsnv.Area(0, 0.0, 0.0, 0.0, 0.0, miny, miny, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, pitch, 0, hw, hh,
+                  int(round(cpb * pitch * 1000)))
+    stub = type('G', (), {})()
+    stub.hght = grid.reshape(-1)
+    return max((abs(rsnv.World.ground(stub, a, float(u) * pitch, float(v) * pitch) - float(h))
+                for u, v, h in zip(ii, jj, y)), default=0.0)
+
+
 def export(lv, out=None, big_endian=False, log=print, compare=False):
     """compare: also rasterise the outlines where the build's cells are read, and report how they differ."""
     W = game1943.level_work(lv)
@@ -178,19 +212,18 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
         packed = np.packbits(bits.reshape(h_, row, 8)[:, :, ::-1], axis=-1).reshape(-1) if h_ else np.zeros(0, np.uint8)
         x0, z0 = ci0 * pitch, cj0 * pitch
         # height grid: blocks of HEIGHT_CELLS[pitch] x that many cells (1 m at 0.2 m, each cell at 0.8 m), each the
-        # mean of its cells; readers interpolate between block centres (rsnv.World.ground)
+        # ground at the block's centre; readers interpolate between block centres (rsnv.World.ground)
         cpb = HEIGHT_CELLS[pitch]
-        hw = max(1, -(-max(w_, 1) // cpb))
-        hh = max(1, -(-max(h_, 1) // cpb))
-        grid = np.full((hh, hw), 0xFFFF, np.int64)
-        if len(ii):
-            gi = (ii - ci0) // cpb
-            gj = (jj - cj0) // cpb
-            sums = collections.defaultdict(list)
-            for p, q, v in zip(gi, gj, y):
-                sums[(p, q)].append(v)
-            for (p, q), v in sums.items():
-                grid[q, p] = min(int(round((np.mean(v) - miny) * 100)), 0xFFFE)
+        li, lj = (ii - ci0, jj - cj0) if len(ii) else (ii, jj)
+        grid, hw, hh = height_grid(li, lj, y, cpb, miny)
+        # finer blocks where the 1 m ones misread the area's own cells: 0.4 m, then one per cell
+        for finer in (2, 1):
+            if cpb <= finer or not len(ii) or grid_error(li, lj, y, grid, hw, hh, cpb, pitch, miny) <= HEIGHT_TOL:
+                break
+            cpb = finer
+            grid, hw, hh = height_grid(li, lj, y, cpb, miny)
+        if cpb != HEIGHT_CELLS[pitch]:
+            stats[f'areas with {cpb * pitch:g} m height blocks'] += 1
         pmm = int(round(pitch * 1000))
         area_rows.append([x0, z0, x0 + (w_ - 1) * pitch, z0 + (h_ - 1) * pitch, miny, maxy, len(bmap), w_, h_,
                           0, 0, sec_index[a.sector], 0, 0, 0, 0, pmm, len(hght), hw, hh, cpb * pmm])
@@ -198,7 +231,8 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
         hght += grid.ravel().tolist()
         area_cells.append((ii, jj, y, pitch))
     log(f'{lv}: bitmaps {len(bmap) / 1e6:.2f} MB, {sum(len(c[0]) for c in area_cells):,} cells'
-        + (' (those of the build' + (f'; against the outlines: {dict(stats)})' if compare else ')') if exact is not None else ''))
+        + (' (those of the build' + (f'; against the outlines: {dict(stats)})' if compare else ')') if exact is not None else '')
+        + '; finer height grids: ' + str({k: v for k, v in stats.items() if 'height blocks' in k}))
 
     # nodes: ground heights, their areas
     gpos = nav.node_pos.copy()

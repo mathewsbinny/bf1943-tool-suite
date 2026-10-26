@@ -49,6 +49,23 @@ ENTRY_LOCAL = (0.0, 0.239, -0.592)     # [O] corsair.dbx LandingGearEntryCompone
 ENTRY_RADIUS = 7.0                     # [O] its EntryRadius
 OFFM_DROP = 4
 DROP_ISLAND_MIN = 10
+# take-off lanes checked against the collision (2026-10-27): the obstacle grid of rsnav's flight test (flightsim.py:
+# the highest terrain or object per 4 m cell from the height field's corner, terrain sampled 5 x 5 a cell, triangles
+# every 2 m), so a lane clear here is clear there
+OBS_CELL = 4.0
+OBS_WINDOW = 320.0           # m around each plane spawn
+CLEAR_PAST = 40.0            # m past the lane's end the centre line stays clear (the climb-out)
+CLEAR_ACROSS = 2.0           # m either side of the centre line that must be clear
+CLEAR_RISE = 0.5             # m over the lane's height: an obstacle
+WING_HALF = 6.0              # m: half the wingspan [O] (11.9 / 12.0 m)
+LIFT_OFF = 85.0              # m of roll the deck or runway must carry (the flight test's plane lifts off at 81 m [E])
+SUPPORT_DROP = 3.5           # m: the deck or runway under the roll no lower than the lane less this
+HEADINGS = [0.0] + [v * sgn for v in np.arange(0.5, 20.01, 0.5) for sgn in (1, -1)]    # deg off the spawn heading
+LENGTHS = [120.0, 110.0, 100.0, 90.0, 80.0, 75.0]   # m; under 90 only when nothing longer is clear (short: the
+                                                   # plane rolls on past the end to lift off, flightsim.Lane)
+HEADINGS_WIDE = [v * sgn for v in np.arange(22.5, 180.01, 2.5) for sgn in (1, -1)]  # deg: second stage, turning
+STARTS = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0]   # m ahead of the spawn the lane may begin: the plane taxis
+                             # that far first [H] (out of a hangar: Iwo Jima's zero in hangar_t01 [O])
 
 
 def paths(lv):
@@ -128,6 +145,73 @@ def envelope(alt, pitch, climb):
     return out
 
 
+def obstacle_tops(T, hf, sea, cx, cz, half=OBS_WINDOW):
+    """(x0, z0, top): the highest terrain or object per OBS_CELL cell over a window around (cx, cz), on the grid of
+    rsnav's flightsim.Obstacles (cells from the height field's corner)."""
+    hx0, hz0 = float(hf.min[0]), float(hf.min[2])
+    i0 = max(int((cx - half - hx0) // OBS_CELL), 0)
+    j0 = max(int((cz - half - hz0) // OBS_CELL), 0)
+    nmax = int((hf.max[0] - hf.min[0]) // OBS_CELL), int((hf.max[2] - hf.min[2]) // OBS_CELL)
+    i1 = min(int((cx + half - hx0) // OBS_CELL) + 1, nmax[0])
+    j1 = min(int((cz + half - hz0) // OBS_CELL) + 1, nmax[1])
+    nx, nz = i1 - i0, j1 - j0
+    x0, z0 = hx0 + i0 * OBS_CELL, hz0 + j0 * OBS_CELL
+    top = np.full((nz, nx), -1e9)
+    I, J = np.meshgrid(np.arange(nx), np.arange(nz))
+    for a in np.linspace(0.0, 1.0, 5):
+        for b in np.linspace(0.0, 1.0, 5):
+            top = np.maximum(top, hf.height(x0 + (I + a) * OBS_CELL, z0 + (J + b) * OBS_CELL))
+    lo, hi = T[:, :, [0, 2]].min(1), T[:, :, [0, 2]].max(1)
+    sel = (hi[:, 0] >= x0) & (lo[:, 0] <= x0 + nx * OBS_CELL) & (hi[:, 1] >= z0) & (lo[:, 1] <= z0 + nz * OBS_CELL)
+    t_all = np.asarray(T[sel], np.float64)
+    e = np.maximum(np.maximum(np.linalg.norm(t_all[:, 0] - t_all[:, 1], axis=1), np.linalg.norm(t_all[:, 1] - t_all[:, 2], axis=1)),
+                   np.linalg.norm(t_all[:, 2] - t_all[:, 0], axis=1))
+    n = np.maximum(np.ceil(e / 2.0), 1).astype(np.int64)
+    for m in np.unique(n):
+        t = t_all[n == m]
+        uv = np.array([(i / m, j / m) for i in range(m + 1) for j in range(m + 1 - i)])
+        for c0 in range(0, len(t), max(1, 2_000_000 // len(uv))):
+            tt = t[c0:c0 + max(1, 2_000_000 // len(uv))]
+            q = tt[:, None, 0] + uv[None, :, 0, None] * (tt[:, None, 1] - tt[:, None, 0]) + \
+                uv[None, :, 1, None] * (tt[:, None, 2] - tt[:, None, 0])
+            q = q.reshape(-1, 3)
+            ii = np.floor((q[:, 0] - x0) / OBS_CELL).astype(np.int64)
+            jj = np.floor((q[:, 2] - z0) / OBS_CELL).astype(np.int64)
+            ok = (ii >= 0) & (jj >= 0) & (ii < nx) & (jj < nz)
+            np.maximum.at(top, (jj[ok], ii[ok]), q[ok, 1])
+    return x0, z0, np.maximum(top, sea)
+
+
+def lane_check(obs, pa, pb, y):
+    """(centre line clear, the roll carried to lift-off, the highest obstacle over the lane within the half wingspan)
+    of the lane pa -> pb at height y: the flight test's rule (rsnav tests/test_flight.py lane_obstruction), the centre
+    line +-CLEAR_ACROSS every metre from the start to CLEAR_PAST past the end, here every 1 m across."""
+    x0, z0, top = obs
+    nz, nx = top.shape
+
+    def at(x, z):
+        i, j = int((x - x0) // OBS_CELL), int((z - z0) // OBS_CELL)
+        return top[j, i] if 0 <= i < nx and 0 <= j < nz else -1e9
+    yaw = math.atan2(pb[0] - pa[0], pb[2] - pa[2])
+    sy, cy = math.sin(yaw), math.cos(yaw)
+    length = math.dist((pa[0], pa[2]), (pb[0], pb[2]))
+    clear, carried, wing = True, True, -1e9
+    for k in range(0, int(length + CLEAR_PAST) + 1):
+        for c in np.arange(-CLEAR_ACROSS, CLEAR_ACROSS + 0.01, 1.0):
+            x, z = pa[0] + sy * k + cy * c, pa[2] + cy * k - sy * c
+            if at(x, z) - y > CLEAR_RISE:
+                clear = False
+                break
+        if not clear:
+            break
+        if k <= LIFT_OFF and at(pa[0] + sy * k, pa[2] + cy * k) < y - SUPPORT_DROP:
+            carried = False
+        if k <= length and k % 2 == 0:
+            for c in range(-int(WING_HALF), int(WING_HALF) + 1, 2):
+                wing = max(wing, at(pa[0] + sy * k + cy * c, pa[2] + cy * k - sy * c) - y)
+    return clear, carried, wing
+
+
 def segment_clear(floor, x0, z0, pitch, a, b, clear):
     """Whether the straight segment a -> b (x, y, z) stays clear above the floor grid (samples every half cell)."""
     n = max(2, int(math.ceil(math.dist(a, b) / (pitch / 2))))
@@ -199,18 +283,24 @@ def build(lv, soldier_path=None, game=None, log=print):
     def nearest_cruise(x, z):
         d = (npos[:, 0] - x) ** 2 + (npos[:, 2] - z) ** 2
         return int(np.argmin(d))
-    # take-off and landing lanes
+    # take-off and landing lanes: from the spawn along its heading [O: the planes face along the decks and fields],
+    # checked against the collision; a blocked lane is turned (up to 20 deg), shortened (to 90 m) or started a few
+    # metres ahead, in that order of preference (see choose_lane)
     sets = [air]
     offm, lanes, board = [], [], []
-    run = vc.value('plane', 'takeoff_run')
+    run_default = vc.value('plane', 'takeoff_run')
     for s in spawns:
         p0 = np.array(s['pos'])
-        f = np.array(s['fwd'])
+        obs = obstacle_tops(T, hf, sea, p0[0], p0[2])
+        choice = choose_lane(obs, p0, s['yaw'])
+        f = np.array([math.sin(choice['yaw']), 0.0, math.cos(choice['yaw'])])
         side = np.array([f[2], 0.0, -f[0]])
-        lx0 = math.floor((p0[0] - run - 10) / LANE_PITCH) * LANE_PITCH
-        lz0 = math.floor((p0[2] - run - 10) / LANE_PITCH) * LANE_PITCH
+        run = choice['length']
+        start = p0 + f * choice['start']
+        lx0 = math.floor((p0[0] - run_default - 20) / LANE_PITCH) * LANE_PITCH
+        lz0 = math.floor((p0[2] - run_default - 20) / LANE_PITCH) * LANE_PITCH
         cells = {}
-        for t in np.arange(0.0, run + 1e-6, LANE_PITCH / 2):
+        for t in np.arange(0.0, choice['start'] + run + 1e-6, LANE_PITCH / 2):
             for w in (-LANE_PITCH, 0.0, LANE_PITCH):
                 q = p0 + f * t + side * w
                 cells.setdefault((int(round((q[0] - lx0) / LANE_PITCH)), int(round((q[2] - lz0) / LANE_PITCH))), p0[1])
@@ -225,15 +315,15 @@ def build(lv, soldier_path=None, game=None, log=print):
         sets.append(rsnvgrid1943.CellSet(LANE_PITCH, lx0, lz0, [c[0] for c in key], [c[1] for c in key],
                                          [cells[c] for c in key], lk, name=f'runway {s["index"]}'))
         si = len(sets) - 1
-        c_start = (int(round((p0[0] - lx0) / LANE_PITCH)), int(round((p0[2] - lz0) / LANE_PITCH)))
-        pe = p0 + f * run
+        c_start = (int(round((start[0] - lx0) / LANE_PITCH)), int(round((start[2] - lz0) / LANE_PITCH)))
+        pe = start + f * run
         c_end = (int(round((pe[0] - lx0) / LANE_PITCH)), int(round((pe[2] - lz0) / LANE_PITCH)))
         a = len(node_list)
         node_list.append((si, cid[c_start]))
         b = len(node_list)
         node_list.append((si, cid.get(c_end, max(cid.values()))))
         edge_list.append((a, b, rsnv.EDGE_WALK, None, False))
-        up = nearest_cruise(*(p0 + f * (run + CLIMB_OUT))[[0, 2]])
+        up = nearest_cruise(*(start + f * (run + CLIMB_OUT))[[0, 2]])
         down = nearest_cruise(*(p0 - f * APPROACH)[[0, 2]])
         edge_list.append((b, up, rsnv.EDGE_JUMP, float(math.dist(pe, npos[up])), False))
         edge_list.append((down, a, rsnv.EDGE_DROP, float(math.dist(npos[down], p0)), False))
@@ -241,7 +331,11 @@ def build(lv, soldier_path=None, game=None, log=print):
         offm.append((rsnv.OFFM_BOARD_VEHICLE, team_mask(s['team']), vc.CLASS_IDS['plane'], a, *[float(v) for v in s['entry']],
                      float(s['yaw']), ENTRY_RADIUS, sn if sn is not None else 0xFFFFFFFF))
         lanes.append({'spawn': s['index'], 'vehicle': s['vehicle'], 'team': s['team'], 'start node': a, 'end node': b,
-                      'climb-out node': up, 'approach node': down})
+                      'climb-out node': up, 'approach node': down,
+                      'heading offset deg': choice['offset'], 'start ahead m': choice['start'], 'length m': run,
+                      'centre line clear': choice['clear'], 'roll carried to lift-off': choice['carried'],
+                      'highest within the half wingspan m': round(float(choice['wing']), 1),
+                      'straight lane blocked': choice['straight blocked'], 'source': choice['source']})
         board.append({'spawn': s['index'], 'team': s['team'], 'entry': [round(v, 2) for v in s['entry']], 'node': a,
                       'soldier node': sn, 'soldier island': int(S.node_island[sn]) if sn is not None else None})
     # parachute drops: over bases and flags, and over each soldier island that is no carrier
@@ -262,7 +356,12 @@ def build(lv, soldier_path=None, game=None, log=print):
                      float(np.hypot(npos[cn, 0] - sp[0], npos[cn, 2] - sp[2])), sn))
         drops.append({'target': name, 'soldier node': sn, 'soldier island': isl, 'cruise node': cn,
                       'height over ground': round(float(npos[cn, 1] - sp[1]), 1)})
-    log(f'  {len(lanes)} take-off lanes, {len(drops)} parachute drops')
+    log(f'  {len(lanes)} take-off lanes ({sum(1 for l in lanes if l["straight lane blocked"])} with the spawn heading '
+        f'blocked, {sum(1 for l in lanes if not l["centre line clear"])} not cleared, {sum(1 for l in lanes if not l["roll carried to lift-off"])} rolling off the ground before lift-off), {len(drops)} parachute drops')
+    for l in lanes:
+        if l["straight lane blocked"] or not l["roll carried to lift-off"]:
+            log(f'    spawn {l["spawn"]} {l["vehicle"]}: heading {l["heading offset deg"]:+.1f} deg, start +{l["start ahead m"]:g} m, '
+                f'{l["length m"]:g} m, clear {l["centre line clear"]}, carried {l["roll carried to lift-off"]}, wing obstacle {l["highest within the half wingspan m"]} m')
     meta = {'sources': {k: {'path': v, 'sha256': rsnvgrid1943.sha256(v)} for k, v in (
         ('soldier rsnv', soldier_path), ('all_tris.npy', os.path.join(p['objects'], 'all_tris.npy')),
         ('heightfield.res', hf_path), ('navkit.json', os.path.join(p['navkit'], 'navkit.json'))) if os.path.isfile(v)},
@@ -277,6 +376,62 @@ def build(lv, soldier_path=None, game=None, log=print):
     stats.update({'lanes': len(lanes), 'drops': len(drops), 'seconds': round(time.time() - t0, 1)})
     log(f'{lv}: plane world {p["rsnv"]} ({stats["seconds"]:.0f} s)')
     return p['rsnv'], stats
+
+
+def choose_lane(obs, p0, yaw0):
+    """The take-off lane of a plane spawn: the spawn's own heading and takeoff_run [H] when clear (lane_check on the
+    lane's nodes as the world will hold them: 2 m cell centres); else the first clear candidate by (start ahead,
+    length longest, heading offset smallest, then the least wing obstacle); flagged when none is clear."""
+    def geometry(d0, L, off):
+        yaw = yaw0 + math.radians(off)
+        f = np.array([math.sin(yaw), 0.0, math.cos(yaw)])
+        return yaw, p0 + f * d0, p0 + f * (d0 + L)
+    run0 = vc.value('plane', 'takeoff_run')
+    y = float(p0[1])
+    _yaw, a0, b0 = geometry(0.0, run0, 0.0)
+    clear0, carried0, wing0 = lane_check(obs, snap_lane(a0), snap_lane(b0), y)
+    if clear0 and carried0:
+        return {'yaw': yaw0, 'offset': 0.0, 'start': 0.0, 'length': run0, 'clear': True, 'carried': True, 'wing': wing0,
+                'straight blocked': False, 'source': '[H] the spawn heading x takeoff_run; clear of the collision [O]'}
+    best = None
+    for headings in (HEADINGS, HEADINGS_WIDE):
+        best = search_lane(obs, p0, yaw0, y, geometry, headings)
+        if best is not None:
+            if headings is HEADINGS_WIDE:
+                best['source'] = (f'[H] the plane turns {best["offset"]:+.1f} deg on the ground first: no clear lane '
+                                  f'within 20 deg of the spawn heading; clear of the collision [O]')
+            return best
+    return {'yaw': yaw0, 'offset': 0.0, 'start': 0.0, 'length': run0, 'clear': clear0, 'carried': carried0, 'wing': wing0,
+            'straight blocked': not clear0,
+            'source': ('[H] the spawn heading x takeoff_run, centre line clear [O]; but the roll leaves the ground before '
+                       'lift-off (no lane at any heading is both clear and carried): an in-game check' if clear0 else
+                       '[U] no clear lane at any heading, 75-120 m, within 16 m of the spawn: kept, blocked')}
+
+
+def search_lane(obs, p0, yaw0, y, geometry, headings):
+    best = None
+    for d0 in STARTS:
+        for L in LENGTHS:
+            for off in headings:
+                yaw, a, b = geometry(d0, L, off)
+                clear, carried, wing = lane_check(obs, snap_lane(a), snap_lane(b), y)
+                if clear and carried:
+                    key = (d0, -L, abs(off), wing)
+                    if best is None or key < best[0]:
+                        best = (key, {'yaw': yaw, 'offset': float(off), 'start': d0, 'length': L, 'clear': True,
+                                      'carried': True, 'wing': wing, 'straight blocked': True,
+                                      'source': '[H] turned / shortened / moved off the spawn heading to clear the '
+                                                'collision [O] on the deck or field [O]'})
+            if best is not None and best[0][0] == d0 and best[0][1] == -L:
+                break                                    # the longest clear length at this start is found
+        if best is not None:
+            break
+    return best[1] if best is not None else None
+
+
+def snap_lane(q):
+    """A lane end as the world holds it: the 2 m lane cell's centre (on the lane cell grid of build())."""
+    return (math.floor(q[0] / LANE_PITCH + 0.5) * LANE_PITCH, float(q[1]), math.floor(q[2] / LANE_PITCH + 0.5) * LANE_PITCH)
 
 
 def team_mask(team):

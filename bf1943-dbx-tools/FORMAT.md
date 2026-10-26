@@ -233,7 +233,10 @@ evidence). *Where* is `<type> <guid> [<field path>]`, as above.
   order, with *next* = `EnumOffset` + 1, each object's slot must equal *next*, then *next* = slot + width (2 when the
   partition its `ReferencedObject` names has a `PhysicsEntityData` instance, else 1), and at the end *next* must be
   `EnumOffset` + L + 1 (a blueprint partition not in the folders skips this, with a warning); an object whose
-  `Transform` position is more than 6.2 x W / 16 + 0.1 m from its leaf's centre (X, Y, Z / 16).
+  `Transform` position is more than 1.55 x W / 4 + 0.1 m from its leaf's centre (X, Y, Z / 16); a two-leaf object
+  whose leaves differ (any key or `Max`). For each tree: not one pre-order tree from node 0 followed by exactly 256
+  all-zero nodes is an **error**; an inner node whose `Max` is not the larger of its children's, and a leaf with
+  W / 4 < `Max` + 0.125, are **warnings**.
 
 **Static cull trees** (`World.StaticCullTreeData`, one instance per partition; BF1943, and BFBC2 PC's `mp_005`
 alike). Fields: `Nodes` (array of complex) and `EnumOffset` (4-byte integer). Each node: `Right` (4 bytes), `Max` (4-byte
@@ -243,8 +246,23 @@ decimal), `SphereKeyX`, `SphereKeyY`, `SphereKeyZ`, `SphereKeyW` (2 bytes each, 
 - A leaf has bit 31 of `Right` set. The low 31 bits are its number, 1..L: each once, and leaf *n* is cull slot
   `EnumOffset` + *n*.
 - The tree is followed by 256 nodes that are all zero.
-- `SphereKeyX/Y/Z` are the leaf's centre in metres x 16. `SphereKeyW` is a size (its scale is not known). `Max`'s
-  meaning is not known.
+- A node's sphere is centre `SphereKeyX/Y/Z` / 16 m and radius `SphereKeyW` / 4 m. The game's frustum walk at
+  0x825c3730 converts the four keys with `vcfsx` scales 2^-4 and 2^-2 (0x825c2f7c, 0x825c2f80) [O]. It compares
+  the smallest of six plane distances with the radius: a subtree wholly outside is dropped, one wholly inside goes to
+  0x825c2f20, and otherwise the walk visits node + 1 and node + `Right`.
+- An inner node's sphere holds its children's only loosely: W/4 encloses them at 95 % of nodes on Wake Island, and
+  W/2 at 99 %.
+- `Max` is, for a leaf, about its object's bounding radius (unquantised). It is constant per blueprint: 88 of 98
+  blueprints have one value, the rest differ in the last digit. On Coral Sea the collision geometry lies within
+  1.01 x `Max` of the leaf's centre.
+- For an inner node, `Max` is the larger of its children's `Max`, so it is the largest object radius below it (all
+  ten trees).
+- In every leaf, W/4 >= `Max` + 0.127 m: the quantised radius is rounded up.
+- 0x825c2f20 tests `Max` against (a camera factor x distance - radius) for subtrees inside the frustum [O pseudocode].
+  That reads as a size-at-distance cull [H]: a subtree whose largest object is too small for its distance is skipped.
+- A physics object's two exclusive leaves are identical (sphere and `Max`; 4,470 of 4,470).
+- At run time each renderable carries its slot. 0x825ca390 finds a slot's tree as the one with
+  `EnumOffset` < slot <= `EnumOffset` + L.
 
 `fixslots <in> <out> --from <level>` gives every object the slot of the same object in `<level>`:
 

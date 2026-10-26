@@ -11,7 +11,14 @@ data):
      board and an alight transfer: the plan rides (its cost the sum of its legs, the ride scaled), its legs' A* costs
      equal the Dijkstra legs; a goal on the deck walks; a transfer whose stored soldier node is stale is resolved
      again by position; a team without a board transfer gets no trip.
-  4. The class table: every class's clearance at least its half-width, and the [O] sizes as read from the game
+  4. Heading-aware planning (rsnvhybrid): the primitive tables are deterministic; in a 4 m wide dead-end strip a car
+     (4.5 m turning radius) turns back only by reversing (a plan with reverse moves, every pose on the strip's cells);
+     round an L corner 5 m wide it drives forward only; a start a little off the cells is snapped onto them; a goal
+     outside the corridor is not reached.
+  5. Plane take-off lanes (airnav1943.choose_lane) on a made-up airfield: a clear lane stays the spawn heading; a
+     tree on the centre line turns it a few degrees; a hangar roof over the spawn starts it outside; a field ending
+     in a drop ahead turns the plane on the ground; a plateau too small for any roll keeps the clear heading, flagged.
+  6. The class table: every class's clearance at least its half-width, and the [O] sizes as read from the game
      (vehicleclasses1943.CLASSES) self-consistent.
 
   python -B test_vehicles_nav1943.py
@@ -27,11 +34,12 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [os.path.join(os.path.dirname(HERE), 'tools'), os.path.join(SUITE, 'core')]
+import airnav1943 as an  # noqa: E402
 import groundnav1943 as gn  # noqa: E402
 import rsnvgrid1943 as rg  # noqa: E402
 import seanav1943 as sn  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
-from bfbc2core import rsnv, rsnvtrip  # noqa: E402
+from bfbc2core import rsnv, rsnvhybrid, rsnvtrip  # noqa: E402
 
 failures = []
 
@@ -188,6 +196,81 @@ def trip_tests(tmp):
                                                    f'({rsnvtrip.resolve(S, tuple(stale))})')
 
 
+def strip_world(path, cells):
+    """A world of the given 0.8 m cells (i, j) at y 10 (the car's lattice), one area set."""
+    cells = sorted(cells)
+    idx = {c: k for k, c in enumerate(cells)}
+    links = {}
+    for (i, j), k in idx.items():
+        for di, dj in rg.STRAIGHT:
+            n = idx.get((i + di, j + dj))
+            if n is not None:
+                links[(k, di, dj)] = n
+    cs = rg.CellSet(0.8, 0.0, 0.0, [c[0] for c in cells], [c[1] for c in cells], [10.0] * len(cells), links, name='strip')
+    header = {'sea_level': 0.0, 'radius': 1.5, 'height': 2.0, 'step': 0.3, 'water_depth': 0.8, 'sha256': '0' * 8}
+    rg.write_world('strip', 'jeep', [cs], [(0, 0)], [], [], path, (0, 0), header, {}, flag_tight=False, log=lambda *a: None)
+    return rsnv.load(path)
+
+
+def hybrid_tests(tmp):
+    T = rsnvhybrid.table('car')
+    check(T == rsnvhybrid.table('car') and len(T['prims']) == 16 and all(len(l) == 6 for l in T['prims']),
+          'the car\'s primitive table: deterministic, 6 moves (straight, two arcs; forward and back) for each of 16 headings')
+    # a dead-end strip 5 cells (4 m) wide, 40 cells (32 m) long, along +z from (10, 10)
+    W = strip_world(os.path.join(tmp, 'strip.jeep.rsnv'), [(i, j) for i in range(10, 15) for j in range(10, 50)])
+    corr = [(9.6, 8.0), (9.6, 40.0)]
+    r = rsnvhybrid.plan(W, T, (12, 20, 0), (12, 20, 8), corr, 10.0, {'max_expansions': 20000, 'htol': 1, 'corridor': 12.0})
+    rev = sum(1 for q in r['poses'] if q[3] < 0)
+    onc = all(10 <= q[0] <= 14 and 10 <= q[1] <= 49 for q in r['poses'])
+    check(r['status'] == 'done' and rev > 0 and onc,
+          f'a U-turn in a 4 m strip: done by reversing ({rev} reverse moves of {len(r["poses"]) - 1}, cost {r["cost"] / 16:.1f} m, '
+          f'{r["expansions"]} expansions), every pose on the strip')
+    # an L: 7 cells wide (5.6 m) north, then east
+    L = [(i, j) for i in range(10, 17) for j in range(10, 45)] + [(i, j) for i in range(17, 60) for j in range(38, 45)]
+    WL = strip_world(os.path.join(tmp, 'ell.jeep.rsnv'), L)
+    corrL = [(10.8, 8.0), (10.8, 33.0), (40.0, 33.0)]
+    rL = rsnvhybrid.plan(WL, T, (13, 14, 0), (50, 41, 4), corrL, 10.0, {'max_expansions': 20000, 'corridor': 12.0})
+    check(rL['status'] == 'done' and all(q[3] > 0 for q in rL['poses']),
+          f'round an L corner 5.6 m wide: forward only ({rL["status"]}, {len(rL["poses"])} poses, {rL["expansions"]} expansions)')
+    rs = rsnvhybrid.plan(WL, T, (9, 14, 0), (50, 41, 4), corrL, 10.0, {'max_expansions': 20000, 'corridor': 12.0})
+    check(rs['status'] == 'done' and rs['poses'][0][0] == 10, f'a start one cell off the cells is snapped onto them '
+                                                                 f'(starts at I = {rs["poses"][0][0] if rs["poses"] else None})')
+    ro = rsnvhybrid.plan(WL, T, (13, 14, 0), (50, 41, 4), [(10.8, 8.0), (10.8, 33.0)], 10.0,
+                         {'max_expansions': 4000, 'corridor': 6.0})
+    check(ro['status'] != 'done', f'a goal outside the corridor is not reached ({ro["status"]})')
+
+
+def lane_tests():
+    def field(trees=(), roof=None, drop_at=None):
+        nx = nz = 100                                   # 400 x 400 m of 4 m cells from (-200, -200), ground at 0
+        top = np.zeros((nz, nx))
+        for x, z, h in trees:
+            top[int((z + 200) // 4), int((x + 200) // 4)] = h
+        if roof:
+            (xa, za, xb, zb, h) = roof
+            top[int((za + 200) // 4):int((zb + 200) // 4) + 1, int((xa + 200) // 4):int((xb + 200) // 4) + 1] = h
+        if drop_at is not None:
+            top[int((drop_at + 200) // 4):, :] = -10.0
+        return (-200.0, -200.0, top)
+    p0 = np.array([0.0, 1.5, -150.0])                   # a plane 1.5 m over the field, facing +z
+    c = an.choose_lane(field(), p0, 0.0)
+    check(not c['straight blocked'] and c['offset'] == 0.0 and c['length'] == 120.0, 'a clear lane: the spawn heading, 120 m')
+    c = an.choose_lane(field(trees=[(0.0, -90.0, 8.0)]), p0, 0.0)
+    check(c['clear'] and c['straight blocked'] and c['offset'] != 0.0 and abs(c['offset']) <= 20 and c['start'] == 0.0,
+          f'a tree on the centre line 60 m out: the lane turns {c["offset"]:+.1f} deg')
+    c = an.choose_lane(field(roof=(-12.0, -160.0, 12.0, -144.0, 5.0)), p0, 0.0)
+    check(c['clear'] and c['start'] >= 6.0, f'a hangar roof over the spawn: the lane starts {c["start"]:g} m ahead')
+    c = an.choose_lane(field(drop_at=-90.0), p0, 0.0)
+    check(c['clear'] and c['carried'] and abs(c['offset']) > 20 and 'turns' in c['source'],
+          f'a field ending in a drop ahead before lift-off: the plane turns {c["offset"]:+.1f} deg on the ground first')
+    x0, z0, top = field()
+    I, J = np.meshgrid(np.arange(100), np.arange(100))
+    top[np.hypot(x0 + I * 4 + 2 - p0[0], z0 + J * 4 + 2 - p0[2]) > 60.0] = -10.0     # a plateau 60 m across
+    c = an.choose_lane((x0, z0, top), p0, 0.0)
+    check(c['clear'] and not c['carried'] and 'in-game check' in c['source'],
+          'a plateau too small for any roll: the clear heading kept, flagged for an in-game check')
+
+
 def class_tests():
     ok = all(vc.value(c, 'radius') >= vc.value(c, 'half_width') for c in vc.CLASSES)
     check(ok, 'every class\'s clearance radius is at least its half-width')
@@ -202,6 +285,8 @@ def main():
     ground_tests(tmp)
     sea_tests()
     trip_tests(tmp)
+    hybrid_tests(tmp)
+    lane_tests()
     class_tests()
     print('all passed' if not failures else f'{len(failures)} failed')
     return 1 if failures else 0

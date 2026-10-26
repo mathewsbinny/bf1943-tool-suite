@@ -67,6 +67,24 @@ def main(argv):
     ter = level([[0.0, 0.66, 1.32]], terrain=[[1, 1, 1]])
     check(not ter.connected(0, 1, 1, 0, 'terrain'), "'terrain': two terrain surfaces use the raw rule")
     check(navbuild.LINK_RULE == 'slope', 'portals and routes use the slope rule')
+
+    # AREA_CLIFF: a ramp that turns back beside its own foot (row 0 rises to 0.9, row 1 climbs on to 2.1 above row
+    # 0's start): one area without the rule; with it, no two side-by-side cells of one area over 1 m apart
+    ramp = level([[0.0, 0.3, 0.6, 0.9], [2.1, 1.8, 1.5, 1.2]])
+    members = {k: (k % 4, k // 4) for k in range(8)}
+    saved = navbuild.AREA_CLIFF
+    try:
+        navbuild.AREA_CLIFF = None
+        check(len(navbuild.components(ramp, members, 0, 0)) == 1, 'AREA_CLIFF off: the turning ramp is one area')
+        navbuild.AREA_CLIFF = 1.0
+        comps = navbuild.components(ramp, members, 0, 0)
+        y = ramp.y
+        worst = max((abs(y[a[2]] - y[b[2]]) for c in comps for a in c for b in c
+                     if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
+        check(len(comps) >= 2 and worst <= 1.0 + 1e-6, f'AREA_CLIFF 1.0: {len(comps)} areas, side-by-side cells of one '
+                                                       f'area at most {worst:.2f} m apart')
+    finally:
+        navbuild.AREA_CLIFF = saved
     print('all passed' if not failed else f'{failed} check(s) failed')
     return 1 if failed else 0
 

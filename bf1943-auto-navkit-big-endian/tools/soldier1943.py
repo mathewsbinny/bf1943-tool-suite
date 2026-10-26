@@ -43,3 +43,9 @@ def configure():
     # shared border nodes also on the seam line itself, for ground that reaches the seam but not the border line one
     # sample beyond (Coral Sea's three seam breaks, 2026-10-26)
     navbuild.BORDER_SEAM_LINE = True
+    # an area holds no cliff between plan-neighbouring cells (a bridge deck beside the ground under it): the RSNV height
+    # grid cannot hold one (2026-10-26: 66 of Wake Island's 75 remaining tight edges lay in such areas)
+    navbuild.AREA_CLIFF = 1.0
+    # join_groups floods 2 m past a sector's window: ground joined to the rest of its sector only round a corner of
+    # the neighbour sector (Coral Sea's last seam break, 2026-10-26)
+    navbuild.JOIN_MARGIN = 2.0

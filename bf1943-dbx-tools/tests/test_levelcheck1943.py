@@ -251,11 +251,39 @@ def main():
         tx.original = etree
         b2 = os.path.join(work, 'b2', 'levels', 'wake_island_s')
         os.makedirs(b2)
-        moved = tx.write('exclusive-offset', tx.text.replace(f'<field name="EnumOffset">{eoff}</field>', f'<field name="EnumOffset">{eoff - 1}</field>', 1))
-        shutil.move(moved, os.path.join(b2, 'staticculltree_exclusive.dbx'))
-        code, out = run('check', wake, '--bundle', os.path.join(work, 'b2'), '--bundle', bundle)
-        check(code == 1 and f"the exclusive cull tree's EnumOffset is {eoff - 1}, not the level's {eoff}" in out,
-              f'cull-exclusive-tree: error, a tree whose EnumOffset is not the group instances\' count (exit {code})')
+
+        def broken_tree(name, text, severity, says):
+            moved = tx.write(name, text)
+            shutil.move(moved, os.path.join(b2, 'staticculltree_exclusive.dbx'))
+            code, out = run('check', wake, '--bundle', os.path.join(work, 'b2'), '--bundle', bundle)
+            want = 'ERROR  ' if severity == 'error' else 'WARN   '
+            ok = any(ln.startswith(want) and says in ln for ln in out.splitlines()) and (code == 1) == (severity == 'error')
+            check(ok, f'{name}: {severity} "{says}" in a broken exclusive cull tree (exit {code})'
+                  + ('' if ok else '\n       ' + out.strip().replace('\n', '\n       ')[:900]))
+
+        broken_tree('exclusive-offset', tx.text.replace(f'<field name="EnumOffset">{eoff}</field>', f'<field name="EnumOffset">{eoff - 1}</field>', 1),
+                    'error', f"the exclusive cull tree's EnumOffset is {eoff - 1}, not the level's {eoff}")
+        # the tree's nodes as text: every complex of the partition is a node, in order
+        pieces = tx.text.split('<complex>')
+        nodes = t.child('Nodes').children
+        right = [int.from_bytes(dbx.numbers(k.child('Right'))[1][0], 'big') for k in nodes]
+        at = {r & 0x7fffffff: i for i, r in enumerate(right) if r >> 31}
+
+        def node_edit(i, old_re, new):
+            p2 = list(pieces)
+            p2[i + 1] = re.sub(old_re, new, p2[i + 1], count=1)
+            return '<complex>'.join(p2)
+        root_max = re.search(r'<field name="Max">([^<]*)</field>', pieces[1]).group(1)
+        broken_tree('cull-inner-max', node_edit(0, r'<field name="Max">[^<]*</field>', f'<field name="Max">{float(root_max) / 2}</field>'),
+                    'warning', 'have a Max that is not the larger of their children')
+        leaf = at[int(fe) - eoff + 1]                                        # the second leaf of the first (physics) object
+        w = re.search(r'<field name="SphereKeyW">([^<]*)</field>', pieces[leaf + 1]).group(1)
+        broken_tree('cull-leaf-pair', node_edit(leaf, r'<field name="SphereKeyW">[^<]*</field>', f'<field name="SphereKeyW">{int(w) + 3}</field>'),
+                    'warning', 'objects with physics have two leaves that differ')
+        broken_tree('cull-leaf-radius', node_edit(leaf, r'<field name="SphereKeyW">[^<]*</field>', '<field name="SphereKeyW">0</field>'),
+                    'warning', 'have a radius (SphereKeyW / 4) less than 1/8 m above their Max')
+        broken_tree('cull-tree-shape', node_edit(0, r'<field name="Right">[^<]*</field>', '<field name="Right">3</field>'),
+                    'error', 'are not one pre-order tree followed by 256 zero nodes')
         # a reference into another file with the wrong class (--bundle)
         deserter = combat.child('DeserterProjectile').attr('ref')
         p = x.write('external-type', x.edit(gid(combat), f'ref="{deserter}" name="DeserterProjectile"', f'ref="{flag_template}" name="DeserterProjectile"'))

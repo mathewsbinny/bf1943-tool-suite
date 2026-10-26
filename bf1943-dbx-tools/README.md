@@ -153,6 +153,7 @@ not crashes: what the game does with a broken one has not been tried.
 | with `--bundle`: the client cull tree has one leaf per model-group and forest instance (`SpawnDatas`), numbered 1..N, and `EnumOffset` 0 | 5 of 5 (N = 2,505-3,852) |
 | with `--bundle`: the exclusive cull tree's leaves are numbered 1..L and its `EnumOffset` is N | 5 of 5 (L = 540-2,414) |
 | with `--bundle`: every placed object's slot is in `EnumOffset`+1 .. `EnumOffset`+L - the highest slot fits the tree | 4,595 slotted objects |
+| with `--bundle`: each cull tree is one pre-order tree from node 0 followed by exactly 256 zero nodes | 10 trees |
 
 **Warnings** - the level is unlike every shipped one:
 
@@ -172,7 +173,10 @@ not crashes: what the game does with a broken one has not been tried.
 | LevelData `Name` is `Levels/<its id>` | 5 of 5 |
 | every field (of an instance, of a by-value struct, of an array element) is a member of its class or struct - except 20 fields the shipped data carries that BF1943's classes do not have (below) | 160,109 fields |
 | with `--bundle`: in slot order, the slotted placed objects cover the exclusive tree's leaves exactly - two leaves when the blueprint's partition has a `PhysicsEntityData`, else one | 4,470 objects with two, 125 with one |
-| with `--bundle`: an object lies within 6.2 x `SphereKeyW` / 16 of its leaf's centre (`SphereKeyX/Y/Z` / 16); the bound is fitted to the shipped levels (largest 6.16) | 4,595 objects; with the slots shuffled 2-5 per level pass |
+| with `--bundle`: an object's origin lies within 1.55 radii of its leaf's centre - centre `SphereKeyX/Y/Z` / 16, radius `SphereKeyW` / 4, as the game reads them; the 1.55 is fitted (largest 1.540) | 4,595 objects; with the slots shuffled 2-5 per level pass |
+| with `--bundle`: an inner tree node's `Max` is the larger of its children's | 23,979 inner nodes in 10 trees |
+| with `--bundle`: a leaf's radius `SphereKeyW` / 4 is at least `Max` + 1/8 m | 23,989 leaves (least 0.127 m) |
+| with `--bundle`: an object with physics has two identical leaves (sphere and `Max`) | 4,470 of 4,470 |
 
 **Not rules** (a shipped level breaks them): capture points' `Index` unique (the tutorial repeats 1, 5 and 10);
 every capture point has spawners (Coral Sea's south base and a tutorial hangar ship have none); a live session and a
@@ -194,8 +198,15 @@ cull trees, the partitions `levels/<level>/staticculltree_client` and `staticcul
   without rebuilding the tree. `fixslots` gives it 0 (outside the trees); what the game then draws is not tried.
 - BFBC2 PC's `mp_005` has the same layout (client leaves = its 2,292 group instances, exclusive `EnumOffset` 2,292,
   slots up to 5,975 = 2,292 + 3,683). This is a lead only.
-- **Open:** what the second leaf is for (collision or destruction are guesses) and the node's `Max`; the exact scale of
-  `SphereKeyW` (the 6.2 bound is empirical).
+- **How the game reads a node** (FORMAT.md section 7):
+  - centre `SphereKeyX/Y/Z` / 16 and radius `SphereKeyW` / 4, both read from the frustum walk's code [O];
+  - `Max` is a leaf's object radius, unquantised and constant per blueprint; an inner node's `Max` is the largest
+    below it [O];
+  - the game tests `Max` against distance, which reads as a size-at-distance cull [H].
+- **The second leaf** of a physics object is an exact copy of the first. It exists exactly when the object's
+  `StaticModelEntityData` has `PhysicsData` [O]. At run time each renderable carries its own slot [O], so it is a
+  second cull client of the same object, probably the physics or destructible-part side [H]. That consumer was not
+  found in the code [U].
 
 **Data-only fields.** The shipped levels carry 20 fields (6,060 times) that BF1943's classes and structs do not have:
 - `ReferenceObjectData.IsInObjectSet` (5,855 times);
