@@ -82,6 +82,32 @@ if __name__ == '__main__':
           f'capped at 2: the goal is reached when popped, not expanded ({st}, {exp} expansions)')
     st, cost, path, _ = rsnv.search(a, 0, 3, kind_mask=0)
     check(st == rsnv.PARTIAL and path == [0], f'no usable edges: partial path [start] ({path})')
+    # costs: a wading node triples its edges' costs (water_scale), kind extras, penalties
+    st, cost, path, _ = rsnv.search(a, 0, 2, kind_extra=[0, 0, 0, 0, 0, 0, 0])
+    check((st, cost, path) == (rsnv.DONE, 76, [0, 1, 2]), 'zero extras change nothing')
+    st, cost, path, _ = rsnv.search(a, 1, 3, kind_extra=[0, 0, 0, 0, 200, 0, 0])
+    check(path == [1, 0, 3], f'a jump extra of 200 (12.5 m) sends 1 -> 3 round by walking ({path})')
+    st, cost, path, _ = rsnv.search(a, 0, 2, penalty={0: 400})
+    check(path == [0, 3, 2] and cost == 166, f'a penalty on edge 0 -> 1 takes the other way ({path}, cost {cost})')
+    # heights: a 45-degree slope along x on a 4 x 4 area of 0.8 m cells with a per-cell grid (hstep 800 mm)
+    s2, h2 = tiny()
+    s2['AREA'] = [(0.0, 0.0, 2.4, 2.4, 10.0, 12.4, 0, 4, 4, 0, 0, 0, 0, 0, 0, 4, 800, 0, 4, 4, 800)]
+    s2['HGHT'] = [(i * 80,) for j in range(4) for i in range(4)]
+    p2 = os.path.join(tmp, 'slope.rsnv')
+    rsnv.write(p2, s2, h2)
+    sl = rsnv.load(p2)
+    ar = sl.areas[0]
+    got = [round(sl.ground(ar, x, 1.2), 4) for x in (0.0, 1.2, 2.4, -0.4, 2.8, -3.0)]
+    check(got == [10.0, 11.2, 12.4, 9.6, 12.8, 9.6],
+          f'ground on a slope: exact between cells, continued half a cell past the edge, held beyond ({got})')
+    s2['HGHT'][1 * 4 + 1] = (0xFFFF,)                              # a block with no cells
+    rsnv.write(p2, s2, h2)
+    sl = rsnv.load(p2)
+    g = sl.ground(sl.areas[0], 1.0, 1.0)
+    g2 = sl.ground(sl.areas[0], 1.05, 1.0)
+    check(abs(g - 11.0) < 0.4 and abs(g2 - g) < 0.1,
+          f'next to an empty block the others carry the height: {g:.3f} (planar 11.0, within half a cell\'s rise), '
+          f'continuous ({g2 - g:+.3f} over 5 cm)')
     loc = a.locate(1.7, 10.0, 1.7)
     check(loc is not None and loc[0] == 0 and loc[1] == (2, 2), f'locate a walkable cell: {loc}')
     loc = a.locate(2.4, 10.0, 2.4, max_dist=0.1)

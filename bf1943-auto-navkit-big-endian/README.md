@@ -53,9 +53,10 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **The export for our navigation runtime** (`tools\navexport1943.py`, new 2026-10-24): `navexport1943.py <level>
   [--big-endian] [--check]` writes `work\levels\<level>\navkit\<level>.rsnv` (`.be.rsnv` big-endian), the build in
   the runtime's own format (core `rsnv.py`): the route graph with integer costs (1/16 m) and edge kinds (walk, ladder
-  up and down, jump), each area's walkable cells and their heights, a grid to find the areas near a point, the
-  islands, and the build's hash. `--check` reads the file back and compares it with the build. On 2026-10-24 all four
-  MP maps export (2.1-2.8 MB) and check with no problems; 0 nodes outside an area on Wake Island, 4-10 on the others.
+  up and down, jump), each area's walkable cells and their heights (a height grid of 1 m blocks at 0.2 m pitch, one
+  block per cell at 0.8 m; exporter 1.1, 2026-10-25), a grid to find the areas near a point, the islands, and the
+  build's hash. `--check` reads the file back and compares it with the build. On 2026-10-25 all four MP maps export
+  (2.6-3.6 MB) and check with no problems; 0 nodes outside an area on Wake Island, 4-10 on the others.
 
 **Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
 20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by

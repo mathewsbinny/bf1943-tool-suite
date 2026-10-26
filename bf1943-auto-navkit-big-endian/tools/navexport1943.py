@@ -35,7 +35,9 @@ sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-a
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, navdata, rsnv, terrain, vehicles1943  # noqa: E402
 
-EXPORTER_VERSION = '1.0 (2026-10-24)'
+EXPORTER_VERSION = '1.1 (2026-10-25: height grid of 1 m blocks at 0.2 m pitch, per cell at 0.8 m)'
+HEIGHT_CELLS = {0.2: 5, 0.4: 2, 0.8: 1}   # cells per height-grid block, by pitch
+COARSE_PITCH = 0.8        # m: the bitmap pitch of the build's 0.8 m areas (0.4 was tried 2026-10-25: no better)
 END_MATCH = 1.0           # m: a ladder's / jump link's end and its route node lie at most this far apart
 AREA_GROUND_TOP = 1.52    # m: an area's stored max_y is its highest ground plus this (navbuild.AREA_Y_MAX)
 
@@ -128,7 +130,7 @@ def export(lv, out=None, big_endian=False, log=print):
     # areas: bitmaps at their pitch, height grids
     bmap, hght, area_rows, area_cells = bytearray(), [], [], []
     for k, a in enumerate(nav.areas):
-        pitch = 0.2 if a.pitch < 0.5 else 0.8
+        pitch = 0.2 if a.pitch < 0.5 else COARSE_PITCH
         ii, jj, y = rasterise(a, pitch, yoff, hf)
         if len(ii):
             ci0, cj0 = int(ii.min()), int(jj.min())
@@ -144,19 +146,23 @@ def export(lv, out=None, big_endian=False, log=print):
             bits[jj - cj0, ii - ci0] = 1
         packed = np.packbits(bits.reshape(h_, row, 8)[:, :, ::-1], axis=-1).reshape(-1) if h_ else np.zeros(0, np.uint8)
         x0, z0 = ci0 * pitch, cj0 * pitch
-        hw = max(1, int(math.ceil(max(w_, 1) * pitch / rsnv.BUCKET)))
-        hh = max(1, int(math.ceil(max(h_, 1) * pitch / rsnv.BUCKET)))
+        # height grid: blocks of HEIGHT_CELLS[pitch] x that many cells (1 m at 0.2 m, each cell at 0.8 m), each the
+        # mean of its cells; readers interpolate between block centres (rsnv.World.ground)
+        cpb = HEIGHT_CELLS[pitch]
+        hw = max(1, -(-max(w_, 1) // cpb))
+        hh = max(1, -(-max(h_, 1) // cpb))
         grid = np.full((hh, hw), 0xFFFF, np.int64)
         if len(ii):
-            gi = np.minimum(((ii - ci0) * pitch // rsnv.BUCKET).astype(int), hw - 1)
-            gj = np.minimum(((jj - cj0) * pitch // rsnv.BUCKET).astype(int), hh - 1)
+            gi = (ii - ci0) // cpb
+            gj = (jj - cj0) // cpb
             sums = collections.defaultdict(list)
             for p, q, v in zip(gi, gj, y):
                 sums[(p, q)].append(v)
             for (p, q), v in sums.items():
                 grid[q, p] = min(int(round((np.mean(v) - miny) * 100)), 0xFFFE)
+        pmm = int(round(pitch * 1000))
         area_rows.append([x0, z0, x0 + (w_ - 1) * pitch, z0 + (h_ - 1) * pitch, miny, maxy, len(bmap), w_, h_,
-                          0, 0, sec_index[a.sector], 0, 0, 0, 0, int(round(pitch * 1000)), len(hght), hw, hh, 0])
+                          0, 0, sec_index[a.sector], 0, 0, 0, 0, pmm, len(hght), hw, hh, cpb * pmm])
         bmap += packed.tobytes()
         hght += grid.ravel().tolist()
         area_cells.append((ii, jj, y, pitch))
@@ -172,7 +178,7 @@ def export(lv, out=None, big_endian=False, log=print):
     node_area = np.full(len(gpos), 0xFFFF, np.int64)
     for n, (x, y, z) in enumerate(gpos):
         best = None
-        for pitch in (0.2, 0.8):
+        for pitch in sorted({0.2, COARSE_PITCH}):
             ci, cj = int(round(x / pitch)), int(round(z / pitch))
             for di in (0, 1, -1, 2, -2):
                 for dj in (0, 1, -1, 2, -2):
@@ -264,7 +270,7 @@ def export(lv, out=None, big_endian=False, log=print):
             for sgn in (1, -1):
                 q = m + sgn * 0.6 * nrm
                 hit = None
-                for pitch in (0.2, 0.8):
+                for pitch in sorted({0.2, COARSE_PITCH}):
                     for kk, v in cellkey.get((pitch, int(round(q[0] / pitch)), int(round(q[2] / pitch))), ()):
                         if nav.areas[kk].sector != a.sector and abs(v - (m[1] - yoff)) <= 1.0:
                             hit = kk

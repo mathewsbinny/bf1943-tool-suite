@@ -21,10 +21,12 @@ in place by the stride schema (SCHEMA) and then read native types.
   EDGE 8   u32 target (bits 0-23) | kind (bits 24-31, EDGE_*), u16 cost (1/16 m), u16 flags
   AREA 64  f32 x0, z0 (first bitmap cell centre), x1, z1 (last), minY, maxY; u32 BMAP byte offset; u16 bitmap width,
            height; u32 first PORT, u16 portal count, u16 sector; u16 island, u16 flags; u32 first node (in AREA order,
-           ANOD), u16 node count, u16 pitch in mm; u32 HGHT offset (entries), u16 height grid width, height; u32 0
+           ANOD), u16 node count, u16 pitch in mm; u32 HGHT offset (entries), u16 height grid width, height; u32
+           height grid step in mm (0: 4 m, files before 2026-10-25)
   PORT 24  f32 x0, z0, x1, z1, y, u16 from area, u16 to area (both directions stored)
   BMAP 1   per area, rows of ceil(width / 8) bytes, bit (i & 7) of byte i >> 3; 1 = walkable cell of the area
-  HGHT 2   per area, u16 cm of ground height above the area's minY on a 4 m grid from (x0, z0); 0xFFFF no cell
+  HGHT 2   per area, u16 cm of ground height above the area's minY: the mean of the cells in each block of the
+           height grid (blocks of a whole number of cells from the first cell); 0xFFFF a block with no cell
   GBKT 8   u32 first GLST entry, u32 count
   GLST 2   u16 area ids, each bucket's sorted by minY
   ANOD 4   u32 node ids, grouped by area
@@ -33,8 +35,13 @@ in place by the stride schema (SCHEMA) and then read native types.
   OFFM 32  u8 kind (OFFM_*), u8 team mask, u16 vehicle class, u32 node, f32 x, y, z, yaw, radius, u32 aux
   ISLD 16  u32 nodes, u32 representative node, u16 flags (ISLD_*), u16 transfer count, u32 first transfer
   META 1   UTF-8 JSON: exporter version, sources and their hashes, NavKit settings
+  OBJT 24  destructible objects: u32 key (the level DBX Enumeration), u32 blueprint hash, f32 x, y, z, u32 flags
+  CEDG 16  conditional edges (EDGE flag EDGEF_COND), sorted by edge: u32 edge, u32 first OREF, u32 count, u32 0;
+           open only when every object listed is destroyed
+  OREF 4   u32 OBJT indices
 Deviations from the design's table: AREA is 64 B (its 48 B does not hold the listed fields), GRID is GBKT + GLST,
-ANOD lists nodes by area, LADR carries jump links too (kind), COND / CEDG / OBJT come with destruction (N6).
+ANOD lists nodes by area, LADR carries jump links too (kind), COND is CEDG + OREF. The exporter writes no OBJT /
+CEDG / OREF yet: they need NavKit's blocker attribution (design section 3.1).
 """
 import json
 import math
@@ -50,6 +57,7 @@ HEADER = 64
 EDGE_WALK, EDGE_LADDER_UP, EDGE_LADDER_DOWN, EDGE_DROP, EDGE_JUMP, EDGE_BOARD, EDGE_ALIGHT = range(7)
 EDGE_NAMES = ['walk', 'ladder up', 'ladder down', 'drop', 'jump', 'board', 'alight']
 NAUX_SHALLOW, NAUX_WADE, NAUX_BORDER, NAUX_LADDER_END, NAUX_JUMP_END = 1, 2, 4, 8, 16
+EDGEF_COND = 1
 OFFM_BOARD_VEHICLE, OFFM_MOUNT_STATIC = 1, 5
 ISLD_MAIN, ISLD_CARRIER, ISLD_LADDER_GROUND = 1, 2, 4
 PITCHES = {0: 0.2, 1: 0.8}
@@ -71,10 +79,14 @@ SCHEMA = {
     'LADR': '7f3I',
     'OFFM': 'BBHI5fI',
     'ISLD': 'IIHHI',
+    'OBJT': 'II3fI',
+    'CEDG': 'IIII',
+    'OREF': 'I',
 }
 for _t, _f in SCHEMA.items():
     assert struct.calcsize('<' + _f) == {'SECT': 32, 'NODE': 16, 'NAUX': 8, 'EDGE': 8, 'AREA': 64, 'PORT': 24, 'HGHT': 2,
-                                         'GBKT': 8, 'GLST': 2, 'ANOD': 4, 'LADR': 40, 'OFFM': 32, 'ISLD': 16}[_t], _t
+                                         'GBKT': 8, 'GLST': 2, 'ANOD': 4, 'LADR': 40, 'OFFM': 32, 'ISLD': 16, 'OBJT': 24,
+                                         'CEDG': 16, 'OREF': 4}[_t], _t
 
 
 def fnv1a(text):
@@ -89,7 +101,7 @@ def write(path, sections: Dict[str, object], header: dict, big_endian=False):
     radius, height, step, water_depth, hpd_sha256 (hex)."""
     e = '>' if big_endian else '<'
     order = [t for t in ('SECT', 'NODE', 'NAUX', 'EDGE', 'AREA', 'PORT', 'BMAP', 'HGHT', 'GBKT', 'GLST', 'ANOD', 'LADR',
-                         'OFFM', 'ISLD', 'META') if t in sections]
+                         'OFFM', 'ISLD', 'OBJT', 'CEDG', 'OREF', 'META') if t in sections]
     blobs = []
     for t in order:
         v = sections[t]
@@ -144,6 +156,7 @@ class Area:
     hght: int
     hw: int
     hh: int
+    hstep_mm: int = 0
 
     def cell(self, x, z):
         """(i, j) of the bitmap cell at (x, z), or None outside the bitmap."""
@@ -175,9 +188,42 @@ class World:
         return bool(self.bmap[a.bmap + j * row + (i >> 3)] >> (i & 7) & 1)
 
     def ground(self, a: Area, x, z):
-        """The area's ground height near (x, z) from its 4 m height grid (the nearest filled entry)."""
-        gi = min(max(math.floor((x - a.x0) / BUCKET), 0), a.hw - 1)
-        gj = min(max(math.floor((z - a.z0) / BUCKET), 0), a.hh - 1)
+        """The area's ground height at (x, z) from its height grid: bilinear between the four block centres around
+        the point; up to half a block past the outermost centres the slope continues (linear extrapolation, so an
+        area's edge on a slope is not flattened). Where one of the four has no cells, the others' weights (within
+        the grid) are renormalised; the nearest filled block of the 3 x 3 around it only when none carries weight.
+        rsnav's rsn_area_ground computes the same, in the same order of operations."""
+        if a.hw == 0 or a.hh == 0:
+            return a.min_y
+        pmm = int(round(a.pitch * 1000))
+        hmm = a.hstep_mm or 4000
+        cpb = (hmm + pmm // 2) // pmm                   # cells per block
+        u = (x - a.x0) / a.pitch
+        v = (z - a.z0) / a.pitch
+        gu = min(max((u - (cpb - 1) / 2.0) / cpb, -0.5), a.hw - 0.5)
+        gv = min(max((v - (cpb - 1) / 2.0) / cpb, -0.5), a.hh - 0.5)
+        i0 = min(max(math.floor(gu), 0), max(a.hw - 2, 0))
+        j0 = min(max(math.floor(gv), 0), max(a.hh - 2, 0))
+        i1, j1 = min(i0 + 1, a.hw - 1), min(j0 + 1, a.hh - 1)
+        fu = gu - i0 if i1 > i0 else 0.0
+        fv = gv - j0 if j1 > j0 else 0.0
+        h = [int(self.hght[a.hght + jj * a.hw + ii]) for jj, ii in ((j0, i0), (j0, i1), (j1, i0), (j1, i1))]
+        if 0xFFFF not in h:
+            top = (1.0 - fu) * h[0] + fu * h[1]
+            bottom = (1.0 - fu) * h[2] + fu * h[3]
+            return a.min_y + ((1.0 - fv) * top + fv * bottom) / 100.0
+        fu = min(max(fu, 0.0), 1.0)
+        fv = min(max(fv, 0.0), 1.0)
+        wts = ((1.0 - fu) * (1.0 - fv), fu * (1.0 - fv), (1.0 - fu) * fv, fu * fv)
+        s = ws = 0.0
+        for wt, hv in zip(wts, h):
+            if hv != 0xFFFF:
+                s += wt * hv
+                ws += wt
+        if ws > 1e-6:
+            return a.min_y + (s / ws) / 100.0
+        gi = min(max(math.floor(u / cpb), 0), a.hw - 1)
+        gj = min(max(math.floor(v / cpb), 0), a.hh - 1)
         best = None
         for dj in range(-1, 2):
             for di in range(-1, 2):
@@ -315,7 +361,7 @@ def load(src):
     for k, r in enumerate(_array(raw, e, *sec('AREA')[:2], SCHEMA['AREA'])):
         (x0, z0, x1, z1, mny, mxy, bmap, bw, bh, fp, npo, sector, island, flags, fnode, nnode, pmm, hg, hw, hh, _z) = r
         w.areas.append(Area(k, x0, z0, x1, z1, mny, mxy, bmap, bw, bh, fp, npo, sector, island, flags, fnode, nnode,
-                            pmm / 1000.0, hg, hw, hh))
+                            pmm / 1000.0, hg, hw, hh, _z))
     o, c, _ = sec('BMAP')
     w.bmap = raw[o:o + c]
     o, c, _ = sec('HGHT')
@@ -329,6 +375,13 @@ def load(src):
     w.ladders = _array(raw, e, *sec('LADR')[:2], SCHEMA['LADR']) if 'LADR' in w.sections else []
     w.offmesh = _array(raw, e, *sec('OFFM')[:2], SCHEMA['OFFM']) if 'OFFM' in w.sections else []
     w.islands = _array(raw, e, *sec('ISLD')[:2], SCHEMA['ISLD']) if 'ISLD' in w.sections else []
+    w.objects = _array(raw, e, *sec('OBJT')[:2], SCHEMA['OBJT']) if 'OBJT' in w.sections else []
+    w.cond = {}                                     # edge -> [object indices]
+    if 'CEDG' in w.sections:
+        o, c, _ = sec('OREF')
+        oref = list(np.frombuffer(raw, np.dtype(e + 'u4'), c, o)) if c else []
+        for edge, first, count, _r in _array(raw, e, *sec('CEDG')[:2], SCHEMA['CEDG']):
+            w.cond[int(edge)] = [int(x) for x in oref[first:first + count]]
     if 'META' in w.sections:
         o, c, _ = sec('META')
         w.meta = json.loads(raw[o:o + c].decode('utf-8'))
@@ -338,12 +391,32 @@ def load(src):
 DONE, PARTIAL = 'done', 'partial'
 
 
-def search(w, start, goal, max_expansions=1 << 30, kind_mask=None):
+def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=None, destroyed=None):
+    """The filter's cost of edge k from node n (rsnav's rsn_edge_cost), or None when it is closed: floor(cost x
+    water_scale[class] / 256) + kind_extra[kind] + penalty, class the deeper end's (0 dry, 1 shallow, 2 wading); a
+    conditional edge is closed unless all its objects are in `destroyed`."""
+    if int(w.edge_flags[k]) & EDGEF_COND and not (destroyed is not None and all(o in destroyed for o in w.cond.get(k, [None]))):
+        return None
+
+    def cls(m):
+        f = int(w.node_flags[m])
+        return 2 if f & NAUX_WADE else 1 if f & NAUX_SHALLOW else 0
+    c = int(w.edge_cost[k]) * water_scale[max(cls(n), cls(int(w.edge_target[k])))] >> 8
+    if kind_extra:
+        c += kind_extra[int(w.edge_kind[k])]
+    if penalty:
+        c += penalty.get(k, 0)
+    return c
+
+
+def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(256, 256, 256), kind_extra=None,
+           penalty=None, destroyed=None):
     """The reference search (design sections 2.6 and 6.3), which the C runtime (rsnav) must match exactly: integer
     costs in 1/16 m; heuristic floor(16 x Euclidean x 0.999) in double precision, summed x, y, then z; the open list
     ordered by (f, node); a closed node is never reopened; an equal-cost parent is replaced by a lower-indexed one.
     The goal reached when popped is DONE; otherwise, once max_expansions nodes are expanded or the open list runs out,
     PARTIAL: the path to the expanded node with the least heuristic (then cost, then index), or [start] if none.
+    Edge costs are edge_cost()'s (water_scale, kind_extra, penalty: {edge: extra}, destroyed: object indices).
     Returns (status, cost, [nodes], expansions)."""
     import heapq
     pos = w.node_pos
@@ -386,7 +459,10 @@ def search(w, start, goal, max_expansions=1 << 30, kind_mask=None):
             m = int(tgt[k])
             if m in closed:
                 continue
-            ng = g[n] + int(cost[k])
+            c = edge_cost(w, n, k, water_scale, kind_extra, penalty, destroyed)
+            if c is None:
+                continue
+            ng = g[n] + c
             if m not in g or ng < g[m] or (ng == g[m] and n < parent[m]):
                 if m not in hv:
                     hv[m] = h(m)
