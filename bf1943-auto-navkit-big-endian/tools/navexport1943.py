@@ -1,7 +1,7 @@
 r"""NavKit (big-endian): a BF1943 navigation build exported to RSNV, the navigation runtime's per-level file
 (core/bfbc2core/rsnv.py; operation-rising-sun research/NAVIGATION_RUNTIME_DESIGN.md, sections 1.2-1.4: exporter v1).
 
-  navexport1943.py <level> [--out <file.rsnv>] [--big-endian] [--check]
+  navexport1943.py <level> [--out <file.rsnv>] [--big-endian] [--check] [--compare]
 
 Reads the checked build (<level>.hpd), its jump links (jump_links.json), the level's ladders (ladders.json), sea level
 (navkit.json) and vehicle spawns (the level's own data), and writes work\levels\<level>\navkit\<level>.rsnv
@@ -11,8 +11,10 @@ compares its graph with the build's (navdata).
 What it holds:
   - the route graph: nodes (ground heights), edges with integer costs (1/16 m, as stored) and kinds - walk, ladder
     (up / down: a NavKit ladder link, navdata.ladder_edge) and jump (the edges of jumplinks1943's links);
-  - areas with bitmaps of their walkable cells at their own pitch (0.2 m in detailed sectors, 0.8 m elsewhere),
-    rasterised from their outlines, portals and border portals (even-odd, as navdiff.area_cells, at the area's pitch);
+  - areas with bitmaps of their walkable cells at their own pitch (0.2 m in detailed sectors, 0.8 m elsewhere): the
+    build's own cells and ground heights (navbuild's <level>.cells.npz, exporter 1.3); for a build without that file,
+    rasterised from their outlines, portals and border portals (even-odd, as navdiff.area_cells, at the area's pitch)
+    with heights estimated from the nearest outline point;
     a 4 m height grid per area; per sector, 25 x 25 buckets of 4 m listing the areas over each;
   - portals between areas (both directions; border portals resolved to the neighbour sector's area across them);
   - ladders and jump links (LADR), vehicle entry points (OFFM: board a vehicle, or mount a gun, within EntryRadius of an
@@ -32,10 +34,12 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tools')]
+import navbuild  # noqa: E402
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, navdata, rsnv, terrain, vehicles1943  # noqa: E402
 
-EXPORTER_VERSION = '1.2 (2026-10-25: height grid of 1 m blocks at 0.2 m pitch, per cell at 0.8 m; tight walk edges flagged)'
+EXPORTER_VERSION = ('1.3 (2026-10-26: cells and heights from the cells of the build (<level>.cells.npz) where present; '
+                    'height grid of 1 m blocks at 0.2 m pitch, per cell at 0.8 m; tight walk edges flagged)')
 HEIGHT_CELLS = {0.2: 5, 0.4: 2, 0.8: 1}   # cells per height-grid block, by pitch
 COARSE_PITCH = 0.8        # m: the bitmap pitch of the build's 0.8 m areas (0.4 was tried 2026-10-25: no better)
 END_MATCH = 1.0           # m: a ladder's / jump link's end and its route node lie at most this far apart
@@ -99,7 +103,8 @@ def rasterise(area, pitch, y_offset, heightfield):
     return ii, jj, y
 
 
-def export(lv, out=None, big_endian=False, log=print):
+def export(lv, out=None, big_endian=False, log=print, compare=False):
+    """compare: also rasterise the outlines where the build's cells are read, and report how they differ."""
     W = game1943.level_work(lv)
     hpd = os.path.join(W, 'navkit', f'{lv}.hpd')
     if not os.path.isfile(hpd):
@@ -116,6 +121,16 @@ def export(lv, out=None, big_endian=False, log=print):
     navdata.Y_OFFSET = yoff
     nav = navdata.load(hpd, hf)
     log(f'{lv}: {len(nav.areas)} areas, {len(nav.node_pos)} nodes, {len(nav.edges)} edges')
+    # the build's own cells (navbuild's sidecar): each area's kept surfaces and their heights, exactly. Without it the
+    # cells are rasterised from the outlines and their heights estimated (rasterise)
+    exact = navbuild.read_cells(hpd)
+    if exact is not None and (len(exact) != len(nav.areas) or any(e[0] != a.sector for e, a in zip(exact, nav.areas))):
+        log(f'{lv}: {os.path.basename(navbuild.cells_path(hpd))} does not match the areas of the build: not used')
+        exact = None
+    if exact is None:
+        log(f'{lv}: no cells file for this build: cells rasterised from the outlines, heights estimated (rebuild to '
+            f'get {os.path.basename(navbuild.cells_path(hpd))})')
+    stats = collections.Counter()
 
     # sectors and their areas, in the build's order
     sec_ids = []
@@ -131,7 +146,23 @@ def export(lv, out=None, big_endian=False, log=print):
     bmap, hght, area_rows, area_cells = bytearray(), [], [], []
     for k, a in enumerate(nav.areas):
         pitch = 0.2 if a.pitch < 0.5 else COARSE_PITCH
-        ii, jj, y = rasterise(a, pitch, yoff, hf)
+        if exact is None or compare:
+            ii, jj, y = rasterise(a, pitch, yoff, hf)
+        if exact is not None:
+            ei, ej, ey = (np.asarray(v) for v in exact[k][2:])
+            if abs(exact[k][1] - pitch) > 1e-3:
+                raise ValueError(f'{lv}: area {k}: cells file pitch {exact[k][1]} against {pitch}')
+        if exact is not None and compare:
+            # the outline's cells against the build's (a check: they agree but for bridge corners)
+            have = dict(zip(zip(ii.tolist(), jj.tolist()), y.tolist()))
+            mine = set(zip(ei.tolist(), ej.tolist()))
+            stats['cells'] += len(mine)
+            stats['only in the outline'] += len(set(have) - mine)
+            stats['only in the cells file'] += len(mine - set(have))
+            dy = [abs(have[c] - float(v)) for c, v in zip(zip(ei.tolist(), ej.tolist()), ey.tolist()) if c in have]
+            stats['estimate off by over 0.3 m'] += sum(d > 0.3 for d in dy)
+        if exact is not None:
+            ii, jj, y = ei.astype(np.int64), ej.astype(np.int64), ey.astype(np.float64)
         if len(ii):
             ci0, cj0 = int(ii.min()), int(jj.min())
             w_, h_ = int(ii.max()) - ci0 + 1, int(jj.max()) - cj0 + 1
@@ -166,7 +197,8 @@ def export(lv, out=None, big_endian=False, log=print):
         bmap += packed.tobytes()
         hght += grid.ravel().tolist()
         area_cells.append((ii, jj, y, pitch))
-    log(f'{lv}: bitmaps {len(bmap) / 1e6:.2f} MB, {sum(len(c[0]) for c in area_cells):,} cells')
+    log(f'{lv}: bitmaps {len(bmap) / 1e6:.2f} MB, {sum(len(c[0]) for c in area_cells):,} cells'
+        + (' (those of the build' + (f'; against the outlines: {dict(stats)})' if compare else ')') if exact is not None else ''))
 
     # nodes: ground heights, their areas
     gpos = nav.node_pos.copy()
@@ -314,18 +346,30 @@ def export(lv, out=None, big_endian=False, log=print):
         sect.append((s, 0, pitch_code, sx0, sz0, sx0 + 100.0, sz0 + 100.0, first_bucket, ks[0], len(ks), 0))
 
     # ladders and jump links
-    ladr = []
+    # only records whose two ends are nodes of the build: rsnav's loader refuses a LADR end that is no node, and a
+    # record the build did not link (a ladder with no ground at an end, or a jump_links.json newer than the build: the
+    # Wake Island and Iwo Jima exports of 2026-10-26 01:30, whose builds had run out of memory) is no link at all
+    ladr, unlinked = [], []
     for k, L in enumerate(ladders):
         lo, hi = L['lo'], L['hi']
         foot = [(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2]
         top = [(lo[0] + hi[0]) / 2, hi[1], (lo[2] + hi[2]) / 2]
         fn, _ = nearest_node(foot, 3.0)
         tn, _ = nearest_node(top, 3.0)
-        ladr.append((*foot, *top, 0.0, fn if fn is not None else 0xFFFFFFFF, tn if tn is not None else 0xFFFFFFFF, k))
+        if fn is None or tn is None:
+            unlinked.append(f"ladder {k} ({L.get('bp', '?').rsplit('/', 1)[-1]})")
+            continue
+        ladr.append((*foot, *top, 0.0, fn, tn, k))
     for k, (jl, (na, nb)) in enumerate(zip(jumps, jump_ends)):
+        if na is None or nb is None or (na, nb) not in pairs:
+            unlinked.append(f"jump link {k} ({jl.get('bp', '?')})")
+            continue
         dx, dz = jl['deck'][0] - jl['platform'][0], jl['deck'][2] - jl['platform'][2]
-        ladr.append((*jl['platform'], *jl['deck'], math.atan2(dx, dz), na if na is not None else 0xFFFFFFFF,
-                     nb if nb is not None else 0xFFFFFFFF, (1 << 24) | k))
+        ladr.append((*jl['platform'], *jl['deck'], math.atan2(dx, dz), na, nb, (1 << 24) | k))
+    if unlinked:
+        log(f'{lv}: {len(unlinked)} ladder / jump record(s) with no route node or edge in the build left out of LADR '
+            f'(rebuild if jump_links.json is newer than the build): ' + ', '.join(unlinked[:6])
+            + (' ...' if len(unlinked) > 6 else ''))
 
     # vehicle entry points
     from bfbc2core import level1943
@@ -351,13 +395,16 @@ def export(lv, out=None, big_endian=False, log=print):
     edge_rows = [(int(b_) | (int(kind[k]) << 24), min(int(cost[k]), 0xFFFF), 0) for k, (a_, b_) in enumerate(E)]
     inputs = {'hpd': hpd, 'jump_links.json': jp, 'ladders.json': os.path.join(W, 'objects', 'ladders.json'),
               'navkit.json': os.path.join(W, 'navkit', 'navkit.json')}
-    meta = {'exporter': EXPORTER_VERSION, 'level': lv,
+    if exact is not None:
+        inputs['cells.npz'] = navbuild.cells_path(hpd)
+    meta = {'exporter': EXPORTER_VERSION, 'level': lv, 'cells': 'build' if exact is not None else 'rasterised outlines',
             'sources': {k: {'path': v, 'sha256': sha256(v)} for k, v in inputs.items() if os.path.isfile(v)},
             'game heightfield': {'name': hf_name, 'sha256': hashlib.sha256(g.data(hf_name)).hexdigest()},
             'soldier': {'radius': soldier1943.RADIUS, 'step': soldier1943.STEP, 'height': soldier1943.HEIGHT,
                         'slope_max': soldier1943.SLOPE_MAX, 'water_depth': soldier1943.WATER_DEPTH},
             'counts': {'nodes': len(gpos), 'edges': len(E), 'areas': len(nav.areas), 'portals': len(port),
-                       'ladders': len(ladders), 'jump links': len(jumps), 'vehicle entries': len(offm),
+                       'ladders': len(ladders), 'jump links': len(jumps), 'LADR records': len(ladr),
+                       'ladder and jump records not linked in the build': len(unlinked), 'vehicle entries': len(offm),
                        'islands': len(island_rows)}}
     sections = {'SECT': sect, 'NODE': node_rows, 'NAUX': naux, 'EDGE': edge_rows,
                 'AREA': [tuple(r) for r in area_rows], 'PORT': port, 'BMAP': bytes(bmap), 'HGHT': [(v,) for v in hght],
@@ -419,8 +466,9 @@ def main(argv):
     ap.add_argument('--out')
     ap.add_argument('--big-endian', action='store_true')
     ap.add_argument('--check', action='store_true')
+    ap.add_argument('--compare', action='store_true', help='also compare the cells of the build with the rasterised outlines')
     a = ap.parse_args(argv[1:])
-    path, nav = export(a.level, a.out, a.big_endian)
+    path, nav = export(a.level, a.out, a.big_endian, compare=a.compare)
     if a.check:
         problems, _ = check(path, nav)
         return 1 if problems else 0

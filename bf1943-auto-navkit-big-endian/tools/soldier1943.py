@@ -40,3 +40,6 @@ def configure():
     # a ladder links to each piece of ground beside its ends, not only the nearest surface (Wake's towers: the floor
     # enclosed by the frame is nearer the foot than the ground outside, from which the ladder is climbed)
     navbuild.LADDER_ALL_GROUND = True
+    # shared border nodes also on the seam line itself, for ground that reaches the seam but not the border line one
+    # sample beyond (Coral Sea's three seam breaks, 2026-10-26)
+    navbuild.BORDER_SEAM_LINE = True

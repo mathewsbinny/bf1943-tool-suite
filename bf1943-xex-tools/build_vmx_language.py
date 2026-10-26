@@ -4,6 +4,9 @@ import hashlib,json,shutil
 import sys
 sys.dont_write_bytecode = True
 import xenonrecomp_reference
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xenon_splice
+import xenon_vector_semantics as vsem
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
@@ -29,6 +32,8 @@ text=altivec.read_text()
 marker='#################\n# 2.07 additions\n'
 assert text.count(marker)==1
 text=text[:text.index(marker)]
+# Our own p-code for the original AltiVec set (xenon_vector_semantics.py); decoding headers are kept.
+text,altivec_modelled=xenon_splice.rewrite_altivec(text)
 altivec.write_text(text)
 # Stock non-ISA PowerPC names the XO=21 load (ldx) "ldarx" and has no XO=84 ldarx, so real ldarx words fail to
 # decode (12 in BF1943). Rename and add ldarx, leaving the reservation unmodeled as the stock lwarx does.
@@ -37,6 +42,9 @@ text=instructions.read_text()
 wrong=':ldarx D,RA_OR_ZERO,B\tis OP=31 & D & RA_OR_ZERO & B & XOP_1_10=21 & BIT_0=0\n{\n\tea:$(REGISTER_SIZE) = RA_OR_ZERO+B;\n\tD = *:8(ea);\n}\n'
 assert text.count(wrong)==1
 text=text.replace(wrong,wrong.replace(':ldarx',':ldx',1)+':ldarx D,RA_OR_ZERO,B\tis OP=31 & D & RA_OR_ZERO & B & XOP_1_10=84 & BIT_0=0\n{\n\tea:$(REGISTER_SIZE) = RA_OR_ZERO+B;\n\t#RESERVE = 1;\n\t#RESERVE_ADDRSS:$(REGISTER_SIZE) = ea;\n\tD = *:8(ea);\n}\n')
+# fctiw/fctiwz/fctid/fctidz: rounding and saturation (xenon_splice.py).
+text,fp_overrides=xenon_splice.rewrite_scalar_fp(text)
+assert sorted(fp_overrides)==sorted(xenon_splice.FP_CONVERT),fp_overrides
 instructions.write_text(text)
 (dest/'xenon.ldefs').write_text('''<?xml version="1.0" encoding="UTF-8"?>
 <language_definitions><language processor="PowerPC" endian="big" size="32" variant="XenonVMX128" version="1.0" slafile="xenon.sla" processorspec="ppc_64.pspec" id="PowerPC:BE:64:XenonVMX128">
@@ -100,7 +108,11 @@ immediates={'A_BITS','A_BITSS','xmshb','xm3d0','xm3d1','xm3d2'}
 # vpkd3d128 writes only part of VD in both references, so its old value is an input.
 merges={'vpkd3d128'}
 validated={'lvx128','stvx128','vand128','vandc128','vor128','vxor128','vpermwi128'}
-opaque=[];pcodeops=[]
+opaque=[];pcodeops=[];modelled=[]
+# Roles for the generated VMX128 bodies: VS128 is the VD field (stores; the VD-as-operand forms).
+def ops128(operands):
+    imm=next((display[o] for o in operands if o in ('UIMM','SIMM','SHB')),None)
+    return dict(D='XV',A='XA',B='XB',C='XC',IMM=imm,RA='RA_OR_ZERO',RB='B')
 # Unaligned left/right loads and stores: byte shifts within the aligned block containing EA, per
 # XenonRecomp recompiler.cpp 1148-1163/1610-1631 and Xenia ppc_emit_altivec.cc 205-335 (see VMX128_UNALIGNED_SEMANTICS.md).
 # lvrx/stvrx touch no memory when EA is 16-byte aligned; stores are modeled as read-modify-write of the block.
@@ -155,7 +167,13 @@ for name,form,op,value,operands in table:
         # Neither reference interprets UIMM bit 4; such words decode but stay opaque.
         generated+=opaque_constructor(name,form,op,value,operands,' & xm20=1',pcodeop='VMX128_unresolved_vrlimi128_imm4')
         continue
-    generated+=opaque_constructor(name,form,op,value,operands)
+    lines=vsem.body(name,ops128(operands))
+    if lines is None:
+        generated+=opaque_constructor(name,form,op,value,operands)
+        continue
+    fields=[display[o] for o in operands];shown=list(dict.fromkeys(fields))
+    generated+=f':{name} {",".join(shown)} is {pattern(op,form,value)} & {" & ".join(dict.fromkeys(fields))} {{\n    '+'\n    '.join(lines)+'\n}\n'
+    modelled.append(name)
 # Xenon's VR0-31 unaligned loads/stores are X-form opcode 31 (reference dialect CELL|PPCVEC128), absent from AltiVec.
 xform=[]
 for line in reference.decode().splitlines():
@@ -172,12 +190,15 @@ spec+=''.join(f'define pcodeop {p};\n' for p in dict.fromkeys(pcodeops))+generat
 with (ROOT/'work/vmx128/vx128-table.tsv').open('w') as out:
     out.write('mnemonic\tform\tmask\tvalue\tsemantics\n')
     for name,form,op,value,operands in table:
-        semantics='validated' if name in validated or unaligned(name) else 'vrlimi128_imm4_clear_validated' if name=='vrlimi128' else 'opaque'
+        semantics='validated' if name in validated or unaligned(name) else 'vrlimi128_imm4_clear_validated' if name=='vrlimi128' else 'modelled' if name in modelled else 'opaque'
         out.write(f'{name}\t{form}\t{0xfc000000|masks[form]:08x}\t{(op<<26)|value:08x}\t{semantics}\n')
     for name,xop in xform:out.write(f'{name}\tX\tfc0007ff\t{(31<<26)|(xop<<1):08x}\tvalidated\n')
 (ROOT/'research/evidence/vmx128-language-inputs.json').write_text(json.dumps(dict(base_sources=hashes,spec_sha256=hashlib.sha256(spec.encode()).hexdigest(),
     reference_archive_sha256=xenonrecomp_reference.ARCHIVE_SHA256,reference_source=xenonrecomp_reference.source(),reference_member=member,reference_member_sha256=hashlib.sha256(reference).hexdigest(),
     table_entries=len(table),xform_entries=[n for n,_ in xform],validated=sorted(validated|{'vrlimi128'}|{n for n,*_ in table if unaligned(n)}|{n for n,_ in xform}),opaque=opaque,
+    modelled_vmx128=modelled,modelled_altivec=altivec_modelled,scalar_fp_overrides=fp_overrides,semantics_version=vsem.SEMANTICS_VERSION,
+    semantics_sources={f:hashlib.sha256((Path(__file__).resolve().parent/f).read_bytes()).hexdigest() for f in ('xenon_vector_semantics.py','xenon_splice.py')},
+    still_opaque_reasons=vsem.OPAQUE,
     removed_inherited=['altivec.sinc ISA 2.07 and 3.0 sections (everything from the "2.07 additions" marker)','PowerPC 4xx integer multiply-accumulate family via NoLegacyIntegerMultiplyAccumulate'],
     unaligned_semantics=['lvlx/lvrx/stvlx/stvrx (+l, +128): byte shifts within the aligned 16-byte block at ea&~15 (XenonRecomp recompiler.cpp 1148-1163, 1610-1631; Xenia ppc_emit_altivec.cc 205-335)',
         'lvrx/stvrx access no memory when ea&15==0; stores are modeled as read-modify-write of the block'],

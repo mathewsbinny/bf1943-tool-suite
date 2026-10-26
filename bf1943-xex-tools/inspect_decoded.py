@@ -41,7 +41,8 @@ def main():
         compressed_block_sha1_verified=80, pe_machine=hex(machine), sections=sections,
         base='0x82000000', entry='0x827d78b0', ascii_leads=leads,
         limitations=['Block integrity is not signature authentication.',
-          'XEX section digest semantics unresolved: naive 64 KiB decoded-page SHA-1 comparison matched 0/219.',
+          'XEX page digests: all 219 pages verified by verify_xex_image.py (each digest covers the next page and its descriptor; research/evidence/xex-image-integrity.json). The earlier naive same-page comparison matched 0/219.',
+          '.reloc: within_image is false because the XEX image ends at the page after .XBLD; the 65,024 mapped .reloc bytes are zero (verify_xex_image.py).',
           'Raw memory image import does not yet model PE section permissions, imports, relocations or VMX128.',
           'ASCII hits are leads, not implemented-feature evidence.'])
     output = ROOT / 'research/evidence/decoded-xex-pilot.json'

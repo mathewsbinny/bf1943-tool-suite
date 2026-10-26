@@ -68,6 +68,10 @@ LOS_DY = 0.6
 LOS_COARSE_DY = LOS_STEP + 0.8
 COARSE_GAP = 1.0
 LOS_GRACE = 0.25
+LOS_GRAZE = 0.25        # of a cell (2026-10-26): a sample this close to a cell's side leans on that side. In a 0.2 m
+                        # area a sample on a blocked cell passes when it is within this of a walkable neighbour's square
+                        # (the build's own lines step diagonally between cells: navbuild.line_walkable); in a 0.8 m
+                        # area a sample needs the neighbour only on the sides it leans to
 COARSE_MM = 400
 BUCKET = 4.0
 BUCKETS = 25
@@ -303,9 +307,26 @@ class World:
         i, j = math.floor((x - a.x0) / a.pitch + 0.5), math.floor((z - a.z0) / a.pitch + 0.5)
         return i, j, 0 <= i < a.width and 0 <= j < a.height
 
+    @staticmethod
+    def _lean(f):
+        """-1, 0 or 1: the side a sample at fraction f (-0.5 .. 0.5) from its cell's centre leans to (LOS_GRAZE)."""
+        return 0 if abs(f) < 0.5 - LOS_GRAZE else (1 if f > 0 else -1)
+
+    def on_cell(self, a, x, z):
+        """Whether (x, z) lies on area a's walkable ground: its nearest cell is walkable or, in a fine (0.2 m) area,
+        it lies within LOS_GRAZE of the square of a walkable cell beside it (rsnav's raw_ok)."""
+        u, v = (x - a.x0) / a.pitch, (z - a.z0) / a.pitch
+        i, j = math.floor(u + 0.5), math.floor(v + 0.5)
+        if self.walkable(a, i, j):
+            return True
+        if a.pitch_mm_ >= COARSE_MM:
+            return False
+        si, sj = self._lean(u - i), self._lean(v - j)
+        return bool((si and self.walkable(a, i + si, j)) or (sj and self.walkable(a, i, j + sj))
+                    or (si and sj and self.walkable(a, i + si, j + sj)))
+
     def _raw_ok(self, a, x, z):
-        i, j, inside = self._cell_of(a, x, z)
-        return inside and self.walkable(a, i, j)
+        return self.on_cell(a, x, z)
 
     def _allowed(self, k1, k2):
         return LOS_COARSE_DY if self.areas[k1].pitch_mm_ >= COARSE_MM or self.areas[k2].pitch_mm_ >= COARSE_MM \
@@ -322,13 +343,17 @@ class World:
 
     def _cell_ok(self, k, x, z):
         a = self.areas[k]
-        i, j, inside = self._cell_of(a, x, z)
-        if not inside or not self.walkable(a, i, j):
-            return False
         if a.pitch_mm_ < COARSE_MM:
-            return True
+            return self.on_cell(a, x, z)
+        u, v = (x - a.x0) / a.pitch, (z - a.z0) / a.pitch
+        i, j = math.floor(u + 0.5), math.floor(v + 0.5)
+        if not self.walkable(a, i, j):
+            return False
         y = self.ground(a, x, z)
-        for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        si, sj = self._lean(u - i), self._lean(v - j)
+        for di, dj in ((si, 0), (0, sj)):
+            if not (di or dj):
+                continue
             ii, jj = i + di, j + dj
             if ii < 0 or jj < 0 or ii >= a.width or jj >= a.height or self.walkable(a, ii, jj):
                 continue
@@ -352,10 +377,11 @@ class World:
 
     def los(self, a, b):
         """Whether a soldier walks straight from a to b (x, y, z; pass float32 values for parity with rsnav): every
-        sample, a quarter of the finest pitch apart, on a walkable cell; between areas through portals or the
-        buckets, to ground within LOS_DY (LOS_COARSE_DY where either area is coarse); the ground changing by at most
-        that between samples; coarse cells needing their four neighbours; gaps up to COARSE_GAP crossed in coarse
-        zones; the first LOS_GRACE not tested. See rsnav's rsnav_los.c for the reasons."""
+        sample, a quarter of the finest pitch apart, on a walkable cell (on_cell: in fine areas within LOS_GRAZE of
+        one); between areas through portals or the buckets, to ground within LOS_DY (LOS_COARSE_DY where either area
+        is coarse); the ground changing by at most that between samples; coarse cells needing their neighbours on the
+        sides a sample leans to (LOS_GRAZE); gaps up to COARSE_GAP crossed in coarse zones; the first LOS_GRACE not
+        tested. See rsnav's rsnav_los.c for the reasons."""
         loc = self.locate(a[0], a[1], a[2], max_dist=1.0)
         if loc is None:
             return False
@@ -427,6 +453,16 @@ class World:
                 out.append(f'AREA {a.index}: nodes past ANOD')
         if len(self.glst) and int(self.glst.max()) >= len(self.areas):
             out.append('GLST area id out of range')
+        # node indices of the other sections, as rsnav's loader checks them (rsn_load refuses the file otherwise)
+        bad = sum(1 for L in self.ladders if L[7] >= n or L[8] >= n)
+        if bad:
+            out.append(f'LADR node out of range ({bad})')
+        bad = sum(1 for o in self.offmesh if o[3] != 0xFFFFFFFF and o[3] >= n)
+        if bad:
+            out.append(f'OFFM node out of range ({bad})')
+        bad = sum(1 for i in self.islands if i[1] >= n)
+        if bad:
+            out.append(f'ISLD representative out of range ({bad})')
         for t, f in ((self.node_area, 'NAUX area'),):
             bad = (t != 0xFFFF) & (t >= len(self.areas))
             if bad.any():

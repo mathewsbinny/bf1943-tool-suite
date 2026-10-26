@@ -54,7 +54,60 @@ def side(pitch=0.2, n=50):
     return navsample.Samples(pitch, 0.0, 0.0, n, n, 12.0, -22.0, 0.35, 0.37, 1.8, 0.0, start, y, normal, f, None)
 
 
+def ship(pitch=0.2, n=60):
+    """A made-up carrier (ship_ledge_links): along x, the deck at 10.0 (x < 6), a band its edge blocks (6.0-6.4), a
+    gallery 0.58 m under it (6.4-8.0, z < 6); beside it (z >= 6) a gallery behind a wall 1.2 m above the deck; a
+    superstructure floor 4 m up (x 0-2, z 0-2) and a lower gallery 3.5 m down (x 8.4-10, z < 4)."""
+    cols = []
+    for j in range(n):
+        for i in range(n):
+            x, z = i * pitch, j * pitch
+            s = []
+            if x < 2.0 and z < 2.0:
+                s += [(10.0, 1), (14.0, 0)]                 # the deck under the superstructure blocked, its floor 4 m up
+            elif x < 6.0:
+                s.append((10.0, 0))
+            elif x < 6.4:
+                s += [(9.42, 1), (11.2 if z >= 6.0 else 10.0, 0)]   # the deck edge (a wall where z >= 6)
+            elif x < 8.0:
+                s.append((9.42, 0))
+            elif 8.4 <= x < 10.0 and z < 4.0:
+                s.append((6.5, 0))
+            s.append((-20.0, 0))
+            cols.append(sorted(s, reverse=True))           # a column's surfaces from the top down
+    start = np.zeros(n * n + 1, np.int64)
+    np.cumsum([len(c) for c in cols], out=start[1:])
+    y = np.array([v for c in cols for v, _ in c], np.float32)
+    f = np.array([fl for c in cols for _, fl in c], np.uint8)
+    normal = np.tile(np.array([0, 1, 0], np.float32), (len(y), 1))
+    return navsample.Samples(pitch, 0.0, 0.0, n, n, 16.0, -22.0, 0.35, 0.37, 1.8, 0.0, start, y, normal, f, None)
+
+
+def ship_checks():
+    s = ship()
+    box = {'bp': 'objects/x/ship', 'min': [0.0, -20.0, 0.0], 'max': [11.8, 15.0, 11.8]}
+    bed = lambda x, z: -20.0
+    check(J.ship_boxes([box], bed, 0.0) == [] and J.ship_boxes([dict(box, max=[80.0, 15.0, 80.0])], bed, 0.0) != [],
+          'a ship: a box of SHIP_MIN_FOOTPRINT or more over deep water')
+    check(J.ship_boxes([dict(box, max=[80.0, 15.0, 80.0])], lambda x, z: -1.0, 0.0) == [],
+          'no ship over water shallower than WATER_DEPTH')
+    links, rep = J.ship_ledge_links(s, [box], bed, log=lambda *a: None)
+    check(len(links) >= 1 and all(abs(L['rise'] - 0.58) < 1e-3 for L in links), f'the gallery 0.58 m down is linked '
+          f'({len(links)} link(s), rises {sorted({L["rise"] for L in links})})')
+    check(all(L['platform'][2] < 6.0 for L in links), 'no link through the wall (z >= 6)')
+    check(all(L['kind'] == 'jump' and L['rule'] == 'ship ledge' for L in links), "records of kind 'jump', rule 'ship ledge'")
+    ys = sorted(r['y'] for r in rep[0]['not linked']) if rep else []
+    check(any(abs(v - 14.0) < 1e-3 for v in ys) and any(abs(v - 6.5) < 1e-3 for v in ys),
+          f'the superstructure floor (4 m up) and the lower gallery (3.5 m down) are not linked ({ys})')
+    taken = [tuple(links[0]['platform'])] if links else []
+    again, _ = J.ship_ledge_links(s, [box], bed, taken=taken, log=lambda *a: None)
+    check(again == [], 'a piece already linked (a gun platform) gets no ledge link')
+    none, _ = J.ship_ledge_links(s, [box], bed, usable=lambda x, z: False, log=lambda *a: None)
+    check(none == [], 'no link where the grid does not build (usable)')
+
+
 if __name__ == '__main__':
+    ship_checks()
     s = side()
     sea = lambda c: 0.0                     # water at 0, the sea bed at -20: deep
     bed = lambda x, z: -20.0

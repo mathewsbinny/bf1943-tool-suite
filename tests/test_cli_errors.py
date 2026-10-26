@@ -39,6 +39,7 @@ def main(argv):
         ('detailed sectors, a level folder without objects', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'detailed1943.py'), tmp, missing, '0', '0'], 'detailed1943', 'missing'),
         ('navigation audit, a level not built', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navaudit1943.py'), 'audit', 'no_such_level'], 'navaudit1943', 'missing'),
         ('jump links, a level not prepared', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'jumplinks1943.py'), 'no_such_level'], 'jumplinks1943', 'missing'),
+        ('vehicle navigation, a level without a soldier world', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport_vehicles1943.py'), 'no_such_level'], 'navexport_vehicles1943', 'missing'),
         ('navigation export, a level not built', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport1943.py'), 'no_such_level'], 'navexport1943', 'missing'),
         ('enclosure probe, a level not sampled',[PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'enclosure_probe1943.py'), 'no_such_level', '0', '0', '0'], 'enclosure_probe1943', 'missing'),
         ('test runner, an unknown test name', [PY, os.path.join(SUITE, 'run_tests.py'), 'quick', '--only'], 'run-tests', 'what to do'),

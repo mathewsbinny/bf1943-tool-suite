@@ -38,8 +38,8 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.
-- **Wake Island, today's build (2026-10-24):** 12,652 nodes, 44,980 edges, 69 islands; the main network has 11,371
-  nodes; 16 of 16 ladders linked from the main network, and the 4 carrier AA guns by jump links; all 10 flag pairs
+- **Wake Island, today's build (2026-10-26):** 12,713 nodes, 45,070 edges, 65 islands; the main network has 11,374
+  nodes; 16 of 16 ladders linked from the main network, the 4 carrier AA guns and 21 carrier ledges by jump links; all 10 flag pairs
   routed; `hpdcheck` passes.
 - **The audit** (`tools\navaudit1943.py`, new 2026-10-24; operation-rising-sun `research/NAVMESH_AUDIT.md`):
   `navaudit1943.py masks <level>` recomputes the build's walkable surfaces exactly as the build does (and once per
@@ -56,8 +56,62 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   up and down, jump), each area's walkable cells and their heights (a height grid of 1 m blocks at 0.2 m pitch, one
   block per cell at 0.8 m; exporter 1.1, 2026-10-25), a grid to find the areas near a point, the islands, and the
   build's hash. Exporter 1.2 flags tight walk edges, those with no line of sight either way over the cells
-  (`rsnv.World.los`, the runtime's rule): 1.6-4 % of the walk edges per map. `--check` reads the file back and compares it with the build. On 2026-10-25 all four MP maps export
-  (2.6-3.6 MB) and check with no problems; 0 nodes outside an area on Wake Island, 4-10 on the others.
+  (`rsnv.World.los`, the runtime's rule). `--check` reads the file back and compares it with the build.
+  **Exporter 1.3 (2026-10-26)** takes each area's cells and ground heights from the build itself: `navbuild` writes
+  `<level>.cells.npz` beside `<level>.hpd` (every area's cells and heights, and the build's SHA-256). Before, heights
+  were estimated from the nearest outline point, 0.3 m or more off on 11 % of Coral Sea's 0.8 m cells (`--compare`
+  reports the old rasterisation's differences). With it, and the runtime's quarter-cell line-of-sight rule, tight edges
+  fell from 1.6-4 % to 0.16-0.33 % of the walk edges and pockets from 5.5-36.5 % to 0.4-1.0 % of each main network;
+  0 nodes outside an area on all four maps. LADR holds only ladder and jump records the build linked (a
+  `jump_links.json` newer than the build gave records with no node, which rsnav refuses). Details: operation-rising-sun
+  `research/NAVMESH_AUDIT.md`, update 2026-10-26.
+- **2026-10-26 build rules:** ships' ledges (`jumplinks1943.SHIP_LEDGES`: jump links between a carrier's floors a
+  ledge apart, its deck-edge galleries 0.58 m and gun tubs 0.84 m under the deck; Wake 21, Iwo Jima 21, Coral Sea 41
+  links) and border nodes on the seam line (`navbuild.BORDER_SEAM_LINE`, set by `soldier1943.configure`: ground that
+  reaches a sector seam but not the border line one sample beyond gets a shared node; two of Coral Sea's three seam
+  breaks closed).
+
+**Vehicle navigation (new 2026-10-26).** One RSNV world per vehicle class beside the soldier's, read by rsnav like
+any other world: `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `.lcvp.rsnv`, `.plane.rsnv`, plus
+`<level>.transfers.json` (every transfer, resolved against the current soldier world) and `<level>.vehicles.json` (the
+checks). `tools\navexport_vehicles1943.py <level> [--sample] [--classes ...] [--check-only]` builds and checks them
+all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] hypothesis, [U] unknown.
+
+- **Classes** (`tools\vehicleclasses1943.py`, which reads and prints the blueprints and collision): sizes [O] from each
+  vehicle's `*_havok.res` box; slope from `WheelConfigData SlopeGripMaxAngle` (jeeps 25 deg [O]; tanks 25..52 [O],
+  40 used [E]); top gear speed [O] (unit km/h [H]); entry radius and exit points [O]. Jeep: radius 1.5 m (half-width
+  1.06 [O] + 0.45 [E]), height 2.0, step 0.3 [E], ford 0.8 [E]. Tank: radius 1.8, height 2.9, step 0.6 [E], ford 1.2
+  [E]. LCVP: radius 2.5, draft 0.9 [E], bow ramp 5.5 m ahead [O]. Plane: clearance 25 m, cruise 60 m above the floor
+  [E]. Not in the data: steering angle, step height, the entries' AIData (dangling references) [U].
+- **Ground** (`tools\groundnav1943.py sample|build <level> <class>`): the collision without ExcludeFromPathfinding
+  objects and dynamic props (fences, palms, wire, sandbags, crates - pushed through [H]), sampled by
+  `navsample1943.py` with the class's disc, step and height on the soldier's 0.8 m grid (about 11-13 min per class
+  and map); drivable = not blocked, slope, ford depth, not on ForbidPathfinding objects, continuous ground under the
+  disc; links by the step rule; components touching a ground-vehicle spawn kept; nodes every 6.4 m at the cell
+  farthest from the undrivable, edges by a straight grid line, graph pieces joined along the grid's shortest path.
+  NavKit's `.hpd` builder is not used: its rules are fitted to the soldier and DICE's BFBC2 data.
+- **Landing craft** (`tools\seanav1943.py <level>`): 2 m sea grid, depth = sea level - terrain [O], blocked by collision
+  crossing the waterline band; nodes every 10 m; deck lanes from each carrier craft along its own heading to the
+  deck's end (the craft face the sterns [O]; leaving that way [H]) and a one-way DROP edge to the water; landing zones
+  every 25 m of beach whose bow point unloads onto the soldier main island, nearest of any island and with no
+  ForbidPathfinding collision between (Iwo Jima's no-go strip is never used; checked).
+- **Planes** (`tools\airnav1943.py <level>`, a first version): 16 m altitude-floor grid (terrain and every object's top,
+  grown by 25 m), a cruise surface 60 m above it that climbs at most 7 deg, nodes every 64 m; take-off lanes along the
+  spawn headings (decks, airfields) with a JUMP edge (climb-out) and a DROP edge (landing approach); parachute DROP
+  transfers over every base, flag and non-carrier soldier island (Coral Sea's islets).
+- **Transfers** (OFFM): board (1: entry point, EntryRadius, aux = soldier node), alight (2) and drop (4: the soldier
+  node), launch (3: the deck end). `core\bfbc2core\rsnvtrip.py` resolves them again against the soldier world in use
+  and plans walk -> ride -> walk (rsnav's `rsn_trip_plan` gives the same answer).
+- **Writer:** `tools\rsnvgrid1943.py` (areas per 100 m sector by flood fill, one cell per column; bitmaps, per-cell
+  heights, buckets, portals, islands, tight edges by `rsnv.World.los`).
+- **Tests:** `tests\test_vehicles_nav1943.py` (quick tier, made-up data); rsnav's `tests\test_vehicles.py` on the real
+  worlds.
+- **Built (2026-10-26) [M]:** jeep 3,263 / 4,178 / 3,012 nodes (Wake / Guadalcanal / Iwo Jima; 0.08-0.11 km2
+  drivable, 1.0-1.5 MB); tank 5,252 / 5,697 / 4,191 (0.12-0.17 km2, 1.4-1.9 MB); LCVP 24,870 nodes, 104 landing zones,
+  8 deck lanes on Wake, 15,093 / 63 / 8 on Iwo Jima (Guadalcanal and Coral Sea have no craft); plane about 1,000 nodes
+  per map, 5-8 take-off lanes, 10-71 drops. Every check of `navexport_vehicles1943.py` passes on all four maps; every
+  carrier deck reaches every flag by the craft (Wake 10/10, Iwo Jima 20/20 trips). The soldier export changes under
+  these files without harm: transfers carry positions and are resolved again.
 
 **Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
 20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by
@@ -76,7 +130,8 @@ are not checked on BF1943.
 **Tools in this variant:** `detailed.py`, `detailed1943.py`, `havok461.py`, `hkpack.py`, `hpdcheck.py`,
 `hpdtool.py`, `hpdview.py`, `kymesh.py`, `levelobjects.py`, `levelobjects1943.py`, `navbuild.py`, `navedits.py`,
 `navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `jumplinks1943.py`,
-`navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `enclosure_probe1943.py`
+`navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `enclosure_probe1943.py`, `vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`, `airnav1943.py`,
+`rsnvgrid1943.py`, `navexport_vehicles1943.py`
 (`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a spot is cut off from the network). Removed from this variant:
 `graphstats`, `sample_all`, `navwater`, `navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navdiff`,
 `navparity`, `navregress`, `ordercheck` and `ladders.py`. They remain in `bf1943-auto-navkit-little-endian`, which

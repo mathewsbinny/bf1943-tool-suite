@@ -616,9 +616,11 @@ namespace Bfbc2Dbx.Gui
                 slotsFrom = PickFile("Level whose cull trees this file uses", out slotsPath);
                 if (slotsFrom == null) return;
             }
-            var results = LevelCheck.Run(doc, slotsFrom, new string[0]);
+            string rules = LevelCheck.Detect(doc);
+            var results = LevelCheck.Run(doc, slotsFrom, new string[0], rules);
             Log("");
-            Log("=== check " + Path.GetFileName(path) + (slotsPath != null ? " (cull slots against " + Path.GetFileName(slotsPath) + ")" : ""));
+            Log("=== check " + Path.GetFileName(path) + " (" + (rules == LevelCheck.Bfbc2 ? "BFBC2" : "BF1943") + " rules)"
+                + (slotsPath != null ? " (cull slots against " + Path.GetFileName(slotsPath) + ")" : ""));
             foreach (var x in results.OrderBy(x => x.Error ? 0 : 1)) Log(x.ToString());
             int errors = results.Count(x => x.Error);
             Log(errors + " error(s), " + (results.Count - errors) + " warning(s)" + (results.Count > 0 ? " - double-click a line to go to its instance" : ""));

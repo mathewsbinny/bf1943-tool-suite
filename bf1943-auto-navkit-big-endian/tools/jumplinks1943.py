@@ -45,6 +45,14 @@ FLOOR_MAX = 60000         # surfaces: a floor larger than this is a deck reached
 LINK_REACH = 0.6          # m: a raised floor's edge and the ground below it lie at most this far apart horizontally
 LINK_SPACING = 5.0        # m: links along one floor's edge at least this far apart
 LINK_MAX = 16             # links per floor
+# ships' ledges (2026-10-26, ship_ledge_links): jump links between a ship's floors a ledge apart
+SHIP_LEDGES = True
+SHIP_MIN_FOOTPRINT = 5000.0  # m2: an object box this large over deep water is a ship (the carriers: 11,500-30,100 m2)
+SHIP_MIN_FREEBOARD = 2.0  # m: ... reaching this far above the sea
+SHIP_MIN_AREA = 2.0       # m2: a floor piece this large or larger gets links (not a rail top or a bollard)
+SHIP_REACH = 1.0          # m: the two ends of a ledge link lie at most this far apart horizontally (measured 0.4-0.6 m)
+SHIP_CLEAR = 0.3          # m: nothing between the two ends higher than the upper floor plus this (a rail, a wall)
+SHIP_LINKS = 4            # links per piece
 
 
 def _clear(s, k, idx_pos, idx):
@@ -261,6 +269,163 @@ def raised_floor_links(s, terrain, boxes, log=print):
     return out
 
 
+SHIP_REPORT = {}          # the last level_links run's ship report per grid ('detailed', 'normal'): ship_ledge_links
+
+
+def ship_boxes(boxes, terrain, sea):
+    """The ships among the object boxes, from the level's data alone: a box of SHIP_MIN_FOOTPRINT or more over water
+    deeper than the soldier's WATER_DEPTH at its centre, reaching SHIP_MIN_FREEBOARD above the sea (the carriers of
+    Wake Island, Iwo Jima and Coral Sea; not Guadalcanal's wrecks, 888-1,827 m2, nor the bridges)."""
+    out = []
+    for b in boxes:
+        lo, hi = b['min'], b['max']
+        if (hi[0] - lo[0]) * (hi[2] - lo[2]) < SHIP_MIN_FOOTPRINT or hi[1] < sea + SHIP_MIN_FREEBOARD:
+            continue
+        if float(terrain((lo[0] + hi[0]) / 2, (lo[2] + hi[2]) / 2)) < sea - soldier1943.WATER_DEPTH:
+            out.append(b)
+    return out
+
+
+def ship_ledge_links(s, ships, terrain, usable=lambda x, z: True, taken=(), log=print):
+    """SHIP_LEDGES: jump links between a ship's floors (2026-10-26). On a carrier the step rule leaves out the floors a
+    ledge apart: the galleries along the flight deck's edges 0.4-0.6 m under it, and floor pieces of the island
+    superstructure. A soldier drops off such a ledge and jumps back up (JUMP_HEIGHT), as from the AA gun platforms
+    (platform_links). Per ship: its clear, flat floors on collision (not terrain) inside its box are pieces joined by
+    the step rule; the largest is the deck. From the deck outward, a piece of SHIP_MIN_AREA or more whose edge lies
+    within SHIP_REACH horizontally of a reached piece, more than STEP and at most JUMP_HEIGHT above or below it, wide
+    floor at both ends (_wide), with nothing between the two ends higher than the upper floor plus SHIP_CLEAR (a rail,
+    a wall), is reached and linked, at most SHIP_LINKS links per piece, LINK_SPACING apart. Pieces only a longer drop
+    reaches (lower galleries 3-6 m under the deck) and pieces no jump reaches get none. usable(x, z): whether a link
+    end may lie there (the sampled grid's own sectors); taken: link ends already made (the AA platforms), whose pieces
+    are left out. Returns (records, report per ship)."""
+    STEP = soldier1943.STEP
+    nx, nz, p = s.nx, s.nz, s.pitch
+    out, report = [], []
+    for b in ships:
+        lo, hi = b['min'], b['max']
+        i0, i1 = max(int((lo[0] - s.min_x) / p), 0), min(int((hi[0] - s.min_x) / p) + 1, nx - 1)
+        j0, j1 = max(int((lo[2] - s.min_z) / p), 0), min(int((hi[2] - s.min_z) / p) + 1, nz - 1)
+        floor = {}                                  # surface -> (i, j): the clear, flat floor on the ship
+        for j in range(j0, j1 + 1):
+            for i in range(i0, i1 + 1):
+                c = j * nx + i
+                ix = list(range(s.start[c], s.start[c + 1]))
+                if not ix:
+                    continue
+                t = float(terrain(s.min_x + i * p, s.min_z + j * p))
+                for q, k in enumerate(ix):
+                    if lo[1] - 0.5 <= s.y[k] <= hi[1] + 0.5 and abs(s.y[k] - t) >= 0.06 and _clear(s, k, q, ix):
+                        floor[k] = (i, j)
+        if not floor:
+            continue
+        at = {}
+        for k, ij in floor.items():
+            at.setdefault(ij, []).append(k)
+        piece_of, pieces = {}, []
+        for k0 in floor:
+            if k0 in piece_of:
+                continue
+            n_ = len(pieces)
+            piece_of[k0] = n_
+            members, q = [k0], deque([k0])
+            while q:
+                k = q.popleft()
+                i, j = floor[k]
+                for dj in (-1, 0, 1):
+                    for di in (-1, 0, 1):
+                        for m in at.get((i + di, j + dj), ()):
+                            if m not in piece_of and abs(s.y[m] - s.y[k]) <= STEP:
+                                piece_of[m] = n_
+                                members.append(m)
+                                q.append(m)
+            pieces.append(members)
+        deck = max(range(len(pieces)), key=lambda n_: len(pieces[n_]))
+        skip = set()
+        for x, y, z in taken:
+            ij = (int(round((x - s.min_x) / p)), int(round((z - s.min_z) / p)))
+            for k in at.get(ij, ()):
+                if abs(s.y[k] - y) <= END_BAND:
+                    skip.add(piece_of[k])
+        # each piece's edge: its surfaces with a side column holding none of its surfaces
+        edge = {}
+        for n_, members in enumerate(pieces):
+            mine = set(members)
+            edge[n_] = [k for k in members
+                        if any(not any(m in mine for m in at.get((floor[k][0] + di, floor[k][1] + dj), ()))
+                               for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)))]
+        r = int(math.ceil(SHIP_REACH / p))
+        reached, frontier, linked = {deck}, [deck], {}
+        while frontier:
+            nxt = []
+            for src in frontier:
+                near = {}                           # column -> src's edge surfaces within SHIP_REACH of it
+                for k in edge[src]:
+                    i, j = floor[k]
+                    for dj in range(-r, r + 1):
+                        for di in range(-r, r + 1):
+                            if math.hypot(di, dj) * p <= SHIP_REACH:
+                                near.setdefault((i + di, j + dj), []).append(k)
+                cand = {}
+                for n_, e in edge.items():
+                    if n_ in reached or n_ in skip or len(pieces[n_]) * p * p < SHIP_MIN_AREA:
+                        continue
+                    for m in e:
+                        for k in near.get(floor[m], ()):
+                            rise = float(s.y[k] - s.y[m])
+                            if STEP < abs(rise) <= JUMP_HEIGHT:
+                                (ia, ja), (ib, jb) = floor[m], floor[k]
+                                cand.setdefault(n_, []).append((math.hypot(ia - ib, ja - jb) * p, abs(rise), m, k))
+                for n_, cs in sorted(cand.items()):
+                    if n_ in reached:
+                        continue
+                    cs.sort()
+                    chosen = []
+                    for d, _r, m, k in cs:
+                        (ia, ja), (ib, jb) = floor[m], floor[k]
+                        xa, za, xb, zb = s.min_x + ia * p, s.min_z + ja * p, s.min_x + ib * p, s.min_z + jb * p
+                        if not (usable(xa, za) and usable(xb, zb)):
+                            continue
+                        if any(math.hypot(xa - cx, za - cz) < LINK_SPACING for cx, cz in chosen):
+                            continue
+                        ya, yb = float(s.y[m]), float(s.y[k])
+                        if not (_wide(s, ia, ja, ya, 0.4, 0.5) and _wide(s, ib, jb, yb, 0.4, 0.5)):
+                            continue
+                        top, n_steps, clear = max(ya, yb), max(abs(ia - ib), abs(ja - jb)), True
+                        for t_ in range(1, n_steps):
+                            cc = (ja + round((jb - ja) * t_ / n_steps)) * nx + ia + round((ib - ia) * t_ / n_steps)
+                            if any(top + SHIP_CLEAR < s.y[q_] < top + soldier1943.HEIGHT
+                                   for q_ in range(s.start[cc], s.start[cc + 1])):
+                                clear = False
+                                break
+                        if not clear:
+                            continue
+                        chosen.append((xa, za))
+                        (lx, ly, lz), (ux, uy, uz) = sorted(((xa, ya, za), (xb, yb, zb)), key=lambda v: v[1])
+                        out.append(_record(f"ship ledge ({b['bp'].split('/')[-1]})", lx, ly, lz, ux, uy, uz, d,
+                                           len(pieces[n_]), 'ship ledge'))
+                        if len(chosen) >= SHIP_LINKS:
+                            break
+                    if chosen:
+                        reached.add(n_)
+                        nxt.append(n_)
+                        linked[n_] = len(chosen)
+            frontier = nxt
+        med = lambda n_: round(float(np.median([s.y[k] for k in pieces[n_]])), 2)
+        cen = lambda n_: [round(float(np.mean([s.min_x + floor[k][0] * p for k in pieces[n_]])), 1),
+                          round(float(np.mean([s.min_z + floor[k][1] * p for k in pieces[n_]])), 1)]
+        rest = [n_ for n_ in range(len(pieces)) if n_ not in reached and len(pieces[n_]) * p * p >= SHIP_MIN_AREA]
+        rep = {'ship': b['bp'].split('/')[-1], 'box': [round(v, 1) for v in lo] + [round(v, 1) for v in hi],
+               'deck': {'m2': round(len(pieces[deck]) * p * p, 1), 'y': med(deck)},
+               'linked': [{'m2': round(len(pieces[n_]) * p * p, 1), 'y': med(n_), 'centre': cen(n_), 'links': linked[n_]}
+                          for n_ in sorted(linked)],
+               'not linked': [{'m2': round(len(pieces[n_]) * p * p, 1), 'y': med(n_), 'centre': cen(n_),
+                               'gun platform': n_ in skip} for n_ in rest]}
+        report.append(rep)
+        log(f"  {rep['ship']}: deck {rep['deck']['y']} ({rep['deck']['m2']:.0f} m2); {len(linked)} piece(s) linked by "
+            f"{sum(linked.values())} jump link(s); {len(rest)} piece(s) of {SHIP_MIN_AREA:g} m2 or more not linked")
+    return out, report
+
+
 def level_links(lv, log=print):
     """The jump links of a prepared and sampled level: from its 0.2 m samples where the gun's sector is detailed,
     else its 0.8 m samples."""
@@ -284,9 +449,12 @@ def level_links(lv, log=print):
     # boardwalk, trees, razor wire), ExcludeFromPathfinding (vegetation), dynamic props - the build drops their surfaces
     placed = json.load(open(os.path.join(p['objects'], 'objects.json'), encoding='utf-8'))
     placed += json.load(open(os.path.join(p['objects'], 'group_instances.json'), encoding='utf-8'))
-    no_floor = {k for k, o in enumerate(placed) if o.get('flags') and (o['flags'][0] or o['flags'][1] or o['flags'][3])}
+    # by blueprint (the flags are the blueprint's): a box's 'index' counts only the placements with collision, so it is
+    # no index into objects.json + group_instances.json (before 2026-10-26 it was taken as one, and the wrong boxes -
+    # Wake Island's carriers among them - were left out)
+    no_floor = {o['bp'] for o in placed if o.get('flags') and (o['flags'][0] or o['flags'][1] or o['flags'][3])}
     boxes = [b for b in json.load(open(os.path.join(p['objects'], 'object_boxes.json'), encoding='utf-8'))
-             if b['index'] not in no_floor]
+             if b['bp'] not in no_floor]
     detailed_at = lambda x, z: (math.floor(x / 100) - xoff, math.floor(z / 100) - zoff) in dset
     out = []
     for which, src in (('detailed', 'samples_02.bin'), ('normal', 'samples.bin')):
@@ -307,6 +475,15 @@ def level_links(lv, log=print):
             n0 = len(out)
             out += raised_floor_links(s, height, my_boxes, log)
             log(f'{lv}: {len(out) - n0} raised-floor jump link(s) on the {s.pitch:g} m samples')
+        if SHIP_LEDGES:
+            ships = ship_boxes(boxes, height, float(st.get('sea_level', 0.0)))
+            if ships:
+                taken = [tuple(r['platform']) for r in out if r.get('rule') != 'ship ledge']
+                log(f'{lv}: {len(ships)} ship(s), ledges on the {s.pitch:g} m samples')
+                links, rep = ship_ledge_links(s, ships, height, lambda x, z, d=(which == 'detailed'): detailed_at(x, z) == d,
+                                              taken, log)
+                out += links
+                SHIP_REPORT[which] = rep
         del s
     return out
 

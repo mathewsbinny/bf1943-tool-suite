@@ -31,6 +31,7 @@ SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-spawn-map'), os.path.join(SUITE, 'bf1943-fbrb-tool'),
                 os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tools')]
 import navaudit1943 as A  # noqa: E402
+import navbuild  # noqa: E402  (this variant's: core navdata puts the little-endian tools first on sys.path)
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, materialmap1943, terrain  # noqa: E402
 
@@ -224,8 +225,15 @@ def why_not(d):
 class Nav:
     """The build: areas with exact outlines (point in area, distance to area), cells, route graph."""
 
-    def __init__(self, nav):
+    def __init__(self, nav, exact=None):
         self.nav = nav
+        # the build's own cells (navbuild's <level>.cells.npz) per area: x, z, ground height - exact, where the
+        # reader's cells (navdata, 0.8 m, heights from the nearest outline point) can be metres off on rock and slopes
+        # (Coral Sea's South Base flag, 2026-10-26)
+        self.exact = None
+        if exact is not None and len(exact) == len(nav.areas):
+            self.exact = [(np.asarray(i_, float) * p_, np.asarray(j_, float) * p_, np.asarray(y_, float))
+                          for _s, p_, i_, j_, y_ in exact]
         self.segs, self.box = [], []
         for a in nav.areas:
             sg = []
@@ -264,7 +272,11 @@ class Nav:
         self.node_ground = nav.node_pos[:, 1] - soldier1943.HEIGHT / 2
 
     def area_height(self, k, x, z):
-        """The area's ground height near (x, z): its nearest cell's, else its nearest outline point's."""
+        """The area's ground height near (x, z): its nearest cell's (the build's own cells where the build has its
+        cells file, else the reader's 0.8 m cells), else its nearest outline point's."""
+        if self.exact is not None and len(self.exact[k][0]):
+            cx, cz, cy = self.exact[k]
+            return float(cy[int(np.argmin((cx - x) ** 2 + (cz - z) ** 2))])
         best = None
         for di in range(-3, 4):
             for dj in range(-3, 4):
@@ -371,6 +383,9 @@ def load(lv, log=print):
     t = time.time()
     nav = navdata.load(p['hpd'], hf, cache_dir=os.path.join(p['audit'], 'cache'))
     log(f'{lv}: build read ({time.time() - t:.0f} s): {len(nav.areas)} areas, {len(nav.node_pos)} nodes')
+    exact = navbuild.read_cells(p['hpd'])
+    log(f'{lv}: ' + ('cells file of the build read (area heights exact)' if exact is not None else
+                     'no cells file for this build: area heights from the reader cells'))
     lvl = level1943.load(lv, game=game, log=lambda *a: None)
     m = spawnmap.spawn_map(game, lv)
     wpath = os.path.join(p['objects'], 'water_mesh.res')
@@ -406,7 +421,7 @@ def load(lv, log=print):
         if os.path.isfile(path):
             inputs[name] = {'path': path, 'bytes': os.path.getsize(path), 'sha256': A.sha256(path)}
     inputs['game heightfield'] = {'name': hf_name, 'sha256': __import__('hashlib').sha256(g.data(hf_name)).hexdigest()}
-    return dict(lv=lv, p=p, st=st, game=game, g=g, hf=hf, mm=mm, nav=Nav(nav), lvl=lvl, map=m, water=water,
+    return dict(lv=lv, p=p, st=st, game=game, g=g, hf=hf, mm=mm, nav=Nav(nav, exact), lvl=lvl, map=m, water=water,
                 entity_by_guid={e.guid.lower(): e for e in lvl.entities},
                 grids=grids, xoff=xoff, zoff=zoff, dset=dset, dset_built=dset_built, boxes=boxes, inputs=inputs)
 

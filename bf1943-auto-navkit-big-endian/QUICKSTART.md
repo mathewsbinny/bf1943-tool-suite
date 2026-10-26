@@ -70,10 +70,11 @@ Check runs two checks:
 - **routes** (`tools\routecheck1943.py`): every soldier spawn of each base and flag is joined to the route graph
   (the nearest node within 15 m across and 4 m in height), and a route is looked for between every pair of flags.
 
-For Wake Island's build of 2026-10-24 it reports 12,652 nodes, 44,980 edges and 69 islands; the main network has
-11,371 nodes; 16 of 16 ladders are linked from the main network; all 10 flag pairs are routed; the structure check
-passes. (The ladder count does not include the jump links to the carriers' AA guns, which are in
-`jump_links.json`.)
+For Wake Island's build of 2026-10-26 it reports 12,713 nodes, 45,070 edges and 65 islands; the main network has
+11,374 nodes; 16 of 16 ladders are linked from the main network; all 10 flag pairs are routed; the structure check
+passes. (The ladder count does not include the jump links to the carriers' AA guns and ledges, which are in
+`jump_links.json`.) Build also writes `<level>.cells.npz` beside the build: its areas' own cells and heights, which
+the exporter reads.
 
 A spawn that is not on the main network is listed with the size of its island. A base on a carrier is its own
 network (the sea divides it); that is expected and listed apart. The check fails when a flag's spawn is off the

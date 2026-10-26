@@ -1264,7 +1264,1456 @@ namespace Bfbc2Dbx
         }
     }
 
-    // Problems that crash or break a level, found without starting the game (FORMAT.md section 7).
+    // BEGIN GENERATED BF1943 SCHEMA
+    // Written by schema1943.py from bf1943-reflection-schema-full.json (SHA-256 4a45b0fb83a52adc5c47dc4904c95a89a06eebcd3a4a054e48393e7517f60e14),
+    // read from the executable with SHA-256 cbb152d10bee2e9c0ed28732a1328791b5510672a83786a5daf67f7b5abff27a (1746 member records
+    // recovered from the start-up code, value types and array element types added). Do not edit by hand.
+    static class Bf1943Schema
+    {
+        // "<name> <c|s|e> <base class|-> <member>..." for 952 classes, 211 structs and 188 enums;
+        // a member (6154 in all) is "name", "name:<type>" (a reflected class, struct or enum), "name[]" or
+        // "name[]:<element type>"; an enum lists its value names
+        public static readonly string[] Types = {
+            "AIInteractionEntityData c InteractionEntityData AnimationId FireWeapon Weapon:SoldierWeaponAsset FireDelay FireFromBoneName FireAngleXZ FireElevationAngle FireInitialSpeed Probability UsableInRelaxed UsableInCombat AllowBotsOutsideUseAngle AttractiveDistance DisableEntity:ReferenceObjectData DisablePartNames[]",
+            "AISettingsData c Asset SensingConstants:SensingConstantData SoundEnvironmentConstants:SoundEnvironmentConstantData CoverConstants:CoverConstantData NavigationConstants:NavigationConstantData SoldierControlConstants:SoldierControlConstantData CarControlConstants:CarControlConstantData TankControlConstants:TankControlConstantData HelicopterControlConstants:HelicopterControlConstantData TurretControlConstants:TurretControlConstantData TargetEvaluationConstants:TargetEvaluationConstantData VOConstants:VOConstantData CombatConstants:CombatConstantData EnvironmentConstants:EnvironmentConstantData FollowConstants:FollowConstantData PositionEvaluationConstants:PositionEvaluationConstantData TimingConstants:TimingConstantData LookConstants:LookConstantData DebugConstants:DebugConstantData KynapseConstants:KynapseConstantData TraversalConstants:TraversalConstantData ReadinessLevels:ReadinessLevels DefaultSensingTemplate:SensingTemplateData DefaultBehaviourTemplate:BehaviourTemplateData DefaultVehicleType:AIVehicleBehaviourData",
+            "AIStateAnimationData c - AnimTree:AnimTreeDataAsset",
+            "AIVehicleBehaviourData c - Name Controls[] Behaviours[]:BehaviourMappingData Goals[] Navigation:NavigationType PathfindingType:PathfindingType",
+            "AIVehicleTypes c Asset VehicleTypes[]:AIVehicleBehaviourData Goals[]:BehaviourData SquadBehaviours[]:BehaviourData",
+            "AabbGeometryEntityData c GeometryEntityData Extents:Vec3 Weight",
+            "AbstractMovementNodeData c BaseNodeData MovementAngleParameter:FloatParameter",
+            "AchievementData c - AchievementName AchievementId TrophyId Award:AwardData Group:AchievementGroup FriendlyName",
+            "AchievementGroup e - AchievementGroup_singlePlayer AchievementGroup_multiPlayer",
+            "AchievementsDataAsset c Asset Achievements[]:AchievementData",
+            "ActionSuppressor s - ActionToSuppress:EntryInputActionEnum SuppressingValue",
+            "ActivePart s - partName active",
+            "AdsrNode c SoundNode Trigger:SoundNodePort Release:SoundNodePort A:SoundNodePort D:SoundNodePort S:SoundNodePort R:SoundNodePort Value:SoundNodePort",
+            "AdvertisementComponentData c PartComponentData Identifier AdTexture",
+            "AdvertisementZoneData s - Identifier Members[]:AdvertisementZoneMember",
+            "AdvertisementZoneMember s - Identifier Filename",
+            "AeroDynamicPhysicsData c - BodyDrag:Vec3 BodyDragOffsetYZ:Vec3 BodyDragOffsetXZ:Vec3 BodyDragOffsetXY:Vec3",
+            "AimAnimationAsset c BaseAnimationAsset",
+            "AimAtOrderEntityData c OrderEntityData Target:SphereGeometryEntityData",
+            "AimControlData s - Animation:AimAnimationAsset InfluenceMap:InfluenceMapData PositionAnimatedBones:InfluenceMapData PrimaryBones[] PrimaryAnimationBones[] MinPrimaryAnimationBone AnimationFramesPerRow AimBones[]:AimNode2AimBoneData AnimationLimitLeft:Vec3 AnimationLimitRight:Vec3 AnimationLimitUp:Vec3 AnimationLimitDown:Vec3 LimitALeft LimitARight LimitAUp LimitADown ExponentialDelay AimStrength AimDirections[]:Vec3 LodNear:LodInterval LodFar:LodInterval LodProceduralCorrection:LodInterval PrimaryBonesProcCount PrimaryInfluenceMapBonesProcCount",
+            "AimNode2AimBoneData c AnimNodePortGroupData AimBoneName AimPositionBoneName AimPositionBaseBoneName CorrectDirection AlwaysAnimate AimBoneWorldRotation:LinearTransform AimPositionBoneBaseTransforms[]:Vec3 AimBoneIndex AimPositionBoneIndex AimPositionBaseBoneIndex AimDirections[]:Vec3",
+            "AimNode2Data c BaseNodeData AimBones[]:AimNode2AimBoneData AimTargetPositionParameter:Vec3Parameter PositionAnimatedBones:InfluenceMapData ExponentialDelay AimStrength LodNear:LodInterval LodFar:LodInterval LodProceduralCorrection:LodInterval AimAnimation:AimAnimationAsset",
+            "AimOrigin e - AoDefault AoCamera AoWeapon",
+            "AimingConstraintsData s - MinYaw MaxYaw MinPitch MaxPitch",
+            "AimingPoseData s - MinimumPitch MaximumPitch TargetingFov AimSteadiness SpeedMultiplier RecoilMultiplier",
+            "AirRaidEffectsData c WeaponEffectsData",
+            "AirResistanceData c ProcessorData DragFactor",
+            "AlphaResultType e - ArtUnchanged ArtHeight ArtSetToZero ArtSetToOne",
+            "AlternateCameraViewData c - FieldOfView FovTransitionTime Mesh:RigidMeshAsset MeshOffset:Vec3 Hud:HudData FadeToBlack FadeInDuration FadeOutDuration BlackDuration InputSuppression:InputSuppressionData ToggleViewChange",
+            "AlternateSpawnEntityData c EntityData Priority",
+            "AlwaysNodeGroupData c AnimNodePortGroupData NodeData:BaseNodeData",
+            "AmbientSoundsAsset c Editable GlobalAmbientSounds[]:SoundAsset BigWorld[]:BigWorldSettingsAsset MaterialSounds[]:MaterialSoundMapData MaterialBigWorld[]:MaterialBigWorldMapData SoundMaxHeight",
+            "AmmoConfigData s - MagazineCapacity NumberOfMagazines TraceFrequency AmmoPickupMinAmount AmmoPickupMaxAmount AutoReplenishMagazine AutoReplenishDelay AutoReplenishMagazineCount ResetReplenishOnReload DisplayInHud",
+            "AmmoCrateEntityData c GameEntityData Model:StaticModelEntityData Marker:MapMarkerEntityData Radius RefillDelay EnableReplenish",
+            "AndExpressionData c CompositeExpressionData",
+            "AnimNodePortGroupData c -",
+            "AnimTreeData c AnimTreeDataAsset NodeList[]:BaseNodeData RootNode:BaseNodeData ParameterGroupData:ParameterGroupData Preprocessors[]:BasePreprocessorData ReplacementAnimationPairs[]:ReplacementAnimationPairData Skeleton:SkeletonAsset AbsoluteTimeParameter:FloatParameter DeltaTimeParameter:FloatParameter PoseParameter:IntParameter IgnorePriority",
+            "AnimTreeDataAsset c Editable ResultAnimTrees[]:ResultAnimTreeData Priority BlendInTime",
+            "AnimTreeReplacementData c Asset AnimTree:AnimTreeData ReplacementAnimations[]:BaseAnimationAsset Nodes[]:AnimationNodeData AnimationList[]:BaseAnimationAsset Controls[]:BaseAnimationControlData ControlMap[]",
+            "AnimatedAimingEnum e - AnimatedAimingTwoHanded AnimatedAimingRightHanded AnimatedAimingDisabled",
+            "AnimatedCameraData c CameraData Skeleton:SkeletonAsset AnimTree:AnimTreeData CameraBone FovBone UseWorldTransform LoadAnimTreeOnCreation",
+            "AnimatedFireEnum e - AnimatedFireAutomatic AnimatedFireSingle AnimatedFireHoldAndRelease AnimatedFireSimple",
+            "AnimatedMeshEntityData c EntityData Mesh:SkinnedMeshAsset AnimationController:AnimationControllerAsset MeshShaderSet:MeshShaderSetAsset",
+            "AnimatedPropertyData s - BoneName DataIndex ValueOn ValueOff",
+            "AnimatedSoldierRagdollSettingsData c - Ragdoll:RagdollAsset AnimatedRagdollBones[]",
+            "AnimationAsset c BaseAnimationAsset MotionType:AnimationMotionType",
+            "AnimationControlledStateData c CharacterStateData UpNormalTolerance",
+            "AnimationControllerAsset c Asset AnimationGroups[]:AnimationGroupData Skeleton:SkeletonAsset",
+            "AnimationEntityData c GameEntityData AnimTree:AnimTreeDataAsset BlendOutAnimTree Soldier:SoldierSpawnBaseEntityData StaticModel:ReferenceObjectData",
+            "AnimationExportQuality c Asset Oversampling Uncompressed DefaultPositionTolerance DefaultOrientationTolerance PositionTolerance:QualityMapData OrientationTolerance:QualityMapData",
+            "AnimationGroupData s - Animations[]:AnimationAsset",
+            "AnimationMotionType e - AMT_CONST_SPEED AMT_REMOVE_MOTION AMT_WORLDSPACE AMT_LOCALSPACE AMT_LOCALSPACE2D",
+            "AnimationNodeData c BaseNodeData Animation:BaseAnimationAsset ScaledAnimationTimeParameter:FloatParameter IsCyclic:TripleBool PlayFromBegining:TripleBool CallbackId NormalizedTimeParameter:FloatParameter HandsIk:PropertyCurveType WeaponIkDelta:PropertyCurveType WeaponIkAnimation:PropertyCurveType LegsIk:PropertyCurveType Aiming:PropertyCurveType FixLegsDistanceFromGround AimingManualInput:DisablePropertyCurve_ManualInput",
+            "AnimationParamType e - APT_Bool APT_Int APT_Float APT_Vec3 APT_Mat4 APT_Count",
+            "AnimationSettings s - EnableStats EnableJobs EnableFullCulling PreferSPUSampling",
+            "AnimationSoundCategoryData s - AnimSound[]:AnimationSoundData Name",
+            "AnimationSoundData s - Animation:AnimationAsset Sound:SoundAsset",
+            "AnimationSoundMapData c Asset Categories[]:AnimationSoundCategoryData",
+            "AntiSpamConfig s - TimeBetweenOrderExecution WarningSound:WaveAsset",
+            "AreaGeometryEntityData c GeometryEntityData Next:AreaGeometryEntityData Previous:AreaGeometryEntityData Height Weight Waypoint:WaypointData",
+            "AreaOrderEntityData c OrderEntityData Area[]:GeometryEntityData AreaType:AreaOrderType",
+            "AreaOrderType e - AreaMoveTo AreaHoldGround",
+            "AreaTriggerEntityData c TriggerEntityData Soldiers[]:SoldierSpawnBaseEntityData Geometry[]:GeometryEntityData ObjectToFollow:SpawnEntityData Include:AreaTriggerInclude Radius InsideAreaEventRepeatTime OneInsideAreaEventPerSoldier TriggerOnlyOnLeave",
+            "AreaTriggerInclude e - ATNone ATAll ATPlayers ATAI ATAI_Alies ATAI_Enemies",
+            "AreaValueTeam s - AreaValue Team:TeamId",
+            "ArmDisarmAwardEntityData c GameEntityData",
+            "ArmamentData c - ThreatLength IsAntiAircraft TurretData:TurretData",
+            "ArtilleryStrikeEntityData c GameEntityData Geometry[]:GeometryEntityData MissileData:MissileEntityData Squad:SquadBaseEntityData Soldier:SoldierSpawnBaseEntityData MissileSpawnRadius DurationOfArtilleryStrike MaxDelayBetweenProjectiles MinDelayBetweenProjectiles MaxDelayBetweenStrikes MinDelayBetweenStrikes MinRadiusToSoldier RadiusWhenFollowingSoldier HeightOffsetWhenFollowingSoldier NumberOfStrikes MaxProjectilesPerStrike MinProjectilesPerStrike FollowSoldier",
+            "ArtilleryStrikeFiringEffectsData c WeaponEffectsData MaxStrikeDistance StrikeRadius SpawnHeight MaxRandomSpawnHeight Camera:TargetCameraData AimingCameraHeight StrikeCameraHeight AimingCameraOffset StrikeCameraOffset AimingCameraFov DelayBeforeAimingCamera StrikeCameraFov FireCameraTime StrikeCameraTime ValidMinDistance ValidMaxDistance ValidMaxAngle EnableProjectileTrails EnableCameraRotation",
+            "Asset c - Name",
+            "AudioMasterSettingsAsset c Asset SoundSystemSettings[]:SoundSystemSettings",
+            "AudioMaterialDefinitions c Editable OnRoadMaterialNameHashes[]",
+            "AutoAimData s - AutoAimOuterBoxOffset:Vec3 AutoAimOuterBoxExtends:Vec3 AutoAimInnerBoxOffset:Vec3 AutoAimInnerBoxExtends:Vec3 PoseType:CharacterEntityPoseEnum",
+            "AutoEndingEnumeratedSwitchNodeData c BaseNodeData Nodes[]:AutoEndingEnumeratedSwitchNodeGroupData AnimationStartParameter:BoolParameter NodeSelectorParameter:IntParameter ElseNode:BaseNodeData",
+            "AutoEndingEnumeratedSwitchNodeGroupData c AnimNodePortGroupData NodeData:BaseNodeData",
+            "AutoEndingLoopNodeData c BaseNodeData Node:BaseNodeData ElseNode:BaseNodeData Parameter:BoolParameter NodeNormalizedBlendOutTime RestartAnimation",
+            "AutoTeamEntityData c GameEntityData PlayerCountNeededToAutoBalance TeamDifferenceToAutoBalance TeamDifferencePercentageToAutoBalance ForcePlayersToTeam1",
+            "AwardData c TreeNodeBase Criteria[]:CriteriaData Code ChildAwards[]:AwardData Description UIName Image:TextureAsset ImageDescription ImageName Sound:WaveAsset SoundName VO:DialogLineNode Visible Score Repeat:AwardType Dependencies[]:CriteriaAward Group:AwardGroup Bucket:ScoringBucket",
+            "AwardDataTree c AwardableTreeBase Awards[]:AwardData",
+            "AwardGridAsset c Asset Width Height Awards[]:AwardGridNode",
+            "AwardGridNode c - X Y Award:AwardData",
+            "AwardGroup e - AwardGroup_Achievement AwardGroup_PatchRound AwardGroup_PatchShield AwardGroup_Trophy AwardGroup_Wildcard AwardGroup_Rank",
+            "AwardType e - AwardType_OnceGlobally AwardType_OncePerRound AwardType_Unlimited",
+            "AwardableTreeBase c TreeBase CategoryTrees[]:StatCategoriesTree GeneralStatistics Scales[]:EventScaleData GlobalScaleFactor",
+            "AxisAlignedBox s - min:Vec3 max:Vec3",
+            "BangerEntityBaseData c DynamicPhysicsEntityData Mesh:MeshAsset MeshShaderSet:MeshShaderSetAsset ConstructiblePreviewData:ConstructiblePreviewData Explosion:ExplosionEntityData MaxHealth TimeToLive",
+            "BangerEntityData c BangerEntityBaseData",
+            "BaseAnimationAsset c Asset Skeleton:SkeletonAsset",
+            "BaseAnimationControlData s - AnimationIndex InfluenceMap:InfluenceMapData NodeIndex",
+            "BaseEmitterData c ProcessorData EmitterAsset:EmitterDocument",
+            "BaseExpressionData c -",
+            "BaseHandsIkNodeData c BaseNodeData DisabledHandsIk[] Pose:AnimationNodeData HandsIkInfo[]:HandIkInfo",
+            "BaseInfluenceMapData c Asset Skeleton:BaseSkeletonAsset ResultInfluenceMaps[]:ResultInfluenceMapData",
+            "BaseNodeData c - Skeletons[]:SkeletonAsset InfluenceMapEffects[]:InfluenceMapEffectData InfluenceMapData:InfluenceMapData OriginalInfluenceMap:InfluenceMapData NodeWeightParameter:FloatParameter BlendInTime BlendOutTime NodeIndex ParentNodeIndex EnabledBySkeleton",
+            "BaseParameter c - Name DataIndex",
+            "BasePreprocessorData c -",
+            "BaseShaderAsset c Asset SourceFile Source FunctionName Ps3ExtraCmdLine",
+            "BaseSkeletonAsset c Asset",
+            "BehaviourData c UrgencyUserData Name",
+            "BehaviourMappingData s - Behaviour Plan",
+            "BehaviourTemplateData c Asset StandProbability CrouchProbability StunnedWhenHealthPercentageBelow StunnedInVehicles TurnAgainstTargetDistance InvestigateStopDelay ExplosiveObjectChance MinAttackBursts MaxAttackBursts AttackUrgencyModifier AltAttackProbability ReadinessReactionTimeMultiplier BaseTimeInCover SuppressedTimeAdd MinEnemyDistanceToUseCover LowHealthThreshold UseSameCoverModifier RollOutOfCoverProbability ExplosionEmergentTakeCoverProbability MeleeStartDistance MeleeDamage MeleePushForce MeleeDelay MeleeAnimationId FrontLineDistance ObstructorRespondDistance ObstructorMinMoveDistance ObstructorMaxMoveDistance AlwaysUpdate AllowSleep TargetDistanceFactor TargetStrengthFactor TargetDangerFactor TargetIsAttackingFactor TargetIsMarkedFactor LeaveVehicleOnSearchAndDestroyOrder RPGSkill:RpgSkill AccuracyModifier AccuracyIncreaseTime SuppressIndirectProbability MaxSuppressTime ReloadBelowPercent",
+            "BigWorldSetting c - Sound:SoundTemplate MinDistance MaxDistance MinDelayTimeInMinutes MaxDelayTimeInMinutes",
+            "BigWorldSettingsAsset c Editable Settings[]:BigWorldSetting",
+            "BinarySetting s - Name",
+            "BinkTextureAsset c TextureBaseAsset Gamma:TextureAssetGamma Usage:TextureUsage",
+            "BlendMode e - BmNone BmLerp BmAdditive BmSubtractive BmRevSubtractive BmMultiply BmMin BmMax BmAdditiveDestOpacity",
+            "BlendShapeAnimationAsset c Asset SourceFile RootNode",
+            "BlendShapeSkeletonAsset c Asset SourceFile RootNode",
+            "BlurEffectData s - DispersionStrength DispersionThreshhold ExplosionStrength BulletStrength ExplosionFalloffSpeed BulletFalloffSpeed",
+            "BlurFilter e - BfNone BfGaussian3Pixels BfGaussian5Pixels BfGaussian7Pixels BfGaussian9Pixels BfGaussian15Pixels BfGaussian31Pixels",
+            "BoatFloatPhysicsData c HullFloatPhysicsData FrontRatio",
+            "BoltActionData s - BoltActionDelay BoltActionTime HoldBoltActionUntilFireRelease",
+            "BoneCollisionData s - DebugDrawColor:Vec4 CapsuleOffset:Vec3 BoneName Material BoneAxis CapsuleLength CapsuleRadius Modifiers[]:BoneCollisionReplacementData",
+            "BoneCollisionReplacementData c UnlockPartData ReplacementMaterial",
+            "BoneFakePhysicsData c - FakePhysics:FakePhysicsData BoneName BoneId",
+            "BonePriority c - BoneName EualizeToBoneName BoneIndex EualizeToBoneIndex",
+            "BoneToBoneIkNodeData c BaseNodeData Pose:BaseAnimationAsset BoneName TargetBoneName LocalPosition:LinearTransform BoneIndex TargetBoneIndex",
+            "BoolNodeGroupData c AnimNodePortGroupData NodeData:BaseNodeData Parameter:BoolParameter",
+            "BoolParameter c BaseParameter InitialValue",
+            "BoolParameterExpressionData c BaseExpressionData Parameter:BoolParameter Value",
+            "BoolPropertyTrackData c PropertyTrackData Values[]",
+            "BoolValueGroupData c AnimNodePortGroupData Parameter:BoolParameter Invert",
+            "BotPriorityConfigData c - AngleOffset Distance Period AppliesToSensing AppliesToDecisions AppliesToExecution DebugColor:Vec3",
+            "BoundingBoxAsset c Asset Boxes[]:OrientedBoundingBox",
+            "BoundingBoxAssetMetaData c - Boxes[]:OrientedBoundingBox",
+            "BoundingBoxExportResult c - OutputFileName",
+            "BoxEvaluatorData c EvaluatorData Dimensions:Vec3 Pivot:Vec3",
+            "BoxFloatPhysicsData c FloatPhysicsData",
+            "BreakWindowInteractionEntityData c AIInteractionEntityData WindowPartIndex",
+            "BulletEntityData c MeshProjectileEntityData FlyBySound:SoundAsset Gravity ImpactImpulse DetonationTimeVariation VehicleDetonationRadius VehicleDetonationActivationDelay FlyBySoundRadius FlyBySoundSpeed Stamina DistributeDamageOverTime StartDamage EndDamage DamageFalloffStartDistance DamageFalloffEndDistance TimeToArmExplosion HasVehicleDetonation VehicleDetonationTargets[]:ControllableEntityData InstantHit StopTrailEffectOnUnspawn",
+            "BundleMountPoint s - Bundle VfsPath IsResourcePath",
+            "BusConnection e - GameMixMain GameMixAlt DirectOut",
+            "CallbackWeaponEffectsData c WeaponEffectsData CallbackEntityName",
+            "CameraComponentData c ComponentData Camera:TargetCameraData FieldOfView AlternateView:AlternateCameraViewData FreezeHeight IsSnapViewCamera IsFirstPerson ExcludeFromCameraCycle ReceiveImpulsesAsThirdPerson UseCameraTransition CameraTransitionPos:Vec3 CameraTransitionTime Mesh:RigidMeshAsset MeshOffset:Vec3 MeshParentComponentNumber UseForegroundBlur InputSuppression:InputSuppressionData",
+            "CameraData c - OcclusionRayOffset:Vec3 PreFadeTime FadeTime FadeWaitTime StayFadedWhileStreaming HudFx:HudFxData ShadowViewDistance",
+            "CameraEntityData c GameEntityData fixforbadddfgenerationwithonlyoverrideproperties",
+            "CameraImpulseCurveData s - MinDuration MaxDuration MinFrequency MaxFrequency LeadInTime Damping MaxAngle MaxActiveImpulses AverageFilterSize",
+            "CameraImpulseShakeData s - YawCurve:CameraImpulseCurveData PitchCurve:CameraImpulseCurveData RollCurve:CameraImpulseCurveData",
+            "CameraLeapData s - Transform:LinearTransform Time FovModifier",
+            "CameraRecoilData c - SpringConstant SpringDamping SpringMinThresholdAngle",
+            "CampaignMapEntityData c GamePhysicsEntityData CombatAreaName",
+            "CampaignRoundCounterEntityData c GameEntityData BleedStartAtAreaValue BaseBleedPerMin BleedAtEndPerMin UiMaxBleedPerMin",
+            "CancelOrderEntityData c OrderEntityData",
+            "CapturePointEntityData c GameEntityData FlagTemplates[]:StaticModelEntityData Spawners[]:SpawnEntityData Geometry[]:GeometryEntityData MapMarker:MapMarkerEntityData CapturePoint:StaticModelEntityData LocationName ControlPointName InitialOwnerTeam:TeamId CaptureRadius IsCapturedInUpperSphere AreaValueTeam1 AreaValueTeam2 AreaValues[]:AreaValueTeam TimeToGetControl TimeToLoseControl ReturnMultiplier OnlyTakeableByTeam MinNrToTakeControl MaxCaptureMultiplier AddedMultiplierPerPlayer EnemyTicketLossWhenCaptured Index IntruderWarning IntruderWarningSID DisableIfEnemyInside DisableWhenLosingControl LoseControlWhenNotClose UnableToChangeTeam IsVisible ShowOnMinimap HoistFlag StartAtBottom RemoveWhenCaptured SeesawCapturing",
+            "CarControlConstantData c - YawStrength",
+            "CarHornComponentData c ComponentData SoundEffect:SoundAsset",
+            "CarNode c SoundNode Start:WaveAsset Stop:WaveAsset IdleLoop:WaveAsset Gear1:WaveAsset Gear2:WaveAsset Gear3:WaveAsset CruiseLoop:WaveAsset Gear1Release:WaveAsset Gear2Release:WaveAsset Gear3Release:WaveAsset Release:WaveAsset TransmissionLoop:WaveAsset InteriorLoop:WaveAsset InteriorStrainLoop:WaveAsset StuckLoop:WaveAsset PipeAttacks[]:WaveAsset SuspensionBounces[]:WaveAsset Throttle:SoundNodePort RPM:SoundNodePort Velocity:SoundNodePort InDriverPos:SoundNodePort InteriorCam:SoundNodePort SpringCompression:SoundNodePort Gear:SoundNodePort Tilt:SoundNodePort Slip:SoundNodePort AngularVelocity:SoundNodePort ReleaseEvent:SoundNodePort StartOut:SoundNodePort StopOut:SoundNodePort IdleOut:SoundNodePort AccellerateOut:SoundNodePort DeaccellerateOut:SoundNodePort TransmissionOut:SoundNodePort InteriorOut:SoundNodePort InteriorStrainOut:SoundNodePort PipeAttackOut:SoundNodePort SuspensionBounceOut:SoundNodePort StuckOut:SoundNodePort Gear1MaxVelocity Gear2MaxVelocity Gear3MaxVelocity Reverse_Idle_Rpm_Pitch:Vec4 Reverse_Idle_Tilt_Pitch:Vec4 Reverse_Idle_Rpm_Amp:Vec4 Idle_Tilt_Pitch:Vec4 Idle_Rpm_Pitch:Vec4 Accellerate_Tilt_Pitch:Vec4 Accellerate_Slip_Pitch:Vec4 Cruise_Rpm_Pitch:Vec4 Accellerate_AngularVel_Pitch:Vec4 Release_Tilt_Pitch:Vec4 Trans_Vel_Pitch:Vec4 Trans_Vel_Amp:Vec4 Trans_Reverse_Amp_Factor InteriorStrain_Vel_Pitch:Vec4 InteriorStrain_Vel_Amp:Vec4 Stuck_Vel_Amp:Vec4 Stuck_Rpm_Amp:Vec4 StuckVelocityThreshold PipeAttackMaxVelocity PipeAtatckThrottleDeltaThreshold StuckIdleTimeThreshold",
+            "ChangeFormationOrderEntityData c OrderEntityData Formation:FormationData Scale",
+            "ChangeGameSettingType e - CGSNone CGSInvertVerticalLookAxis CGSCount",
+            "ChangeOrderEntityData c OrderEntityData Vehicle:VehicleSpawnEntityData DisallowedIndices[] Instant",
+            "ChangeReadinessOrderEntityData c OrderEntityData Pulse:ReadinessLevel Minimum:ReadinessLevel AllowDecrease",
+            "CharacterEntityPoseEnum e - Stand Crouch Prone",
+            "CharacterNode c VoiceOverRootNode Children[]:VoiceOverChildNode",
+            "CharacterPhysicsData c Asset Poses[]:CharacterPoseData States[]:CharacterStateData Sprint:CharacterSprintData Material PushableObjectWeight Mass MaxAscendAngle PhysicalRadius WaterDepthLimit InputAcceleration LadderAcceptAngle LadderAcceptAnglePitch JumpPenaltyTime JumpPenaltyFactor Rumble:CharacterRumbleData SpeedPenaltyOnDamage SpeedPenaltyOnDamageTime",
+            "CharacterPoseConstraintsData s - StandPose CrouchPose PronePose",
+            "CharacterPoseData c - EyePosition:Vec3 ThrottleModifierCurve[]:Vec2 StepHeight Height TransitionTime LookConstraints:LookConstraintsData PoseType:CharacterEntityPoseEnum",
+            "CharacterPoseType e - CPTNoAction CPTForceToStand CPTForceToCroch",
+            "CharacterRumbleData s - LowRumbleModifier HighRumbleModifier RumbleDuration RumbleImpulseClamp",
+            "CharacterSprintData c - SprintPowerDecreasePerSecond SprintPowerIncreasePerSecond SprintMinimumPower",
+            "CharacterStateData c - PoseInfo[]:CharacterStatePoseInfo",
+            "CharacterStatePoseInfo c - PoseType:CharacterEntityPoseEnum Velocity AccelerationGain DecelerationGain SprintGain SprintMultiplier",
+            "CharacterStateTriggerEntityData c TriggerEntityData Vehicles[]:VehicleSpawnEntityData PlayerToCheck:SoldierSpawnBaseEntityData NewPosition:AlternateSpawnEntityData NewVehiclePositionOnCharacterMove:AlternateSpawnEntityData UsePitch Pitch CharacterPose:CharacterPoseType ExcludeConnectedVehicles Weapon:SoldierWeaponAsset CheckAllWeapons ContinueToCheckIfHoldingWrongWeapon VehiclePosition CheckVehiclePosition EntryInputAction:EntryInputActionEnum SuppressInputOnInputTriggerd HealthToSet HealthToCheck CheckHealthOnAndAbove AmmoToSet",
+            "ChaseCameraData c TargetCameraData TargetOffset:Vec3 KeepTargetPitch ToWantedPositionScale:Vec3 MaxViewRotationAngleDeg WantedAngleDeg WantedDistance MaxDistance SnapDistance ForceFieldRadius CollisionRadius ForceFieldForceScale AwayFromTargetForceScale VelocityDrag MaxVelocity PillMinimumCollisionRadius PillMaximumCollisionRadius PillMinimumCollisionLength PillExpandSizeSpeedAcceleration LookDistanceScale LookDistanceInFrontOfTarget ShouldRollWithTarget",
+            "ChildComponentData c PartComponentData SoundEffect:SoundAsset MovingBody:MovingBodyData HealthZone:VehicleHealthZoneData SoundEffectStartRpm SoundEffectStopRpm",
+            "ChildMovingBodyData c LinearMovingBodyData InputDelay Speed InputAction IsOneShotInput TriggerImpulse",
+            "ChildRotationBodyData c RotationBodyData ForceModifier ResetForceModifier ResetForceInputThreshold UseLinearInput RotationInput WorldSpaceLock WorldSpaceLockEfficiency",
+            "ClearAreaTriggerEntityData c TriggerEntityData AreaToEffect:GeometryEntityData Action:ClearType EffectSoldiers EffectVehicles EffectBangers SoldiersToExclude[]:SoldierSpawnBaseEntityData ExcludeImmortalSoldiersInTeam TeamOfImmortalSoldiers:TeamId",
+            "ClearType e - CTDestroy CTUnspawn",
+            "ClientSettings c - IsFastStartupEnabled IsTerrainDisabled IsSootEnabled IsWaterPhysicsEnabled IsSoundEnabled Ps3SoundCellCacheSize Ps3SoundMaxRsxMemoryUsage Ps3SoundMinRsxAllocation Ps3OnDemandSoundInRsxEnable MaxSoundCount EnableAudioTweakHack IsOnDemandSoundsEnabled IsSubtitlesEnabled IsVariedVoiceOversEnabled IsOvergrowthEnabled IsMultiplayer IsStatsEnabled IsNetworkStatsEnabled PauseGameOnStartUp IsEffectsDisabled IsEmittersDisabled IsHavokEmittersDisabled IsPadRumbleEnabled IsLipSyncEnabled IsUITracesEnabled IsMenuDevOptsEnabled ScreenshotToFile ScreenshotFilename IsHudDisabled DisableMovies DisableHudMovies DisableMenuFlow LoadMenu IsPresenceEnabled IsPresenceSilent IsHintsEnabled BypassMatchmaking DebugMatchmaking DebugMenuOnLThumb InvertFreeCamera RenderTags Team Kit Level SpawnPoint ServerIp SecondaryServerIp InvertPitch InvertYaw AimScale IncomingFrequency IsInternetSimulationEnabled MinLatency MaxLatency PacketDrops DropSpikeChance MinDropDuration MaxDropDuration ReorderingChance DuplicationChance CorruptionChance HavokVisualDebugger HavokVDBShowsEffectsWorld HavokCaptureToFile MemoryStatsEnable UseMouseAndKeyboardSystem UseGlobalGamePadInput PcMouseSensitivity PcPadSensitivity IsAchievementsEnabled DebugAdvertisements EnableAdvertisements IsSpecialEdition IsNorthAmerica PreloadingEnabled ThreadedLoadingEnable ShowBuildId ExtractPersistenceInformation TextureBakerEnable UnrestrictedUnlocks LoadingTimeout LoadedTimeout IngameTimeout EnableRestTool KeepEffects LocalVehicleSimulationEnabled AsyncClientBulletEntity AsyncFollowWheels AutoUnspawnDynamicObjects StreamingSoundPath UsePS3VoipCompression ResetStatsOnConnect DisableTelemetry DebugCoralSea",
+            "ClimbingStateData c CharacterStateData LateralInputScale DownAngleLimit DropOffAngle AttractionVelocity PushAwayVelocity ClimbHeightOffset",
+            "CollectibleWeapon s - Sid Texture:TextureAsset Persistence:PersistentWeapon",
+            "CollectibleWeaponData s - Sound:WaveAsset Weapons[]:CollectibleWeapon",
+            "ColorTintData s - Contrast:Vec3 Brightness:Vec3 Saturation:Vec3 Hue",
+            "ColorTintScopeFilterData c ScopeFilterData ColorTintData:ColorTintData",
+            "ColorTransformData s - Brightness:Vec3 BrightnessModifier:Vec3 BrightnessFrequency:Vec3 Contrast:Vec3 ContrastModifier:Vec3 ContrastFrequency:Vec3 Saturation:Vec3 SaturationModifier:Vec3 SaturationFrequency:Vec3 Hue",
+            "ColorUnlockPartCollection c Asset ShaderNodeName ColorUnlockParts[]:ColorUnlockPartData",
+            "ColorUnlockPartData c UnlockPartData Color:Vec3",
+            "CombatActionTriggerEntityData c TriggerEntityData Geometry:GeometryEntityData TimeToTriggerOnNoAction",
+            "CombatAreaCamera s - Data:MinimapData",
+            "CombatAreaGridNodeEntityData c GameEntityData ForwardNodes[]:CombatAreaGridNodeEntityData BackwardNodes[]:CombatAreaGridNodeEntityData CombatArea:CombatAreaTriggerEntityData CampaignMapDatas[]:CampaignMapEntityData InitialOwnerTeam:TeamId",
+            "CombatAreaTriggerEntityData c GameEntityData Geometry[]:GeometryEntityData Height SurroundingGeometry[]:GeometryEntityData TimeToReturn DeserterProjectile:BulletEntityData SurroundingHeight AllowedVehicles[]:VehicleAsset SpawnHeight MaxRandomSpawnHeight StrikeRadius InitalSpeed IsAiAllowedOutside Camera:CombatAreaCamera",
+            "CombatConstantData c - PoseTransitionFireDelay ExplosiveObjectSearchRadius ExplosiveKnockdownDistance ExplosiveBlastMultiplier MeleeTargetAngle MoveOutOfCoverLineOfSightTest MoveOutOfCoverTargetAngle MoveOutOfCoverWaypointRadius MaxSuppressPositionTime MaxSuppressDistance MaxSuppressorsRatio SuppressMinLOFDistance SuppressMinLOFOffsetDistance InvestigateObeyFrontLineDistance InvestigateCoverSearchWidth InvestigateAroundTargetRadius MoveInCombatDelay NewEnemyDecideMaxDistance AvoidC4Time StandStillMinTime StationaryBailDistance PrecisionTimeout CloseRangeAccuracyDistance AllowCrouchFiringWaterLevel",
+            "CombustionEngineConfigData c EngineConfigData",
+            "CommanderManagerEntityData c GameEntityData",
+            "ComparisonType e - CT_Equals CT_NotEquals CT_Less CT_More CT_LessEqual CT_MoreEqual",
+            "ComponentData c LogicEntityData",
+            "ComponentUnlockOverrideMode e - CUOMNotOverridden CUOMNeverActive CUOMAlwaysActive",
+            "CompositeExpressionData c BaseExpressionData SubExpressions[]:BaseExpressionData",
+            "CompositeHavokAsset c Asset Transforms[]:LinearTransform Assets[]:HavokAsset Enums[]",
+            "CompositeMeshAsset c MeshAsset SootType:SootType MaterialMaskingMesh:SkinnedMeshAsset Sectorization:MeshSectorizationAsset",
+            "CompositeMeshEntityData c EntityData LightMapEnable Mesh:CompositeMeshAsset MeshShaderSet:MeshShaderSetAsset EnableGroundmapLighting",
+            "CompositeSkeletonAsset c BaseSkeletonAsset Skeletons[]:SkeletonAsset",
+            "CompressorSettings c - Ratio Threshold Attack Release",
+            "ConditionGroup c SoundNodePortGroup X:SoundNodePort Y:SoundNodePort True:SoundNodePort Condition:ConditionType",
+            "ConditionNode c SoundNode Conditions[]:ConditionGroup",
+            "ConditionType e - And Or XOr Equal Less Greater LessOrEqual GreaterOrEqual",
+            "ConnectionPair s - From To",
+            "ConsoleCommandEntityData c TestEntityData Commands[]",
+            "ConstantEvaluatorData c EvaluatorData Scale",
+            "ConstructibleConnectionEdge s - ConnectionType:ConstructibleConnectionType EdgeId",
+            "ConstructibleConnectionType e - CctTankBarrier CctBarbedWire",
+            "ConstructibleControlEntityData c GameEntityData CreationGeometry[]:GeometryEntityData TimeToLoseControl",
+            "ConstructibleHexType e - ChtOneHex ChtThreeHex ChtFourHex",
+            "ConstructibleModelEntityData c GameEntityData ConstructibleName HexAmountType:ConstructibleHexType ConnectionEdges[]:ConstructibleConnectionEdge BasePersistenceValue FortifiesCapturePoint Unlock:UnlockGraphUnlock ObjectSets[]:ObjectSet AlignWithTerrain BoundingBox:AxisAlignedBox",
+            "ConstructiblePreviewData s - PreviewBuildableShaderSet:MeshShaderSetAsset PreviewUnbuildableShaderSet:MeshShaderSetAsset",
+            "ConstructibleToolWeaponEffectsData c WeaponEffectsData",
+            "ContinueEntityData c GameEntityData WeaponAmmo[]:ContinueWeaponAmmoData VehicleImmortalTimer SoldierImmortalTimer FadeToBlack StayBlack FadeFromBlack LookAtNearestMapMarker",
+            "ContinueWeaponAmmoData s - MinMags WeaponSlot",
+            "ControllableEntityData c GamePhysicsEntityData UsePrediction LowHealthTreshold AimWarnSoundEffect:SoundAsset MissileWarnSoundEffect:SoundAsset LowHealthWarnSoundEffect:SoundAsset LockingWarnSoundEffect:SoundAsset LockedWarnSoundEffect:SoundAsset SpottedTime LastKnownSpottedTime",
+            "CoreLogLevel e - CllNone CllEventRecord CllError CllAssert CllFatalAssert CllValidate CllWarning CllInfo CllOutput CllDebug",
+            "CoreSettings s - EnableDbErrorPolicy EnableResolveErrorTracking EnableSparseSerialization EnableDrone EnableTweaker EnableMemoryDump EnableBitstreamTypeVerification EnableBitstreamExtendedVerification EnableInstanceDirectory DiskLayoutEmulation DiskLayoutPathPatterns[] EnableRemoteLog LogMaster StudioBus Host HostUser SessionId LogLevel:CoreLogLevel RandomTimeSeed EnableResourceFileChangeListener FinalBundles",
+            "CounterEntityData c LogicEntityData InitialValue OneShot",
+            "CoverConstantData c - SlotSize RaysPerSlot RaysPerDetailSearch UseRaycastCache EnableSparseSlots SearchRadius BaseHeight StandHeight HeightIncrement MaxCoverLength SearchDirections SearchDirectionsPerTimeSlice ForcedDirections SearchRange DistanceStep MaxNodesForProgression MovedResetDistance MaxCoversInMemory ForceRegenerateDestroyedCovers CoverSelectionMethod:CoverSelectionMethod ThreatRadius InCoverDistance InCoverDeviation BaseTimeHealthModifier BaseTimeUrgencyModifier IntermediateCoverSlotModifier MinAttackableEnemyDistance MinDistanceToMoveStanding CrouchCoverModifier StandCoverModifier FinishDueToSeeingDelay",
+            "CoverData c - BottomLeft:Vec3 TopRight:Vec3 Right:CoverData Left:CoverData Material:CoverType RightEdge:CoverEdge LeftEdge:CoverEdge",
+            "CoverEdge e - CENeighbor CESpace CEBlocked",
+            "CoverEntityData c EntityData Material:CoverType LeftBlocked RightBlocked",
+            "CoverManipulationType e - CMTRemoveCovers CMTBlockEdges",
+            "CoverModifierData c EntityData Manipulation:CoverManipulationType",
+            "CoverSelectionMethod e - CSMAgainstThreatPosition CSMAgainstAllEnemies CSMAgainstAllEnemiesWithFallback",
+            "CoverType e - CTSoft CTMedium CTHard",
+            "CreditsCategory s - Sid Headlines[]:CreditsHeadline",
+            "CreditsData s - NumRowsPerPage Categories[]:CreditsCategory Images[]:TextureAsset",
+            "CreditsEntity s - Title Name",
+            "CreditsHeadline s - Sid Entities[]:CreditsEntity",
+            "CriteriaAward c - Award:AwardData Count SID",
+            "CriteriaData c - Value Measuring:StatEvent ParamX:StatsCategoryData ParamY:StatsCategoryData CriteriaType:CriteriaType CriteriaDescription ScaleFactor Scale ShouldSummarize ShouldHide",
+            "CriteriaType e - CriteriaType_IAR_InARound CriteriaType_IAS_InASpawn CriteriaType_GLOBAL_AllTimeTotal CriteriaType_IfNotTrue CriteriaType_IAD_InADeathStreak",
+            "Crossfader2Node c SoundNode Ctrl:SoundNodePort CtrlOut1:SoundNodePort CtrlOut2:SoundNodePort",
+            "CrossfaderNode c SoundNode Ctrl:SoundNodePort In1:SoundNodePort In2:SoundNodePort Out:SoundNodePort",
+            "CrtAnalogLinkHudFxData c HudFxData SegmentHeight Noise:CrtNoiseData ScanLines:CrtScanLinesData Ghosts:CrtGhostsData ColorTint:ColorTintData RollingBar:CrtRollingBarData InterpolatedBrightness:CrtInterpolatedBrightnessData",
+            "CrtGhostData s - Strength Displacement:Vec2 SubValue",
+            "CrtGhostsData s - Ghost0:CrtGhostData Ghost1:CrtGhostData Ghost2:CrtGhostData",
+            "CrtHudFxData c HudFxData SegmentHeight Noise:CrtNoiseData ScanLines:CrtScanLinesData ColorTint:ColorTintData RollingBar:CrtRollingBarData InterpolatedBrightness:CrtInterpolatedBrightnessData",
+            "CrtInterpolatedBrightnessData s - BaseStrength StrengthDeviation StrengthRecursiveScale",
+            "CrtNoiseData s - StrengthBase StrengthDeviation TimeToLiveBase TimeToLiveDeviation HeightBase HeightDeviation NumBars OnScreenRatio MinStrength MaxStrength Texture:TextureAsset TextureSTScale:Vec2 TextureFilter",
+            "CrtRollingBarData s - Velocity WrapPos Strength Texture:TextureAsset TextureSTScale:Vec2",
+            "CrtScanLinesData s - Strength Texture:TextureAsset TextureSTScale:Vec2 TextureSTOffset:Vec2 TextureFilter",
+            "Curve2D c - Curve[]:Vec2",
+            "CustomColorSet c - EyeColors[]:CustomEyeColor SkinColors[]:CustomSkinColor",
+            "CustomEyeColor c - Color:Vec3",
+            "CustomHead s - Mesh:SkinnedMeshAsset ColorSets[]:CustomColorSet",
+            "CustomSkinColor c - Color:Vec3",
+            "CustomizationOptions c Asset Heads[]:CustomHead ColorSets[]:CustomColorSet EyeColors[]:CustomEyeColor SkinColors[]:CustomSkinColor SoldierTextureUnlockPartCollections[]:TextureUnlockPartCollection SoldierColorUnlockPartCollections[]:ColorUnlockPartCollection",
+            "CutsceneCameraData c AnimatedCameraData DofBone TotalLength CameraLeaps[]:CameraLeapData",
+            "CutsceneEntityData c GameEntityData CutsceneCamera:CutsceneCameraData CameraPeekAroundMaxYaw CameraPeekAroundMaxPitch Sound:WaveAsset LocalizedSound[]:WaveAsset SoundTemplate Sequence:SequenceData Radius TotalLength Subtitle:SubtitleDataTree SyncTimingWithSound IsSkippable MuteGameSound KeepGameSoundMuted VehicleSpawnPoint:VehicleSpawnEntityData EntitySpace:LogicEntityData LoadOnLevelStart FadeInAfterExit CutsceneMenuId:MenuIdEnum AfterCutsceneMenuId:MenuIdEnum",
+            "CutsceneObjectEntityBaseData c GameEntityData AnimTree:AnimTreeData EntitySpace:LogicEntityData TotalLength",
+            "CutsceneObjectEntityData c CutsceneObjectEntityBaseData Model:StaticModelEntityData RemoveModelWhenAnimationEnds VehicleSpawnPoint:VehicleSpawnEntityData CutsceneSoldier:CutsceneSoldierEntityData HandType:CutsceneObjectHandType UseObjectHandIKBone",
+            "CutsceneObjectHandType e - COHTNone COHTRightHand COHTLeftHand",
+            "CutsceneSoldierEntityData c CutsceneObjectEntityBaseData Weapon:SoldierWeaponAsset SpawnPoint:SoldierSpawnBaseEntityData VehicleSpawnPoint:VehicleSpawnEntityData SoldierPositionAfterCutscene:StaticPositionEntityData VehiclePositionToEnter AnimationCullingEnabled",
+            "CutsceneVehicleEntityData c CutsceneObjectEntityBaseData PartBones[] Skeleton:SkeletonAsset SpawnPoint:VehicleSpawnEntityData RootBone",
+            "D3DFORMAT e - D3DFMT_UNKNOWN",
+            "D3DSAMPLERSTATETYPE e - D3DSAMP_ADDRESSU D3DSAMP_ADDRESSV D3DSAMP_ADDRESSW D3DSAMP_BORDERCOLOR D3DSAMP_MAGFILTER D3DSAMP_MINFILTER D3DSAMP_MIPFILTER D3DSAMP_MIPMAPLODBIAS D3DSAMP_MAXMIPLEVEL D3DSAMP_MAXANISOTROPY D3DSAMP_MAGFILTERZ D3DSAMP_MINFILTERZ D3DSAMP_SEPARATEZFILTERENABLE D3DSAMP_MINMIPLEVEL D3DSAMP_TRILINEARTHRESHOLD D3DSAMP_ANISOTROPYBIAS D3DSAMP_HGRADIENTEXPBIAS D3DSAMP_VGRADIENTEXPBIAS D3DSAMP_WHITEBORDERCOLORW D3DSAMP_POINTBORDERENABLE",
+            "DeMuxNode c SoundNode Outputs[]:DeMuxOutput Trigger:SoundNodePort Value:SoundNodePort WrapValue",
+            "DeMuxOutput c SoundNodePortGroup Trigger:SoundNodePort",
+            "DeathAreaTriggerEntityData c GameEntityData Geometry[]:GeometryEntityData Damage TimeToReturn",
+            "DebugConstantData c - BotDebugDistance PathdataViewDistance InViewModeFOV InaccuracyEnabled MinDecisionTime",
+            "DebugEventInput c SoundNodePortGroup E:SoundNodePort Name",
+            "DebugRenderType e - Text Plot Bar",
+            "DebugTestEntityData c GameEntityData",
+            "DebugTextEntityData c TestEntityData DebugText TextColor:Vec3 Centered",
+            "DebugValueInput c SoundNodePortGroup V:SoundNodePort Name RenderType:DebugRenderType Min Max",
+            "DecalSettings c - Enable DrawEnable UseVisualMeshes DumpDebugInfo NormalOffset Bias ClipAngle ProximityDistance AlphaFadeAt DecalSetRingBufferSize ActiveDecalsRingBufferSize PendingDecalsRingBufferSize PendingImpactsRingBufferSize DrawDebugMemUsage DrawDebugTransforms",
+            "DecalTemplateAsset c Asset",
+            "DecalTemplateData c DecalTemplateAsset Size RandomSize Rotation RandomRotation TimeToLive ShaderAssets[]:ShaderAsset IsStatic",
+            "DelayEntityData c LogicEntityData Delay",
+            "DelayNode c SoundNode DelayTime:SoundNodePort Feedback:SoundNodePort In:SoundNodePort Out:SoundNodePort",
+            "DelayTriggerEntityData c TriggerEventEntityData AutoTriggerEvent",
+            "DeltaAnimationAsset c BaseAnimationAsset ReferencePose:BaseAnimationAsset ReferenceFrame",
+            "DeltaGroup c SoundNodePortGroup In:SoundNodePort Delta:SoundNodePort",
+            "DeltaNode c SoundNode Deltas[]:DeltaGroup",
+            "DemoSettings c - TimeDemo PauseOnStartup RecordDemoFileName PlaybackDemoFileName",
+            "DetailedTreeBangerEntityData c TreeBangerEntityData",
+            "DetonatedWeaponEffectsData c WeaponEffectsData LockingController:LockingControllerData Range",
+            "DialogLineNode c VoiceOverChildNode TalkTimes[]:TimePair",
+            "DirLightEntityData c LightEntityData Color:Vec3 Intensity ContributionName DiffuseEnable SpecularEnable",
+            "DisableInterval s - EnableTime1 DisableTime1 DisableTime2 EnableTime2",
+            "DisablePropertyCurve s - DisableIntervals[]:DisableInterval PropertyName",
+            "DisablePropertyCurve_ManualInput c -",
+            "DisablePropertyCurve_ManualInput_EndsAbsoluteTime c DisablePropertyCurve_ManualInput DisableInterval:DisableInterval",
+            "DisablePropertyCurve_ManualInput_NormalizedTime c DisablePropertyCurve_ManualInput DisableIntervals[]:DisableInterval",
+            "DisablePropertyCurve_ManualInput_OrAnimated c DisablePropertyCurve_ManualInput Curve:DisablePropertyCurve_ManualInput",
+            "DisableTeamEntityData c GameEntityData DisableType:DisableTeamType Team:TeamId Geometry:GeometryEntityData",
+            "DisableTeamType e - DttDisable DttUnspawn",
+            "DistanceAttenuationType e - DatLinear DatLogarithmic",
+            "DmzEntityData c GameEntityData TeamId:TeamId Geometry[]:GeometryEntityData",
+            "DogTagData c - UIName Rank ImageName SoundName VO:DialogLineNode",
+            "DynamicCloudLayerData c Asset UV0WindInfluence UV1WindInfluence UV2WindInfluence UV3WindInfluence LinearMaskMin LinearMaskMax LinearMaskRotation DistanceFadeRatio UV01Offset:Vec4 UV23Offset:Vec4 Transform:LinearTransform SimpleCloudPlane:DynamicCloudPlaneLayerData VolumetricCloudPlane:DynamicCloudVolumeLayerData",
+            "DynamicCloudPlaneLayerData s - Ka Ksc GlowSize AmbientColorThin:Vec3 AmbientColorDense:Vec3 LevelLow LevelHigh LevelMid Gradient:Vec4 SimpleLayerTiling:Vec2",
+            "DynamicCloudVolumeLayerData s - Ka Kd Kg Ksc Krim GlowSize WrapAmount AmbientColorThin:Vec3 AmbientColorDense:Vec3 LevelLow LevelHigh LevelMid ParallaxScale Gradient:Vec4 MinSamples MaxSamples NormalMipBias NormalWrapBias VolumetricLayerTiling:Vec2",
+            "DynamicFogData c Asset Start End Clamp Color:Vec3 ColorSun:Vec3 ColorSunPower Density HeightFalloff HeightOffset Eccentrity",
+            "DynamicModelEntityData c DynamicPhysicsEntityData Part:PartComponentData Mesh:MeshAsset MeshShaderSet:MeshShaderSetAsset",
+            "DynamicOutdoorLightData c Asset KeyColor:Vec3 TopColor:Vec3 BottomColor:Vec3 KeyColorIntensity KeySpecularScale TopColorIntensity BottomColorIntensity HemisphereLightAngleFactor ReflectionEnvmapScale DiffuseEnvmapScale ShadowScale CloudShadowScale CloudShadowIntensity Direction:Vec3 Transform:LinearTransform",
+            "DynamicPhysicsEntityData c GamePhysicsEntityData",
+            "DynamicPostProcessData c Asset BloomScale:Vec3 Brightness:Vec3 Contrast:Vec3 Saturation:Vec3 BloomExponent Gamma:Vec3 MiddleGray MinExposure MaxExposure TonemapAdjustTime Hue BlurAdd DebugBlurStep DofBlurFilter:BlurFilter DofBlurFilterDeviation DofFocusDistance DofNearDistanceScale DofFarDistanceScale DofScale DofEnable DepthFactors:Vec4 FadeParams:Vec2",
+            "DynamicSkyData c Asset HorizontalCoefficientsR:Vec4 HorizontalCoefficientsG:Vec4 HorizontalCoefficientsB:Vec4 HorizontalGain HaloColor:Vec3 HaloGain HaloAlphaPower HaloAlphaGain HaloBleedGain HaloBleedPower HaloBackReflectionGain Mu:Vec2 Sigma:Vec2 HazeColor:Vec3 HazeFadeMin HazeFadeMax GroundColorReflection:Vec3 GroundFadeMinReflection GroundFadeMaxReflection ZenithHeight EarthRadius HazeHeight Exposure Eccentrity LambdaR LambdaG LambdaB JungeExponent Turbidity Nair Pair",
+            "DynamicSunData c Asset Theta Phi Size Color:Vec3 Gain Direction:Vec3",
+            "DynamicWeaponPickupEntityData c PickupEntityData WeaponSlots[] KeepAmmoState",
+            "EdgeModelBuilderSettings c Asset VolumeMap[]:EdgeModelVolumeMapItemData PartExclusionPatterns[] CornerPartExclusionPatterns[] MinSpacing MaxSpacing EnableEdgeModels",
+            "EdgeModelGenerationSettings c - VolumeMap[]:EdgeModelVolumeMapItemData SharedSettings:EdgeModelBuilderSettings OrientationVolumes:EdgeModelVolumeAsset",
+            "EdgeModelInstance s - Transform:LinearTransform Normal:Vec3 EdgeModelIndex InstanceSetIndex",
+            "EdgeModelInstances c - Meshes[]:EdgeModelMeshData MultiLinks[]:EdgeModelMultiLinkData Links[]:EdgeModelLinkData",
+            "EdgeModelLinkData s - Instances[]:EdgeModelInstance Link:PartLinkData",
+            "EdgeModelMeshData c Asset Mesh:RigidMeshAsset",
+            "EdgeModelMultiLinkData s - Instances[]:EdgeModelInstance PartComponentIndices[]",
+            "EdgeModelPlacementSettings s - HorizontalAngles[]:FloatRange VerticalAngles[]:FloatRange InwardOffsets[]:FloatRange PlacementType:EdgeModelType Probability",
+            "EdgeModelType e - EmtGeneral EmtCorner",
+            "EdgeModelVolumeAsset c Asset SourceFile RootNode",
+            "EdgeModelVolumeExportResult c - IncludeGroup:EdgeModelVolumeGroup ExcludeGroup:EdgeModelVolumeGroup StripCutterGroup:EdgeModelVolumeGroup",
+            "EdgeModelVolumeGroup s - OutputFileName Groups[]",
+            "EdgeModelVolumeMapItemData s - Meshes[]:EdgeModelMeshData VolumeGroupName",
+            "Editable c Asset",
+            "EffectAsset c ObjectBlueprint",
+            "EffectComponentData c ComponentData Effect:EffectAsset StartTrigger:EffectComponentTrigger StopTrigger:EffectComponentTrigger",
+            "EffectComponentTrigger e - ectInit ectSpawn ectUnSpawn ectPlayerEnter ectPlayerExit ectCameraChange ectCameraChange1P ectCameraChange3P ectCriticallyDamaged",
+            "EffectEntityData c EntityData MaxInstanceCount CullDistance ResetInstanceWhenStarted",
+            "EffectId e - EiReceive EiSend EiOutput EiMonophonicSampler EiFourChannelSampler EiSampler EiFollowEnvelope EiOscillator EiLfo EiMixer EiCrossfader EiCrossfader2 EiMultiCrossfader EiSimpleTransform EiLinearTransform EiNumberGenerator EiScaleClamp EiPhysics EiLowPassIir2 EiHighPassIir2 EiDelay EiUserMusicArbiter EiDeMux EiSequenceGenerator EiAdsr EiMinMax EiCondition EiDelta EiParameterFilterLp EiParameterFilterLinear EiCar EiSimpleCar EiTank EiHelicopter EiJetPlane EiValueDebug EiEventDebug EiJoypad EiNone EffectCount",
+            "EloParameters s - KWinner[]:FunctionPoint KLoser[]:FunctionPoint KNewbie[]:FunctionPoint KCompetitor[]:FunctionPoint Expected[]:ExpectedFunctionPoint",
+            "EmittableField e - EfSpawnAnimationSpeed EfSpawnAnimationFrameIndex EfVelocity EfParameters EfNormTime EfRotation EfSpeed EfUserDefined EfConstantFloat EfConstantVec EfNone",
+            "EmittableType e - Point Quad ScreenAlignedQuad DirectionAlignedQuad Trail ParticleMesh EmittableTypeCount",
+            "EmitterAsset c Editable",
+            "EmitterComponentConnection c - Source:EmitterComponentData Dest:EmitterComponentData",
+            "EmitterComponentData c - Pre:EmitterComponentData",
+            "EmitterConstants e - EmitterMaxCellCount1D",
+            "EmitterData c ProcessorData Emitter:EmitterDocument Mesh:RigidMeshAsset",
+            "EmitterDocument c EmitterAsset EmitterComponents[]:EmitterComponentData RootProcessor:ProcessorData TemplateData:EmitterTemplateData",
+            "EmitterEntityData c EffectEntityData MoveEmitterInSpiral ShootEmitterFromCamera SpawnCompositeMeshPart CompositeMeshPartIndex StartStop Pause Emitter:EmitterAsset",
+            "EmitterHavokInfo s - HavokAsset:HavokAsset ReserveCount",
+            "EmitterParameter e - EmitterParameterNone EmitterParameter1 EmitterParameter2 EmitterParameter3 EmitterParameter4",
+            "EmitterProcessorGroup e - SpawnProcessor LifetimeProcessor LifetimePostProcessor VisualProcessor",
+            "EmitterShaderAsset c Asset Filename",
+            "EmitterSystemAsset c Asset HavokMeshes[]:EmitterHavokInfo HavokMeshCount",
+            "EmitterSystemMetrics s - HavokParticleCount HavokParticlePartCount",
+            "EmitterSystemSettings c - Enable TimeScale GlobalResetStartTimeInterval EnableFixedTimeStep EnableFixedDelta EnableJobs EnableRendering DebugOverdrawCount DrawStats DrawBoundingBoxes MinScreenArea QuadEnableRendering QuadNiceRenderingEnable QuadSimpleRenderingEnable QuadEnableOpaque QuadEnableOverdrawRendering QuadColorShaderCostsEnable QuadEnableSorting QuadEnableWireframe QuadEnableProjectionScaleCulling QuadPs3CullingFactorMultiplier QuadEnableZOcclusion QuadZOcclusionBias QuadHalfResEnable QuadHalfResSlice1ThresholdLow QuadHalfResSlice1ThresholdHigh QuadHalfResSlice2ThresholdLow QuadHalfResSlice2ThresholdHigh QuadGroupsJoinAll QuadGroupsJoinNone QuadGroupsJoinNiceAndSimple QuadTechnique QuadVertexShadowsEnable QuadKeptParticlesAlphaBoost QuadProjectionScaleRampStart QuadProjectionScaleRampEnd MeshRenderingEnable MeshHavokRenderingEnable MeshDrawTransforms MeshDrawBoundingBoxes MeshShadowEnable MeshViewCullingEnable MeshCullingDistance MeshDrawCountLimit MeshStreamingPriorityMultiplier MeshDrawCullStats",
+            "EmitterTemplateData c - RootProcessor:ProcessorData MaxCount Name Lifetime LifetimeFrameCount FollowSpawnSource KillParticlesWithEmitter VisibleAfterDistance EmittableType:EmittableType Mesh:MeshAsset CompositeMeshPartNames[] Physics:HavokAsset PhysicsData:PhysicsEntityData Emissive Opaque VertexPixelLightingBlendFactor GlobalLocalNormalBlendFactor AmbientLightBlendFactor AlphaAsColorBlendFactor SoftParticlesFadeDistanceMultiplier ForceNiceSorting ActAsPointLight PointLightColor:Vec3 PointLightRadius PointLightPivot:Vec3 PointLightRandomIntensityMin PointLightRandomIntensityMax PointLightIntensity:Vec4 PointLightMinClamp PointLightMaxClamp ParticleCullingFactor ClipScaleAlphaThreshold MaxSpawnDistance MinScreenArea OnCollisionEnable OnCollisionSpeedThreshold KillParticleOnCollision ZOcclusionLookup[]",
+            "EmitterTextureAsset c Asset EmitterAssets[]:EmitterAsset Metrics:EmitterSystemMetrics ScenePath",
+            "EmitterTextureInfo s - AnimationFrameCount AnimationFrameColumnCount TextureOriginU TextureOriginV AnimationStepU AnimationStepV NmTextureOriginU NmTextureOriginV NmAnimationStepU NmAnimationStepV EnableAnimation",
+            "EndOfRoundSoldierSpawnEntityData c GameEntityData Rank Team:TeamId",
+            "EndPointData s - Pos EndDamping SpringLength SpringAcceleration SpringDamping",
+            "EngineComponentData c ComponentData Config:EngineConfigData SoundEffect:SoundAsset SimpleEngineSoundEffect:SoundAsset SurfaceSoundEffect:SoundAsset AudioMaterials:AudioMaterialDefinitions",
+            "EngineConfigData c - Position:Vec3 RpmCurvePoints[] TorqueCurvePoints[] RpmMin RpmMax RpmCut EnginePowerMultiplier InternalAccFactor InternalDecFactor BoostStrengthModifier BoostDuration BoostRecovery NeverSlowDown",
+            "EnterVehicleRestriction e - EVRNoRestriction EVRAiOnly EVRSeatSpecific",
+            "Entitlement s - License Id Product Tag",
+            "EntitlementAsset c - Queries[]:EntitlementQuery",
+            "EntitlementQuery c - License CountOnly Id Tag Global GroupName ProductCatalog ProductId Entitlements[]:Entitlement",
+            "EntityBusData c Editable Objects[]:GameObjectData EventConnections[]:EventConnection",
+            "EntityData c GameObjectData Transform:LinearTransform",
+            "EntryClass e - ecPrimary ecSecondary",
+            "EntryComponentData c ComponentData EntryClass:EntryClass AIData:ObjectData InputActionMaps:EntryInputActionMapsData InputCurves[]:InputCurveData HudData:EntryComponentHudData VOTypes[]:VOVehicle EntryOrderNumber EnterImpulse EntryRadius IsAllowedToExitInAir IsAllowedToEnterWillReloadingWeapon IsShielded LockSoldierAimingToEntry ShowSoldierInEntry ShowSoldierWeaponInEntry ShowSoldierGearInEntry PoseConstraints:PoseConstraintsData SoldierOffset:Vec3 AnimationOffset:Vec3",
+            "EntryComponentHudData s - Index Frustum Visible VehicleTrackerData:HudVehicleTrackerData",
+            "EntryEnterRestriction e - eerNoRestriction eerOnlyPrimaryEntry",
+            "EntryInputActionEnum e - EIAThrottle EIAStrafe EIABrake EIAHandBrake EIAYaw EIAPitch EIARoll EIAFire EIAFireCountermeasure EIAAltFire EIACycleRadioChannel EIAZoom EIAJump EIAChangeVehicle EIAChangeEntry EIAChangePose EIAInteract EIAToggleParachute EIACyclePrimaryInventory EIACycleSecondaryInventory EIASelectMeleeWeapon EIAReload EIAToggleCamera EIASprint EIAIngameMenu EIAScoreboardMenu EIACarHorn EIAGearUp EIAGearDown EIAGiveOrder EIASelectWeapon1 EIASelectWeapon2 EIASelectWeapon3 EIASelectWeapon4 EIAMapZoom EIASnapView EIASelectAll EIASelect1 EIASelect2 EIASelect3 EIUndefined",
+            "EntryInputActionMapData c InputActionMapData",
+            "EntryInputActionMapsData c Asset ActionMapSettingsScheme DefaultInputActionMap InputActionMaps[]:EntryInputActionMapData",
+            "EnumeratedSwitchNodeData c BaseNodeData Nodes[]:EnumeratedSwitchNodeGroupData Transitions[]:TransitionInfoData NodeSelectorParameter:IntParameter DisableTransitionsParameter:BoolParameter",
+            "EnumeratedSwitchNodeGroupData c AnimNodePortGroupData NodeData:BaseNodeData",
+            "EnvironmentConstantData c - BangerIncludeDistance",
+            "EnvmapLightEntityData c LightEntityData Color:Vec3 Texture:TextureAsset EnvmapType:EnvmapLightType ContributionName",
+            "EnvmapLightType e - EltDiffuse EltSpecular EltReflection",
+            "EqualizerSettings c - LowShelfFrequency LowShelfGain HighShelfFrequency HighShelfGain HpCutoffFrequency",
+            "EulaTexture s - Language:LanguageFormat Image:TextureAsset",
+            "EvaluatorData c EmitterComponentData EvaluatorType:EvaluatorType EmitterParameter:EmitterParameter",
+            "EvaluatorType e - EtDefault EtBox EtMesh EtPolynomial EtPolynomialOperator EtRandom EtRandomXYZ EtRotateVector EtSampleTexture EtSphere EtConstant EtPolynomialColorInterp EvaluatorTypeCount",
+            "EventConnection s - Source:GameObjectData Target:GameObjectData SourceEvent:EventSpec TargetEvent:EventSpec",
+            "EventDebugNode c SoundNode Events[]:DebugEventInput",
+            "EventGateEntityData c GameEntityData Timer PassThrough",
+            "EventIfSwitchEntityData c GameEntityData StartState RunOnce",
+            "EventMemoryEntityData c GameEntityData",
+            "EventScaleData s - Event:StatEvent Scale",
+            "EventSequenceTriggerEntityData c TriggerEventEntityData Random",
+            "EventSpec s - Name Id",
+            "EventSplitterEntityData c GameEntityData RunOnce",
+            "ExpectedFunctionPoint c - XValue YValue",
+            "ExplosionEntityData c GameEntityData DetonationEffect:EffectAsset SootDecal Material EmpTime InnerBlastRadius BlastDamage BlastRadius BlastImpulse ShockwaveDamage ShockwaveRadius ShockwaveImpulse ShockwaveTime DisableOcclusion UseAsPreDestuctionEntity IsCausingSuppression",
+            "ExplosionImpulseTestEntityData c TestEntityData fireRate explosionStrength Explosion:ExplosionEntityData",
+            "ExplosionPackEntityData c MeshProjectileEntityData VehicleDetonationActivationDelay VehicleDetonationRadius HasRemoteDetonator HasVehicleDetonation TimeToLiveOnPlayerDeath IsDestructible ReceivesExplosionDamage Health SpottedTime",
+            "ExplosiveObjectData c - Transform:LinearTransform BoxMin:Vec3 BoxMax:Vec3 Enumeration ExplosionRadius ShockwaveRadius",
+            "Expression c - Components[]:ExpressionComponent",
+            "ExpressionCollectionData c Editable Expressions[]:Expression",
+            "ExpressionComponent c - ExpressionType:ExpressionType Operator:ExpressionOperator Coefficients:Vec4 ScaleValue MinClamp MaxClamp",
+            "ExpressionOperator e - ExpressionOperatorNone ExpressionOperatorAdd ExpressionOperatorSub ExpressionOperatorMul",
+            "ExpressionType e - PolynomialExpression SineExpression CosineExpression",
+            "ExtraMoviesConfig s - TutorialMovies[]:UIMovieAsset SPCutScenes[]:UIMovieAsset OtherGames[]:UIMovieAsset Trailers[]:UIMovieAsset",
+            "FPSCameraData c TargetCameraData ImpulseSettings:CameraImpulseShakeData BulletImpulseSettings:CameraImpulseShakeData TurnEffectSettings:TurnEffectData BlurEffectSettings:BlurEffectData",
+            "FacialSoundMapData s - SoundAsset:Asset AnimIndex",
+            "FactionId e - FactionNeutral FactionUS FactionRUS FactionMEC FactionIdCount",
+            "FaderType e - FtLinear FtCosine",
+            "FakeHingeData c FakePhysicsData Pivot:Vec3 RotationAxis:Vec3 ExtensionAxis:Vec3 MinAngle MaxAngle AngularDampening PullbackAcceleration ProgressiveExponent InertiaModifier",
+            "FakePhysicsData c - ChildFakePhysics:FakePhysicsData StartSpeed GravityModifier StartDampening EndDampening MinSpeed MaxSpeed Mass",
+            "FakeSpringData c FakePhysicsData Direction:Vec3 Length Acceleration ProgressiveExponent Damping",
+            "FallingStateData c CharacterStateData",
+            "FenceModelEntityData c StaticModelEntityData Width Angle",
+            "FileQueryData c Asset Results[]",
+            "FireAtAreaOrderEntityData c OrderEntityData Area[]:GeometryEntityData StopIfPlayerIsSensed",
+            "FireEffectData s - Effect:EffectAsset Offset:Vec3 Rotation:Vec3 ZoomOffset:Vec3 UseZoomOffset ZoomRotation:Vec3 UseZoomRotation DisableDuringZoom",
+            "FireLogicData s - HoldAndRelease:HoldAndReleaseData BoltAction:BoltActionData TriggerPullWeight RateOfFire ClientFireRateMultiplier ReloadDelay ReloadTime ReloadThreshold PreFireDelay AutomaticDelay MaxRecoilAngleX MinRecoilAngleX MaxRecoilAngleY MinRecoilAngleY MaxRecoilAngleZ MinRecoilAngleZ MaxRecoilFov MinRecoilFov RecoilFollowsDispersion WaitForTriggerRelease ReloadLogic:ReloadLogic ReloadType:ReloadType FireLogicType:FireLogicType",
+            "FireLogicType e - fltSingleFire fltSingleFireWithBoltAction fltAutomaticFire fltHoldAndRelease fltDetonatedFiring",
+            "FiringDispersionData s - MinAngle MaxAngle IncreasePerShot DecreasePerSecond",
+            "FiringFunctionData c - Dispersion[]:FiringDispersionData WeaponDispersion:SoldierWeaponDispersion FireEffects1p[]:FireEffectData FireEffects3p[]:FireEffectData FireSoundEffect:EffectAsset OutOfAmmoSoundEffect:SoundAsset ReflectionSound:SoundAsset Shot:ShotConfigData FireLogic:FireLogicData Ammo:AmmoConfigData OverHeat:OverHeatData UsePrimaryAmmo UnlimitedAmmoForAI LoopingFireSound AmmoCrateReloadDelay SelfHealTimeWhenDeployed IsCounterMeasureWeapon AttackOnWeaponSwitch SwitchToPreviousWeapon AutoFireOnActivetWeapon AutoFireDelay",
+            "FirstPersonCameraData c - Offset:Vec3 Rotation:Vec3 WeaponSpringEffect:WeaponLagSpringEffectData CameraSpringEffect:WeaponLagSpringEffectData MoveStrafeModifier MoveForwardModifier RotateYawModifier RotatePitchModifier RotateRollModifier ZoomMoveStrafeModifier ZoomMoveForwardModifier ZoomRotateYawModifier ZoomRotatePitchModifier ZoomRotateRollModifier ReleaseModifier",
+            "FlagConstructibleModelEntityData c ConstructibleModelEntityData",
+            "FloatNodeGroupData c AnimNodePortGroupData NodeData:BaseNodeData Parameter:FloatParameter Max Min",
+            "FloatParameter c BaseParameter InitialValue",
+            "FloatParameterExpressionData c BaseExpressionData Parameter:FloatParameter Value Comparison:ComparisonType",
+            "FloatPhysicsData c - Density FilledDensity",
+            "FloatPropertyTrackData c PropertyTrackData Values[]",
+            "FloatRange s - Min Max Probability",
+            "FloatSetting s - Name Value",
+            "FloatValueGroupData c AnimNodePortGroupData Parameter:FloatParameter Max Min Invert",
+            "FogFunctionType e - FftNone FftLinear FftExponential FftExponentialSquared FftAnalytical FftHybrid FftVolumetricHeight",
+            "FollowAISoldierOrderEntityData c OrderEntityData Target[]:SoldierSpawnBaseEntityData",
+            "FollowClosestHumanOrderEntityData c OrderEntityData",
+            "FollowConstantData c - DistanceFromPlayerBeforeTeleport FollowHumanMaxDistance FollowHumanInCombatMaxDistance FollowAiMaxDistance FollowAiInCombatMaxDistance FollowMimicPoseDistance FollowInertia SlowStartDistance SlowStartMinTime SlowStopDistance LookAwayAngle",
+            "FollowEnvelopeNode c SoundNode X:SoundNodePort Y:SoundNodePort Base Scale",
+            "FootStepTrigger s - Time",
+            "ForbiddenAIAreaData c LogicEntityData Geometry:GeometryEntityData",
+            "ForceMagnitudeInputType e - FMITYaw FMITPitch FMITRoll FMITThrottle",
+            "ForestEntityData c GroupEntityData",
+            "FormationData c - Positions[]:Vec3 Name",
+            "FormationHolder c Asset Formations[]:FormationData",
+            "FourChannelSamplerGroup c SamplerGroup",
+            "FourChannelSamplerNode c SamplerNode",
+            "FunctionPoint c - XValue YValue",
+            "GameAnimationSettings c - RespawnOnResourceReload",
+            "GameEffectEntityData c GameEntityData Effect:EffectAsset Soldier:SoldierSpawnBaseEntityData SoldierBoneName Multiplier PlayFromClient",
+            "GameEntityData c LogicEntityData",
+            "GameInteractionEntityData c InteractionEntityData InteractionEntityType:InteractionEntityType OnInteractionSendDelay DelayBetweenUses TeamId:TeamId SendOnInteractionOnAnimationStart IsHumanAllowed HoldToInteractTime StaticModel:ReferenceObjectData",
+            "GameModeObjective s - Attacker Defender",
+            "GameModeTypes e - SinglePlayer Multiplayer_Day1 Multiplayer_Day2",
+            "GameObjectData c - Components[]:GameObjectData Enumeration Name",
+            "GamePhysicsEntityData c GameEntityData PhysicsData:PhysicsEntityData Material",
+            "GameRenderSettings c - MultisampleCount Fullscreen ForceVSyncEnable Dx10Enable Dx10DebugInfoEnable Dx9AdapterIndex Dx9RefreshRate XenonRingBufferSize XenonBufferTwoFramesEnable XenonPresentImmediateThreshold Ps3FrameMainBufferSize Ps3FrameLocalBufferSize Ps3LinearFrameCmdBufEnable Ps3CellMemoryTexturesEnable GcmHudEnable PerfOverlayEnable PerfOverlayVisible SkipMipmapCount DrawShaderStats DrawInfo JobEnable JobThreadIndex JobPriority BuildJobSyncEnable DecalsEnable EmittersEnable EntityRenderEnable DebugRendererEnable InitialClearEnable GpuProfilerEnable NearPlane ViewDistance ForceFov RigidMeshBatchingEnable CompositeMeshBatchingEnable EdgeModelsEnable EdgeModelCastShadowsEnable EdgeModelScreenAreaScale EdgeModelDefaultMinScreenArea EdgeModelSpuInstancingEnable EdgeModelUseMainLodEnable EdgeModelForceLod EdgeModelUseLodBox EdgeModelLodScale EdgeModelMaxVisibleInstanceCount EdgeModelCullEnable EdgeModelFrustumCullEnable EdgeModelOcclusionCullEnable EdgeModelAdditionalCullEnable EdgeModelDrawBoxes EdgeModelDrawStats StaticModelPartCullEnable StaticModelPartFrustumCullEnable StaticModelPartOcclusionCullEnable StaticModelPartShadowCullEnable StaticModelDrawBoxes StaticModelDrawStats StaticModelPartOcclusionMaxScreenArea StaticModelCullJobCount StaticModelCullSpuJobEnable LockView ResetLockedView FadeEnable FadeWaitingEnable ForceBlurAmount ForceWorldFadeAmount ForceGlobalFadeAmount ShadowsEnable NiceShadowsEnable ForegroundBlurEnable BlurEnable",
+            "GameSettingEntityData c GameEntityData ChangeSetting:ChangeGameSettingType",
+            "GameSettings c - GameVersion MaxPlayerCount LogFileEnable VsyncEnable MaxFps ForceDeltaTime ForceDeltaTicks ResourceReloadingEnable FastStartupEnable UseSingleWeaponSelector UseCustomKit UseBundles BundleMountPoints[]:BundleMountPoint Ps3HDDGameDataEnable XenonJobThread0Enable XenonJobThread1Enable XenonJobThread2Enable XenonJobThread3Enable XenonJobThread4Enable XenonJobThread5Enable ReplayDebug UIConstructibleList RetailServers AutoAimEnabled PS3ContentRatingAge NoInteractivityTimeoutTime NoInteractivityThresholdLimit TeamKillCountForKick TeamKillValueForKick TeamKillValueIncrease TeamKillValueDecreasePerSecond RotateLogs LogHistory AdjustVehicleCenterOfMass",
+            "GameSettingsAsset c Asset Categories[]:GameSettingsCategory",
+            "GameSettingsCategory s - Category:GameSettingsType Floats[]:FloatSetting Ints[]:IntSetting Strings[]:StringSetting Binaries[]:BinarySetting",
+            "GameSettingsType e - GstAudio GstRender GstInput GstAI GstGameplay GstPlayerProfile GstPersistence GstBinary GstCount",
+            "GameSootSettings c - ExpandAroundPartMin ExpandAroundPartMax ExpandAroundExplosionMin ExpandAroundExplosionMax SootForExplosionsEnable SootForBulletsEnable DrawPartBounds",
+            "GameSoundEntityData c GameEntityData Sound:SoundAsset PlayFromClient",
+            "GameTestEntityData c TestEntityData TimeoutTime",
+            "GameTipAsset c Asset Tips[]:GameTipData",
+            "GameTipData s - Text",
+            "GarrisonEntityData c GameEntityData CreateSoldierOnSpawn",
+            "GearboxConfigData c - ForwardGearRatios[] ForwardGearSpeeds[] ReverseGearRatios[] ReverseGearSpeeds[] GearboxType GearboxMode GearChangeTime GearDownSpeedFactor OppositeDirGearChangeMaxSpeed OppositeDirGearChangeTime ClutchSpeedFactor TransmissionEfficiency UseAutoClutch UseClassicGearBoxAutoClutch UseNeutralGear",
+            "GenericHandsIkNodeData c BaseHandsIkNodeData TargetObjectWorldPosition:Mat4Parameter TargetObjectName AnimationPose:AnimationAsset ObjectPose:AnimationAsset PoseFrame",
+            "GenericPropertyTrackData c PropertyTrackData Values[]",
+            "GeometryEntityData c EntityData",
+            "GlobalPostProcessSettings c - DebugMode:PostProcessDebugMode HdrBlurEnable HdrBloomEnable Ldr16BitBloomEnable LdrBloomRange ExposureClampEnable DirectExposureEnable DrawDebugInfo QuarterDownsamplingEnable BlurBlendEnable BloomBlurEnable DownsampleLogAverageEnable DownsampleAverageFromBloomEnable DownsampleAverageStartMipmap DownsampleBeforeBlurEnable PostTonemapBlurEnable Ps3BackBufferAsLdrTargetEnable ForceBlurAdd ForceDofEnable ForceDofFocusDistance ForceDofNearDistanceScale ForceDofFarDistanceScale ForceDofScale ForceDofBlurFilterDeviation ForceBloomScale:Vec3 ForceVignetteScale:Vec2 ForceVignetteExponent ForceVignetteColor:Vec4 FilmGrainEnable FilmGrainTextureScale:Vec2 FilmGrainColorScale:Vec3 FilmGrainLinearFilteringEnable Brightness:Vec3 Contrast:Vec3 Saturation:Vec3 Hue Ps3Brightness:Vec3 Ps3Contrast:Vec3 Ps3Saturation:Vec3 Ps3Hue",
+            "GravityData c ProcessorData Gravity",
+            "GrenadeEntityData c MeshProjectileEntityData Gravity CollisionSpeedMultiplier MinBounceSpeed GrenadeProximityRadius GrenadeProximityTime",
+            "GroundmapLightEntityData c LightEntityData Color:Vec3 Size:Vec2 Offset:Vec2 Texture:TextureAsset SideScale Intensity AttenuationSize BleedSize ContributionName",
+            "GroupEntityData c GamePhysicsEntityData MemberDatas[]:GroupMemberData",
+            "GroupMemberData c - SpawnDatas[]:GroupMemberInstanceSpawnData MemberType:GamePhysicsEntityData Name FirstPhysicsPart PhysicsPartCount PhysicsPartCountPerInstance InstanceCount",
+            "GroupMemberInstanceSpawnData s - Enumeration MeshShaderSet:Asset",
+            "GroupNodeData c BaseNodeData Nodes[]:GroupNodeGroupData",
+            "GroupNodeGroupData c AnimNodePortGroupData Node:BaseNodeData",
+            "GunSwayBaseData s - BaseValue:GunSwayDispersionData Recoil:GunSwayRecoilData GunSwayLag:GunSwayLagData",
+            "GunSwayBaseMoveData s - BaseValue:GunSwayDispersionData Moving:GunSwayDispersionData Recoil:GunSwayRecoilData GunSwayLag:GunSwayLagData",
+            "GunSwayBaseMoveJumpData s - BaseValue:GunSwayDispersionData Moving:GunSwayDispersionData Jumping:GunSwayDispersionData VaultingSmallObject:GunSwayDispersionData VaultingMediumObject:GunSwayDispersionData Recoil:GunSwayRecoilData GunSwayLag:GunSwayLagData",
+            "GunSwayCrouchProneData s - NoZoom:GunSwayBaseMoveData Zoom:GunSwayBaseMoveData",
+            "GunSwayData c WeaponSwayData Stand:GunSwayStandData Crouch:GunSwayCrouchProneData Prone:GunSwayCrouchProneData ProneToCrouch:GunSwayStanceTransition ProneToStand:GunSwayStanceTransition CrouchToProne:GunSwayStanceTransition CrouchToStand:GunSwayStanceTransition StandToProne:GunSwayStanceTransition StandToCrouch:GunSwayStanceTransition SuppressionModifier:GunSwayStanceZoomModifierData Modifiers[]:GunSwayModifierData DeviationScaleFactorZoom GameplayDeviationScaleFactorZoom DeviationScaleFactorNoZoom GameplayDeviationScaleFactorNoZoom CameraRecoil:CameraRecoilData",
+            "GunSwayDispersionData s - MinAngle MaxAngle IncreasePerShot DecreasePerSecond",
+            "GunSwayDispersionModData s - MinAngleModifier MaxAngleModifier IncreasePerShotModifier DecreasePerSecondModifier",
+            "GunSwayLagData s - MoveStrafeModifier MoveForwardModifier RotateYawModifier RotatePitchModifier ReleaseModifier",
+            "GunSwayModifierData c UnlockPartData StandZoomModifier:GunSwayStanceZoomModifierData StandNoZoomModifier:GunSwayStanceZoomModifierData CrouchZoomModifier:GunSwayStanceZoomModifierData CrouchNoZoomModifier:GunSwayStanceZoomModifierData ProneZoomModifier:GunSwayStanceZoomModifierData ProneNoZoomModifier:GunSwayStanceZoomModifierData OnlyInSupportedShooting",
+            "GunSwayRecoilData s - RecoilAmplitudeMax RecoilAmplitudeIncPerShot RecoilAngleMax RecoilAngleIncPerShot RecoilAmplitudeDecreaseFactor",
+            "GunSwayStanceTransition s - MaxPenaltyValue:GunSwayDispersionData CoolDown",
+            "GunSwayStanceZoomModifierData s - DispersionMod:GunSwayDispersionModData RecoilMagnitudeMod RecoilAngleMod LagYawMod LagPitchMod",
+            "GunSwayStandData s - NoZoom:GunSwayBaseMoveJumpData Zoom:GunSwayBaseMoveJumpData",
+            "GunrackArmy e - GunrackArmy_US GunrackArmy_MEC GunrackArmy_RU",
+            "GunrackCamera s - Offset:Vec3 Distance",
+            "GunrackCategory s - Category:GunrackCategoryType Slots[]:GunrackSlot",
+            "GunrackCategoryType e - GunrackCategoryType_AssaultRifle GunrackCategoryType_SubMachineGun GunrackCategoryType_LightMachineGun GunrackCategoryType_SniperRifle GunrackCategoryType_Shotgun GunrackCategoryType_RocketLauncher GunrackCategoryType_Items GunrackGategoryType_Count",
+            "GunrackConfig s - Categories[]:GunrackCategory CameraInterpolationSpeed SmallCamera:GunrackCamera BigCamera:GunrackCamera",
+            "GunrackSlot s - WeaponName WeaponDescription WeaponTexture:TextureAsset RetailerLogo:TextureAsset Army:GunrackArmy Kit:KitCategory Accuracy RateOfFire ClipSize Damage Handling Persistence:PersistentWeapon Scene:SceneData CameraOffset:Vec3 CameraOffsetZoomedIn:Vec3 CollectibleDescription",
+            "HaloAimerData c - InputPolynomial[] ZoomedInputPolynomial[] SuckDistanceFallOff[] AccelerationInputThreshold AccelerationMultiplier AccelerationDamping YawSpeed PitchSpeed SuckSoftZone SuckUserInputMultiplier SuckOwnSpeedInfluence SuckTargetSpeedInfluence SuckOwnRequiredMovementForMaximumSuck SuckStartInputThreshold SuckZoomingMultiplier SuckZoomingPostTime SuckYaw SuckPitch UseYawAcceleration UsePitchAcceleration",
+            "HandIkInfo s - LocalPosition:LinearTransform HandIndex",
+            "HandInfoData s - HandBoneName HandIkProperty:AnimatedPropertyData HandInfluenceMap:InfluenceMapData BoneIndices[]",
+            "HavokAsset c Asset MaterialMappings[] PhysicsMaterialSets[]:PhysicsMaterialSetAsset PartMaterialDatas[]:PartMaterialData FaceMaterials[] ParticleAllotment IsStatic",
+            "HdrSetting c - RmsReleaseTime RmsAttackTime RmsSmoothFactor WindowMinTop WindowMinBottom WindowReleaseTime WindowAttackTime WindowSize CompressFactor Headroom",
+            "HealerData s - Radius Health HealingTime PickUpDelay",
+            "HealthStateData c - Effects[]:EffectAsset Explosion:ExplosionEntityData LoosePartPhysicsArray[]:NetworkableLoosePartPhysicsData SpawnedBanger:DynamicPhysicsEntityData LoosePartPhysics:NetworkableLoosePartPhysicsData MeshName PreferedShapeType:ShapeType Health",
+            "HeightConversionMethod e - HcmAlphaChannel HcmAverageRGB HcmBiasedRGB HcmRed HcmGreen HcmBlue HcmMaxRGB HcmColorSpace HcmNormalize HcmNormalMapToHeightMap",
+            "HeightfieldProxy c -",
+            "HelicopterControlConstantData c - HeightToSpeedScale MinSpeedForHeightSpeedRestriction HeightSpeedDamper HeightSpeedToThrottleScale HeightSpeedToBrakeScale HeightTiltInfluence MaxThrottle MaxBrake AlwaysAttainHeightDistance MovementToVelocityScale ForwardsSpeedDamper SidewaysSpeedDamper ForwardsSpeedToPitchScale SidewaysSpeedToRollScale MaxMovementPitch MaxAimPitch PitchToAngularSpeedScale PitchAngularSpeedDamper PitchAngularSpeedToPitchInputScale MaxPitchInput PitchAimOverride MaxRoll RollToAngularSpeedScale RollAngularSpeedDamper RollAngularSpeedToRollInputScale MaxRollInput YawDifferenceToAngularSpeedScale YawAngularSpeedDamper YawAngularSpeedToYawInputScale MaxYawInput AttackDistance AttackSideSearchDistance MaxAttackHeightDiff MinAttackDistance PostAttackClearDistance AttackHeight CombatMovementRadius TargetProximity TargetTooClose AttackHoverTime AttackPilotHeight PilotHeightSpan AttackPilotMaxSpeed PilotMoveStep TurnGunnerCheckAngle EvasiveMiniumSpeed EvasiveEstimatedImpactTime EvasiveDeflectionAngle EvasiveAltitude EvasiveWaypointRadius",
+            "HelicopterNode c SoundNode Start:WaveAsset Stop:WaveAsset Engine:WaveAsset RotorClose:WaveAsset RotorDistant:WaveAsset HfNoise:WaveAsset Turbine:WaveAsset Interior:WaveAsset StartOut:SoundNodePort StopOut:SoundNodePort EngineOut:SoundNodePort RotorCloseOut:SoundNodePort RotorDistantOut:SoundNodePort HfNoiseOut:SoundNodePort TurbineOut:SoundNodePort InteriorOut:SoundNodePort Velocity:SoundNodePort InDriverPos:SoundNodePort InteriorCam:SoundNodePort Tilt:SoundNodePort Distance:SoundNodePort ReleaseEvent:SoundNodePort Rotor_Close_Distant_Fade:Vec2 Engine_Velocity_Pitch:Vec4 Engine_Tilt_Pitch:Vec4 Rotor_Velocity_Pitch:Vec4 Rotor_Velocity_Amp:Vec4 Turbine_Velocity_Pitch:Vec4 Turbine_Velocity_Amp:Vec4 HfNoise_Velocity_Pitch:Vec4",
+            "HidableSoldierMeshWeaponPart s - WeaponMesh:SkinnedMeshAsset BoneName HideAlways HideInVehicleEntries",
+            "HighPassIir2Node c SoundNode Frequency:SoundNodePort In:SoundNodePort Out:SoundNodePort",
+            "HoldAndReleaseData s - MaxHoldTime MinPowerModifier MaxPowerModifier PowerIncreasePerSecond Delay",
+            "HotItemAsset c ObjectBlueprint",
+            "HotZoneEntityData c GameEntityData UpdateDelay Geometry[]:GeometryEntityData",
+            "HovercraftFloatPhysicsData c HullFloatPhysicsData LandResistanceAxisMod:Vec3 LandFrictionAxisMod:Vec3 FrontLength SideLength",
+            "HudConfigAsset c Asset OutOfAreaVO:DialogLineNode AntiSpam:AntiSpamConfig Objective:GameModeObjective Vignettes[]:VignetteData AmmoPickupSound:WaveAsset WeaponPickupSound:WaveAsset NewObjectiveSound:WaveAsset ObjectiveCompletedSound:WaveAsset ObjectiveUpdatedSound:WaveAsset MPVictorySoundMec:WaveAsset MPVictorySoundUs:WaveAsset MPVictorySoundRu:WaveAsset MPDefeatSoundMec:WaveAsset MPDefeatSoundUs:WaveAsset MPDefeatSoundRu:WaveAsset ArtilleryAiming:WaveAsset ArtilleryAimingOOA:WaveAsset MortarStrikeLocking:WaveAsset LaserDesignatorLocked:WaveAsset LaserDesignatorLocking:WaveAsset ShowSpawnPointsOnMinimap Collectibles:CollectibleWeaponData SpawnScreenWeapons[]:SpawnScreenWeaponData",
+            "HudData s - CrosshairScaleMin CrosshairScaleMax CrosshairOpacityMin CrosshairOpacityMax CrosshairOpacityModifier CrosshairTypeId WeaponClass HintAction1:EntryInputActionEnum HintAction2:EntryInputActionEnum HintLine1 HintLine2 HintDuration InfiniteAmmo HideCrosshairWhenAimOnFriend",
+            "HudEntityData c GameEntityData",
+            "HudFxData c - ScissorRegion:Vec4",
+            "HudVehicleTrackerData c - EnemyTrackerIcon:UIHudIcon OutsideScreenTrackerIcon:UIHudIcon EnemyBehindTrackerIcon:UIHudIcon EnableEdgePointers ShowTracker TrackSpecificVehicles VehicleTypes[]:VehicleAsset MaxDistance IconSize",
+            "HullFloatPhysicsData c FloatPhysicsData WaterResistanceAxisMod:Vec3 WaterFrictionAxisMod:Vec3 Offset:Vec3 SubSurfaceSplits Depth Width Length FrontCurveDegree SideCurveDegree NonEngineSteer WaterDampeningMod LiftModifier SupportSizeMod AngularDampening FrictionThrottleModifier",
+            "HumanPlayerEntityData c GameEntityData PlayerKilledDelay LastManStandingSid DisplayTime",
+            "IfNodeData c BaseNodeData BoolValues[]:BoolValueGroupData FloatValues[]:FloatValueGroupData IntValues[]:IntValueGroupData ThenNode:BaseNodeData ElseNode:BaseNodeData Expression:BaseExpressionData",
+            "InAirStateData c CharacterStateData FreeFallVelocity",
+            "IndexBufferFormat e - Ibf16Bit Ibf32Bit",
+            "IndexedAnimationData c - AnimTree:AnimTreeDataAsset IndexParameter StartParameter StopParameter ExternalAnimParameter AddOnDemand BlendOutAnimTree",
+            "InfluenceMapBoneData c - BoneName Weight",
+            "InfluenceMapData c BaseInfluenceMapData InfluenceMapEffects[]:InfluenceMapEffectData Dynamic",
+            "InfluenceMapEffectData c - InfluenceMap:InfluenceMapData EffectToInfluenceMap:InfluenceMapData",
+            "InputActionData c - ActionName",
+            "InputActionMapData c - Actions[]:InputActionsData PlatformSpecific:InputActionMapPlatform Slot:InputActionMapSlot",
+            "InputActionMapPlatform e - IAMPWin32 IAMPXenon IAMPPs3 IAMPAllPlatforms",
+            "InputActionMapSlot e - IAMESlot1 IAMESlot2 IAMESlot3 IAMESlot4 IAMESlot5 IAMESlot6 IAMESlot7 IAMESlot8 IAMESlotCount",
+            "InputActionsData c - InputActions[]:InputActionData",
+            "InputCurveData c - AffectedInputs[]:EntryInputActionEnum InputModifierCurve[]:Vec2 HandleMultipleInputsAsSquare",
+            "InputRestrictionEntityData c GameEntityData OverridePreviousInputRestriction Throttle Strafe Brake HandBrake CarHorn Yaw Pitch Roll Fire FireCountermeasure AltFire CycleRadioChannel SelectMeleeWeapon Zoom Jump ChangeVehicle ChangeEntry ChangePose ToggleParachute CyclePrimaryInventory CycleSecondaryInventory Reload ToggleCamera Sprint IngameMenu ScoreboardMenu MapZoom GearUp GearDown GiveOrder SnapView SelectAll Select1 Select2 Select3",
+            "InputSuppressionData s - SuppressVehicleInput[]:ActionSuppressor",
+            "IntNodeGroupData c AnimNodePortGroupData NodeData:BaseNodeData Parameter:IntParameter Max Min",
+            "IntParameter c BaseParameter InitialValue",
+            "IntParameterExpressionData c BaseExpressionData Parameter:IntParameter Value Comparison:ComparisonType",
+            "IntPropertyTrackData c PropertyTrackData Values[]",
+            "IntSetting s - Name Value",
+            "IntValueGroupData c AnimNodePortGroupData Parameter:IntParameter Max Min Invert",
+            "InteractableStaticModelEntityData c StaticModelEntityData",
+            "InteractionEntityData c GameEntityData SoldierAnimTree:AnimTreeDataAsset UseWithinRadius UseWithinAngle TestIfOccluded MaxUses PreInteractionSoundEffect:SoundAsset",
+            "InteractionEntityType e - IEDefault IEGold IEArmSDK IEDefuseSDK",
+            "InterludeOrderEntityData c OrderEntityData IsCutscene Crouch",
+            "InterpolationType e - None Linear",
+            "IntroMovieData s - Movies[]:UIMovieAsset",
+            "IrAsset c WaveAsset",
+            "IrradianceVolumeSettings c - Enable Debug ScaleSoldier ScaleVehicle ScaleDefault MinVal Fade",
+            "JetEngineConfigData c EngineConfigData DirectionVectorIndex ForceMagnitudeMultiplier AngleInputYMultiplier AngleInputPitchMultiplier MaxVelocity IsTurnable IsWaterJetEngine PowerFadeOutRange:Vec2",
+            "JetPlaneNode c SoundNode Ext_Startup:WaveAsset Ext_Shutdown:WaveAsset Ext_Idle:WaveAsset Ext_Front_Turbine:WaveAsset Ext_Rear_Exhaust:WaveAsset Ext_Fly_Near:WaveAsset Ext_Fly_Far:WaveAsset Ext_Afterburner:WaveAsset Int_Startup:WaveAsset Int_Idle:WaveAsset Int_Cockpit:WaveAsset Int_Full_Throttle:WaveAsset Int_Afterburner:WaveAsset Int_Dive_Turbine:WaveAsset Int_Turbine_Attack:WaveAsset Ext_Startup_Out:SoundNodePort Ext_Shutdown_Out:SoundNodePort Ext_Idle_Out:SoundNodePort Ext_Front_Turbine_Out:SoundNodePort Ext_Rear_Exhaust_Out:SoundNodePort Ext_Fly_Near_Out:SoundNodePort Ext_Fly_Far_Out:SoundNodePort Ext_Afterburner_Out:SoundNodePort Int_Startup_Out:SoundNodePort Int_Idle_Out:SoundNodePort Int_Cockpit_Out:SoundNodePort Int_Full_Throttle_Out:SoundNodePort Int_Afterburner_Out:SoundNodePort Int_Dive_Turbine_Out:SoundNodePort Int_Turbine_Attack_Out:SoundNodePort Velocity:SoundNodePort InDriverPos:SoundNodePort InteriorCam:SoundNodePort Tilt:SoundNodePort Distance:SoundNodePort Throttle:SoundNodePort GroundContact:SoundNodePort ReleaseEvent:SoundNodePort Fly_Near_Far_Fade:Vec2 Fly_Idle_Throttle_Fade:Vec2 Fly_Idle_Velocity_Fade:Vec2 Dive_Tilt_Amp:Vec4 ThrottleChangeSpeed",
+            "JoinSquadOrderEntityData c OrderEntityData SquadToJoin:SquadBaseEntityData",
+            "JoypadNode c SoundNode LeftAnalogX:SoundNodePort LeftAnalogY:SoundNodePort RightAnalogX:SoundNodePort RightAnalogY:SoundNodePort AButton:SoundNodePort BButton:SoundNodePort",
+            "JumpStateData c CharacterStateData JumpHeight JumpEffectSize",
+            "KillAllEntityData c GameEntityData KillAllHumanSoldiers",
+            "KitCategory e - KCAssault KCDemolition KCRecon KCSpecialist KCSupport KCRecruit KCRifleman KCAntitank KCMachinegunner KCSpecialforces KCSniper KCFieldworks KCCombatmedic KCUnknown KCUCount",
+            "KitPickupEntityData c PickupEntityData Kit:SoldierAsset KeepAdditionalWeapons KeepAmmoState",
+            "KynapseConstantData c - KynapseLicenseServerName MaxEntityCount",
+            "LadderEntityData c StaticModelEntityData",
+            "LandingFlapData c - ActivationHeight HeightTolerance ActivationVelocity VelocityTolerance",
+            "LandingGearEntryComponentData c PlayerEntryComponentData LandingGearRetractionData:LandingGearRetractionData",
+            "LandingGearRetractionData s - LandingGearInput:EntryInputActionEnum EnablePitchCondition PitchLimit EnableRollCondition RollLimit EnableHeightCondition HeightLimit EnableSpeedCondition SpeedLimit",
+            "LanguageFormat e - LanguageFormat_English LanguageFormat_French LanguageFormat_German LanguageFormat_Spanish LanguageFormat_Italian LanguageFormat_Japanese LanguageFormat_Count",
+            "LaserDesignatorEffectsData c LockingWeaponEffectsData PostLockTime BomberTime BombWarnTime BomberSound:SoundAsset",
+            "LegInfoData s - LegBone1LowestBones[]:Vec3 LegBone2LowestBones[]:Vec3 LegBone1Name LegBone2Name LegIkProperty:AnimatedPropertyData BoneIndices[]",
+            "LerpNodeData c BaseNodeData Node1:BaseNodeData Node2:BaseNodeData LerpParameter:FloatParameter MinValue MaxValue",
+            "LevelData c WorldData DynamicObjects[]:GameObjectData Covers[]:CoverData VoiceOvers[]:VOAsset VoiceOverLines[]:DialogLineNode TriggerAnimTree:AnimTreeData TriggerAnimations[]:AnimationAsset WaypointAnimTree:AnimTreeData HasAI HasFlyingAI StartLevelFadedToBlack AerialHeightmapQuality AerialHeightmapCellSize PathfindingTypes[]:PathfindingSettings ExplosiveObjects[]:ExplosiveObjectData ExclusiveStaticCullTree:StaticCullTreeData ClientStaticCullTree:StaticCullTreeData ClientTreeStaticCullTree:StaticCullTreeData SpawnPointManager:SpawnPointManagerData LevelDescription:LevelDescription EmitterSystemMetrics:EmitterSystemMetrics DefaultFOV InfantryFOVMultiplier FriendlyDamageModifier MinimapSettings:MinimapSettings AmbientSounds:AmbientSoundsAsset ReverbSettings:ReverbSettingsAsset SoundStates:SoundStateSettingsAsset MaxVehicleHeight IconFarScaleDist IconTargetMinScale IsTutorial",
+            "LevelDescription s - Name Description Tip:GameTipAsset LoadingScreens[]:LoadingScreenData AttackerTeam:TeamId LoadingTime:LoadingTimeData Music:WaveAsset MinimapTexture:TextureAsset AchivementEasyCompleted AchivementEasyDate AchivementMediumCompleted AchivementMediumDate AchivementHardCompleted AchivementHardDate RichPresence:RichPresenceConnection Advertisement:AdvertisementZoneData GoldNuggets[] GatherCollectibles Collectibles[] MinimapCameraOffset:MinimapCameraOffsetData",
+            "LevelDescriptionAsset c Asset LevelName Description:LevelDescription",
+            "LevelMovie s - LevelName Movie:UIMovieAsset",
+            "LevelReferencedAssetsData c - ReferencedAssets[]",
+            "LevelSaveData c - SaveSize SaveNames[]",
+            "LfoGroup c SoundNodePortGroup Hz:SoundNodePort Amplitude:SoundNodePort Out:SoundNodePort Mode:OscillatorMode Min Max",
+            "LfoNode c SoundNode LfoGroups[]:LfoGroup",
+            "LifeCounterEntityData c GameEntityData TeamId:TeamId LifeTresholdValues[] UiShowCountLowerThreshold UiShowCountUpperThreshold Attacker SimpleReinforce SetBestSquadSpawner StartingLifeCount BaseCount ReinforceThreshold ReinforceTable[] FallbackTime FightHarderMessageSid FightHarderTreshold ReinforceMessageSid DisplayTime",
+            "LightEntityData c EntityData Visible",
+            "LightingModelType e - Lmt3Point LmtSH",
+            "LimbCount e - LC_MAX_HAND_COUNT LC_MAX_LEG_COUNT",
+            "LinearMovingBodyData c MovingBodyData Axis:Vec3 Start:EndPointData End:EndPointData",
+            "LinearTransform s - right:Vec3 up:Vec3 forward:Vec3 trans:Vec3",
+            "LinearTransformNode c SoundNode X:SoundNodePort K:SoundNodePort M:SoundNodePort Y:SoundNodePort",
+            "LiveSessionEntityData c GameEntityData MinimumPlayersForArbitrary",
+            "LoadingScreenData s - Text Texture:TextureAsset",
+            "LoadingTimeData s - Win32Time XenonTime Ps3Time",
+            "LocalForceData c ProcessorData LocalForce:Vec3",
+            "LocalizationAsset c Asset LocalizedTexts[]:UITextDatabase FontMaps[]:UIFontMapAsset",
+            "LockType e - LockAlways LockOnTagged LockNever",
+            "LockingControllerData c ComponentData ZoomLevelLock[]:ZoomLevelLockData LockTime ReleaseTime ReleaseOnNewTargetTime SampleRate HoldStillThreshold RayLength LockOnVisibleTargetsOnly PositionOnly LockOnWorldSpacePos MinimumLockTime",
+            "LockingWeaponEffectsData c WeaponEffectsData LockingController:LockingControllerData IsHoming IsGuided WarnLock:WarnTarget",
+            "LodInterval s - Min Max",
+            "LogicEntityData c EntityData Enabled",
+            "LookAtTriggerEntityData c TriggerEventEntityData ObjectToFollow:SoldierSpawnBaseEntityData FOV Weapon:SoldierWeaponAsset ZoomLevel MinDistanceToObject MaxDistanceToObject",
+            "LookConstantData c - EyeTargeterMinOffsetTime EyeTargeterMaxOffsetTime EyeTargeterMinOffsetTime2 EyeTargeterMaxOffsetTime2 EyeTargeterMinPitchOffset EyeTargeterMaxPitchOffset EyeTargeterMinYawOffset EyeTargeterMaxYawOffset EyeTargeterSpringModifier LookAroundClampAngle LookAroundMinRandomWaitTime LookAroundMaxRandomWaitTime LookAroundRandomAfterObjectModifier PlayerInteractDistance PlayerInteractAimAngle PlayerInteractMinOffsetAngle PlayerInteractMaxOffsetAngle PlayerInteractMinTime PlayerInteractMaxTime PlayerInteractBreakTime",
+            "LookConstraintsData s - MinLookYaw MaxLookYaw MinLookPitch MaxLookPitch",
+            "LoopType e - LtNone LtForward LtRelease LtInstantRelease LtBounce",
+            "LoosePartPhysicsData c - FakePhysics:FakePhysicsData",
+            "LowPassIir2Node c SoundNode Frequency:SoundNodePort In:SoundNodePort Out:SoundNodePort",
+            "MPModeData s - VehiclePoints",
+            "MapMarkerBlinkType e - MMBTHold MMBTBlink MMBTCount",
+            "MapMarkerColorType e - MMCTRed MMCTBlue MMCTGreen",
+            "MapMarkerEntityData c GameEntityData Controllable:SpawnEntityData StaticModel:ReferenceObjectData MultipleTrigger:MultipleTriggerEntityData Sid Radius BlinkTime MarkerType:MapMarkerType ColorType:MapMarkerColorType VisibleForTeam:TeamId HudIcon:UIHudIcon DisplayOnMinimap ShowAirTargetBox",
+            "MapMarkerType e - MMTMissionObjective MMTSecondaryMissionObjective MMTSoldier MMTVehicle MMTAmmoCrate MMTGeneric",
+            "Mat4 s - m11 m12 m13 m14 m21 m22 m23 m24 m31 m32 m33 m34 m41 m42 m43 m44",
+            "Mat4Parameter c BaseParameter InitialValue:Mat4",
+            "MatchMakerAsset c Asset EloParams:EloParameters Sessions[]:MatchMakingSession Maps[]:MatchMakingMap Playlists[]:MatchMakingPlaylist",
+            "MatchMakingFilter c MatchMakingRule PossibleValues[] DefaultValues[]",
+            "MatchMakingFitThreshold c - Seconds MinimumFitScore",
+            "MatchMakingIntegerPreference c MatchMakingRule Weight Scale DefaultValue MatchingOption:MatchMakingMatchingOption FitThresholds[]:MatchMakingFitThreshold",
+            "MatchMakingMap c - UIName MapName License",
+            "MatchMakingMapLink c - Current:MatchMakingMap Next:MatchMakingMap",
+            "MatchMakingMatchingOption e - MatchMakingMatchingOption_Normal MatchMakingMatchingOption_MatchOnly",
+            "MatchMakingPlaylist c - Name Rule:MatchMakingPlaylistRule RoundsPerMap Maps[]:MatchMakingMapLink",
+            "MatchMakingPlaylistRule e - MatchMakingPlaylistRule_Random MatchMakingPlaylistRule_Linear",
+            "MatchMakingPoolPlayerCountThreshold c - Seconds TargetPlayerCount",
+            "MatchMakingPreferenceVariant e - MatchMakingPreferenceVariant_Normal MatchMakingPreferenceVariant_PingSite MatchMakingPreferenceVariant_Dynamic",
+            "MatchMakingRule c - Rule Match SkipIfDefault HideOnRuleVisible",
+            "MatchMakingSession c - SessionIdentifier SessionType:MatchMakingSessionType Filters[]:MatchMakingFilter IntegerPreferences[]:MatchMakingIntegerPreference StringPreferences[]:MatchMakingStringPreference PoolPlayerCountThresholds[]:MatchMakingPoolPlayerCountThreshold CountServersAvailableForReset HostSetupTimeout ListServersMaxCount PoolMaxPlayers PoolPlayerTimeout",
+            "MatchMakingSessionType e - MatchMakingSessionType_FindServer MatchMakingSessionType_AssignHost MatchMakingSessionType_ResetServer MatchMakingSessionType_ListServers",
+            "MatchMakingStringPreference c MatchMakingRule Weight Labels[] Fit[] DefaultValues[] MatchingOption:MatchMakingMatchingOption VotingMethod:MatchMakingVotingMethod FitThresholds[]:MatchMakingFitThreshold Variant:MatchMakingPreferenceVariant",
+            "MatchMakingVotingMethod e - MatchMakingVotingMethod_Plurality MatchMakingVotingMethod_Lottery",
+            "MaterialBigWorldMapData s - MaterialName BigWorld[]:BigWorldSettingsAsset",
+            "MaterialData c - DebugColor:Vec3 Category Name Penetrable ClientDestructible SeeThrough NoCollisionResponse NoCollisionResponseCombined Hash",
+            "MaterialGridAsset c Asset",
+            "MaterialGridData c Editable Materials[]:MaterialData MaterialGridLayers[]:MaterialGridLayerData MaterialRelations[]:MaterialRelationData",
+            "MaterialGridLayerData c - MaterialRelations[]:MaterialRelationData",
+            "MaterialMapAsset c Asset",
+            "MaterialMapData c - Data[] Size",
+            "MaterialPropertyAIData c MaterialRelationPropertyData SoftCoverHeight",
+            "MaterialPropertyEffectData c MaterialRelationPropertyData ImpactEffect:EffectAsset",
+            "MaterialPropertyHealthData c MaterialRelationPropertyData Health",
+            "MaterialPropertyImpulseData c MaterialRelationPropertyData ImpulseAbsorptionMultiplier",
+            "MaterialPropertyPhysicsData c MaterialRelationPropertyData DynamicFrictionModifier StaticFrictionModifier RestitutionModifier",
+            "MaterialPropertySootData c MaterialRelationPropertyData Soot:SootMaterialData",
+            "MaterialPropertySoundData c MaterialRelationPropertyData ImpactSound:SoundAsset ScrapeSound:SoundAsset ScrapeLength SoldierSettings:MaterialSoldierSoundSettings Softness",
+            "MaterialPropertyTerrainData c MaterialRelationPropertyData DirtTriggerColor:Vec3 DestructionEffect:EffectAsset DirtTriggerFactor",
+            "MaterialRelationDamageData c MaterialRelationPropertyData CollisionDamageMultiplier CollisionDamageThreshold CollisionImpulseThreshold DamageProtectionMultiplier DamagePenetrationMultiplier DamageProtectionThreshold ExplosionCoverDamageModifier NeverPenetrate InflictsDemolitionDamage",
+            "MaterialRelationData c - Data[]:MaterialRelationPropertyData Material1:MaterialData Material2:MaterialData",
+            "MaterialRelationDecalData c MaterialRelationPropertyData Decal:DecalTemplateData",
+            "MaterialRelationEffectData c MaterialRelationPropertyData ImpactEffect:EffectAsset",
+            "MaterialRelationPropertyData c - SourceMaterial:MaterialData",
+            "MaterialRelationSoundData c MaterialRelationPropertyData ImpactSound:SoundAsset ScrapeSound:SoundAsset ScrapeLength",
+            "MaterialRelationTerrainDestructionData c MaterialRelationPropertyData Width Depth",
+            "MaterialRelationVehicleData c MaterialRelationPropertyData ChassiEffect:EffectAsset TrackEffect:EffectAsset WheelEffect:EffectAsset GroundEffect:EffectAsset",
+            "MaterialSoldierSoundSettings c - FootStepSound:SoundAsset ProneSound:SoundAsset LandSound:SoundAsset",
+            "MaterialSoundMapData s - MaterialName Sound:SoundAsset",
+            "MathOp e - Add Sub Mult Div",
+            "MedicBagEntityData c ExplosionPackEntityData Healer:HealerData",
+            "MedicBagWeaponEffectsData c WeaponEffectsData Healer:HealerData HealthPointsRefillSpeed HealthPointsPerBag",
+            "MedkitWeaponEffectsData c WeaponEffectsData",
+            "MeleeWeaponEffectsData c WeaponEffectsData AttackOnDeploy AttackOnDeployDelay",
+            "MenuConfigAsset c Asset Gunrack:GunrackConfig Credits:CreditsData ExtraMovies:ExtraMoviesConfig Eulas[]:EulaTexture AttractionIdleTime AttractionMovie:UIMovieAsset IntroMovie:IntroMovieData IntroMovieMultiplayer:IntroMovieData LevelMovies[]:LevelMovie GameOverMovies[]:UIMovieAsset PreGameOverMovie:UIMovieAsset TutorialLevelName",
+            "MenuEntityData c GameEntityData MenuId:MenuIdEnum HeaderSid BodySid",
+            "MenuIdEnum e - MieSpawnMenu MiePlaying MieSpectate MieKilledMenu MieZoomMinimap MiePreSpawn MiePostSpawn MieDeath MieVictoryScreen MieLetterBox MieMovie MieMissionFailure MieVoid MieDefault MieCreateSoldier MieTutorial MieLastMenuId",
+            "MeshAsset c Asset LodSettings:MeshLodSettingsAsset StreamingEnable IrradianceVolumeEnable OccluderMeshEnable Ps3EdgeEnable Ps3EdgeScoreErrorWorkaroundEnable Ps3SootEdgeEnable Ps3SootEdgeScoreErrorWorkaroundEnable ShaderSets[]:MeshShaderSetAsset",
+            "MeshEvaluatorData c EvaluatorData DistributionData[]:Vec3 MeshAsset:MeshAsset UniformPointCount MinNormalizedIsoValue MaxNormalizedIsoValue UseDirectionData",
+            "MeshLodSettingsAsset c Asset Enable LodDistance0 LodDistance1 LodDistance2 LodDistance3 LodDistance4 Lod0Enabled Lod1Enabled Lod2Enabled Lod3Enabled Lod4Enabled MinScreenArea Ps3LodScale",
+            "MeshPortalDesc s - Winding[]:Vec3 SectorA SectorB",
+            "MeshProjectileEntityData c ProjectileEntityData Mesh:MeshAsset TrailEffect:EffectAsset IsAttachable ExtraDamping InitialAngularVelocity:Vec3",
+            "MeshSectorDesc s - Id Parts[] Box:AxisAlignedBox",
+            "MeshSectorizationAsset c Asset Portals[]:MeshPortalDesc Sectors[]:MeshSectorDesc WorldScale",
+            "MeshShaderSetAsset c Asset",
+            "MeshStreamingSettings c - Enable UpdateEnable PoolSize Ps3CellPoolSize MaxPendingLoadCount PrioritizeVisibleMeshesFirstEnable PrioritizeVisibleLodsFirstEnable PrioritizeVisibleLoadsEnable ClosestPointDistanceEnable DrawStatsEnable DrawMissingListEnable DrawPriorityListEnable DrawLoadingListEnable DrawMeshListEnable DrawNonStreamedListEnable ListViewPageIndex ListViewSortOrder SimulationEnable SimulatedSeekTime SimulatedMbPerSecond",
+            "MeshSurfaceShader s - Name Shader:ShaderAsset",
+            "MessageEntityData c GameEntityData MessageSid SecondMessageSid Reciever:MessageReciever TeamId:TeamId SquadId:SquadId DisplayTime",
+            "MessageReciever e - MrAll MrTeam MrTeamAndSquad MrPlayer",
+            "MiddlegrowthModelEntityData c GamePhysicsEntityData Mesh:TreeMeshAsset DestructionEffects[]:EffectAsset",
+            "MiddlegrowthModelGroupEntityData c GroupEntityData",
+            "MiddlegrowthModelGroupMemberData c GroupMemberData MeshEntityType:TreeMeshEntityData",
+            "MinMaxNode c SoundNode X:SoundNodePort Y:SoundNodePort Max:SoundNodePort Min:SoundNodePort",
+            "MinimapCameraOffsetData s - Position:Vec2 CameraFov",
+            "MinimapData s - ShowText Position:Vec2 Size:Vec2 CameraFov CameraDistance CameraLookDistance OverlayColor:Vec3 OverlayAlpha CameraPosition:Vec3 CameraRotation RotationFromPlayer PositionFromPlayer",
+            "MinimapSettings s - GenerateMinimap MinObjectBoundingRadius ObjectBoundingBoxMesh:MeshAsset ObjectsToReplace[]:MeshAsset MinimapObjects[]:MeshAsset VegetationObjectsToReplace[]:MeshAsset MinimapVegetationObjects[]:MeshAsset VegetationDensity:VegetationDensity RoadHeightOverTerrain GenerateRiverMesh GenerateLakeMesh WaterHeightModifier TerrainColor:Vec3 ObjectColor:Vec3 RoadColor:Vec3 WaterColor:Vec3 VegetationColor:Vec3",
+            "MipmapFilterMode e - MfmBox MfmRenormalize MfmPoisson13 MfmPoisson13Clamped",
+            "MissileEntityData c MeshProjectileEntityData EngineEffect:EffectAsset FlyBySound:SoundAsset EngineStrength MaxSpeed EngineTimeToIgnition EngineTimeToLive TimeToActivateGuidingSystem TimeToArm MaxTurnAngle Drag Gravity ApplyGravityWhenUnguided FlyBySoundRadius FlyBySoundSpeed ImpactImpulse Damage WarnTarget:WarnTarget",
+            "MissionEntityData c GameEntityData BriefingSid SuccessSid FailureSid NextLevelToRun RollCreditsOnSuccess",
+            "MissionObjectiveEntityData c GameEntityData MapMarkers[]:MapMarkerEntityData ChildObjective[]:MissionObjectiveEntityData ParentObjective:MissionObjectiveEntityData HudData:MissionObjectiveHudData ObjectiveType:ObjectiveType DisplayTime DelayTime ObjectiveSid ObjectiveBriefSid SuccessSid Reciever:MessageReciever TeamId:TeamId SquadId:SquadId DisplaySuccess",
+            "MissionObjectiveHudData c - CameraPosition:Vec3 CameraRotation CameraFov CameraDistance CameraLookDistance VerticalBoundaries:Vec2 HorizontalBoundaries:Vec2",
+            "MixGroup c - Path Gain Parent:MixGroup IsWildcard Wildcard",
+            "MixType e - MtGeneral MtMusic MtDialogue MtCarRadio",
+            "MixerAsset c Editable Groups[]:MixGroup",
+            "MixerGroup c SoundNodePortGroup In:SoundNodePort Amplitude:SoundNodePort",
+            "MixerNode c SoundNode MixerGroups[]:MixerGroup Out:SoundNodePort",
+            "MobilityData c - MaxSpeed Use3DWaypoints",
+            "MonitoringSettings c - Enable LogEnable HubAddress HubPort ConnectionRetryInterval ReceiveTransactionTimeout LogBufferSize",
+            "MonophonicSamplerGroup c SamplerGroup",
+            "MonophonicSamplerNode c SamplerNode",
+            "MortarStrikeFiringEffectsData c WeaponEffectsData HoldingTolerance MaxStrikeDistance StrikeRadius MaxRandomSpawnHeight",
+            "MotionDampingData c - LinearModifier:Vec3 Pitch Yaw Roll Linear",
+            "MotionSensorEntityData c GrenadeEntityData Radius TimeToShowEnemies OnlyShowEnemies ShowSoldiers ShowVehicles TeamToEffect:TeamId DisplayInMiniMap",
+            "Movement4WayNodeData c AbstractMovementNodeData Forward:BaseNodeData Backward:BaseNodeData LeftNormal:BaseNodeData RightNormal:BaseNodeData",
+            "MovementBlendNodeData c AbstractMovementNodeData Nodes[]:MovementBlendNodeGroupData",
+            "MovementBlendNodeGroupData c AnimNodePortGroupData Animation:BaseNodeData WeightParameter:FloatParameter",
+            "MovementNodeData c AbstractMovementNodeData Forward:BaseNodeData Backward:BaseNodeData LeftNormal:BaseNodeData LeftInverse:BaseNodeData RightNormal:BaseNodeData RightInverse:BaseNodeData FrontParameter:BoolParameter",
+            "MovingBodyData c - Mass Inertia",
+            "MultiCrossfaderGroup c SoundNodePortGroup Amplitude:SoundNodePort Start:SoundNodePort Stop:SoundNodePort FadeAmplitude FadeBegin FadeEnd FadeType:FaderType",
+            "MultiCrossfaderNode c SoundNode CrossfaderGroups[]:MultiCrossfaderGroup Start:SoundNodePort Stop:SoundNodePort Control:SoundNodePort LockControlValue",
+            "MultipleTriggerEntityData c TriggerEventEntityData EntityTriggerAmount[]:GameEntityData TriggerAmount OutputEventAmount",
+            "MultiplyData c EvaluatorData",
+            "NavigationConstantData c - SpeedThresholdForBeingStuck TimeStuckBeforeTeleport WaterCostModifier RoadCostModifier RandomDestinationHeightCheck UseTimeslicedSearch MaxNodesToTrace RandomDestinationMethod MaxAnimationDirectionDifference MinAnimationDistanceGain MinAnimationPartAlongPath MinSpeedForMovingAnimationStart HelicopterWaypointInterpolationDistance HelicopterPathfindingSearchSteps MinimumHelicopterHeight HelicopterPathRadius HelicopterRecalculateRadius ValidAerialPositionHeight AerialRandomDestinationHeight MoveToValidWPRadius AvoidVehicleDistance AvoidVehicleSize AvoidVehicleMoveRadius AvoidVehicleMoveDistance",
+            "NavigationType e - NTGround NTHelicopter NTNone",
+            "NetworkSettings c - Version ProtocolVersion TitleId ClientPort ServerPort MaxGhostCount MaxClientCount ClientConnectionDebugFilePrefix ServerConnectionDebugFilePrefix",
+            "NetworkableLoosePartPhysicsData c LoosePartPhysicsData Networked",
+            "NodeAligmentData s - NodeType Name Size Fields[]:NodeFieldAligmentData",
+            "NodeFieldAligmentData s - Size Offset Name",
+            "NodesAligmentHelperAsset c Asset Nodes[]:NodeAligmentData",
+            "NoiseTextureAsset c TextureBaseAsset NoiseType:ProceduralNoiseType OutputFormat:TextureOutputFormat Dimensions Size Octaves Period Frequency Turbulence GenerateMipmaps",
+            "NormalMapFilter e - Nmf4x Nmf3x3 Nmf5x5 Nmf7x7 Nmf9x9 NmfDuDv",
+            "NormalMapGenerationParams s - NormalMapConversionEnabled MinZ Scale FilterKernel:NormalMapFilter HeightConversionMethod:HeightConversionMethod AlphaResult:AlphaResultType Wrap InvertX InvertY InvertZ AddHeightMap NormalMapSwapRGB",
+            "NotExpressionData c BaseExpressionData SubExpression:BaseExpressionData",
+            "NumberGeneratorNode c SoundNode Trigger:SoundNodePort Min Max NumberType:RandomType Y:SoundNodePort",
+            "ObjectBlueprint c EntityBusData Object:GameObjectData",
+            "ObjectData c - EquipmentType:AIVehicleBehaviourData Armament:ArmamentData Mobility:MobilityData StrengthType:StrengthType ReuseTime Forbidden ForbiddenForHuman HasExposedSoldier InterludeOnly",
+            "ObjectSet c ComponentData Connections[]:ConnectionPair",
+            "ObjectiveType e - OTPrimary OTTactical OTChildMisson",
+            "OcclusionSettings c - Enable NormalViewDistance TerrainViewDistance SkipClipTriangleDistance ScreenWidth ScreenHeigth JobsEnable OccluderMeshEnable OccluderMeshJobCount RasterizeEnable RasterizeJobCount DrawZbuffer DrawOccluderMeshesWireframe DrawProcessedOccluders DrawOccludedStaticEntities DrawOccludedDynamicEntities",
+            "OnGroundStateData c CharacterStateData JumpDelay JumpStaminaPenalty AllowedDistanceFromGround GroundHugging LimitDownwardVelocity",
+            "OnlineProviderAsset c Asset Configurations[]:OnlineProviderConfiguration",
+            "OnlineProviderConfiguration s - Platform:OnlineProviderPlatform IsServer DefaultUnsecure Client SKU Version Partition ServiceId Username Password PacketSize Port TheaterPort",
+            "OnlineProviderPlatform e - OnlineProviderPlatform_Win32 OnlineProviderPlatform_Xenon OnlineProviderPlatform_PS3",
+            "OptionDescriptor s - Name Category Description ValueType DefaultValue TargetPlatforms[] IsCommandLineOption IsFlag",
+            "OrExpressionData c CompositeExpressionData",
+            "OrderEntityData c GameEntityData Squads[]:SquadBaseEntityData Soldiers[]:SoldierSpawnBaseEntityData IssueOrderDelay OnCompleteTimeOut OnFailedTimeOut IsUrgent ReissueIfSoldierIsKilled",
+            "OrderReadiness c UrgencyUserData OrderType Initial:ReadinessState Minimum:ReadinessState",
+            "OrderSettings c Asset Orders[]:OrderReadiness",
+            "OrderType e - OrderType_Attack_Enemy OrderType_Attack_Neutral OrderType_Defend OrderType_Count",
+            "OrientedBoundingBox s - Transform:LinearTransform BoundingBox:AxisAlignedBox Name",
+            "OscillatorGroup c SoundNodePortGroup Hz:SoundNodePort Shape:SoundNodePort Amplitude:SoundNodePort Out:SoundNodePort Min Max PhaseOffset Phase PreviousOutput",
+            "OscillatorMode e - OmRandom",
+            "OscillatorNode c SoundNode OscillatorGroups[]:OscillatorGroup",
+            "OutdoorLightEntityData c LightEntityData ShCoefficientsLight[]:Vec4 ShCoefficientsLightDelta[]:Vec4 ShCoefficientsShadow[]:Vec4 HemisphereLightAngleFactor KeyColor:Vec3 KeySpecularColor:Vec3 TopColor:Vec3 BottomColor:Vec3 ReflectionEnvmap:TextureAsset DiffuseEnvmap:TextureAsset LightingModel:LightingModelType KeyColorIntensity KeySpecularColorIntensity TopColorIntensity BottomColorIntensity CloudShadowScale CloudShadowIntensity",
+            "OutputEntry c SoundNodePortGroup In:SoundNodePort Output:SoundOutput",
+            "OutputNode c SoundNode Entries[]:OutputEntry Lfe:SoundNodePort LfeSoundEmitter:SoundSourceLfeEmitter DialogSoundEmitter:SoundSourceDialogEmitter Dialog:SoundNodePort BypassHeadroom:SoundNodePort ConnectTo:BusConnection",
+            "OverHeatData s - HeatPerBullet HeatDropPerSecond OverHeatPenaltyTime OverHeatThreshold OverHeatEffect:FireEffectData",
+            "OvergrowthSettings c - Enable CastShadowsEnable ShadowMaxLod HiQualityLod ZeroViewportEnable InstancingEnable LodBlendEnable LodBlendOverlap LodBlendBillboardOverlap ZPassLod ForceBendingType ForceTechnique MaxBillboardCount BillboardsEnable BillboardScale BillboardShadowOffset AdaptiveLodMVertexBudget AdaptiveLodMargin AdaptiveLodSpeed AdaptiveLodSpeed2 AdaptiveLodMinModifier AdaptiveLodMaxModifier AdaptiveLodEnable JobsEnable InputsPerJob InputsPerSpuJob HiLodEnable OnlyBillboardsEnable AlmostOnlyBillboardsEnable GlobalLodScale WindEnable BranchWindPower BranchConstWind BranchWindAnimationSpeed UseMaxShadowLOD",
+            "ParachuteStateData c CharacterStateData VerticalVelocity VerticalGain",
+            "ParameterFilterLinearNode c SoundNode In:SoundNodePort Out:SoundNodePort AttackSpeed:SoundNodePort ReleaseSpeed:SoundNodePort",
+            "ParameterFilterLpNode c SoundNode In:SoundNodePort Out:SoundNodePort Hz:SoundNodePort",
+            "ParameterGroupData c - Parameters[]:BaseParameter ParametersTypeGroups[]:ParameterTypeGroupData",
+            "ParameterTypeGroupData s - Parameters[]:BaseParameter",
+            "PartComponentData c ComponentData HealthStates[]:HealthStateData NeighbourLinks[] IsSupported IsFragile EffectChildsOnHealthStateChanged",
+            "PartLinkData c - PartComponentIndex1 PartComponentIndex2",
+            "PartMaterialData s - Name MaterialName",
+            "PathdataCollisionModel e - PCMSphere PCMSweptSphere PCMCylinder",
+            "PathdataGenerator e - PGCMapBuilder PGCMapBuilderForVehicle",
+            "PathfindingSettings c Asset StepMax StepLength HoleMax GroundSlopeMax GroundSlopeMin MaxDeltaHeight InfantrySeeds VehicleSeeds Pitch VerticalPitch GraphAccuracy NbSectors EdgeRadius OverConnectionRatio ForbidCollidingEdge EntityRadius EntityHeight BuildCompositeShapes MaxPitch BoxSize VerticalBoxSize DetailedZoneSettings:PathfindingZoneSettings OutputType:PathfindingType BuildRoads BuildBridges ForbidWater Generator:PathdataGenerator CollisionModel:PathdataCollisionModel UseBoxApproximation UseExclusions UseForbid ForbidHeight WaterLevelAdjustment",
+            "PathfindingType c Asset OutputName MaxGraphHandles SubgraphsToLoad SearchRadius DiagramHalfWidth MaxGaps DistEdgeMax CanGoMaxEntityRadius",
+            "PathfindingZoneSettings c - Pitch GraphAccuracy NbSectors",
+            "PatrolOrderEntityData c OrderEntityData RouteWaypoints[]:AreaGeometryEntityData TypeOfRoute:RouteType MinDistance UsePathFinding DefaultSpeed",
+            "PersistenceData c Asset Partitions[]:PersistentPartition Final[]:PersistentValueTemplateData Remapping[]:PersistentValueNameRemapping Weapons:PersistenceWeaponData Entitlements:EntitlementAsset GoldNuggets Collectibles",
+            "PersistenceGameData c Asset Assets[]:Asset",
+            "PersistenceWeaponData c Asset Weapons[]:PersistentWeapon",
+            "PersistentDerivedValueTemplateData c PersistentValueTemplateData Formula",
+            "PersistentPartition c - Domain Title",
+            "PersistentValueNameRemapping c - Internal External",
+            "PersistentValueProtection e - PersistentValueProtection_ReadOnly PersistentValueProtection_WriteOnly PersistentValueProtection_ReadAndWrite",
+            "PersistentValueTemplateData c - Name Description DefaultValue ValueType:PersistentValueType ClientFlags:PersistentValueProtection ServerFlags:PersistentValueProtection WritePolicy:PersistentValueWritePolicy UploadOnUnranked",
+            "PersistentValueType e - PersistentValueType_Set PersistentValueType_High PersistentValueType_Low PersistentValueType_Increment PersistentValueType_Decrement",
+            "PersistentValueWritePolicy e - PersistentValueWritePolicy_Checkpoint PersistentValueWritePolicy_Finalize PersistentValueWritePolicy_Disconnect",
+            "PersistentWeapon c Asset WeaponType:PersistentWeaponType Cost Id Dependency:PersistentWeapon Collectible UnlockBundle",
+            "PersistentWeaponType e - PersistentWeaponType_Normal PersistentWeaponType_Unlock PersistentWeaponType_LimitedEdition PersistentWeaponType_Retail",
+            "PhysicsEntityData c - Asset:HavokAsset FloatPhysics:FloatPhysicsData Mass AllowZeroMayaMass InertiaModifier:Vec3 Friction Restitution Proximity:ProximityData",
+            "PhysicsMaterialMapping s - From To",
+            "PhysicsMaterialSetAsset c Asset MaterialMappings[]:PhysicsMaterialMapping",
+            "PhysicsNode c SoundNode Distance:SoundNodePort Velocity:SoundNodePort",
+            "PhysicsReportingAsset c Asset ReportCount",
+            "PhysicsSettings c - NumberOfThreads IntegrateJobCount CollideJobCount EnableAIRigidBody ForestEnable EnableJobs HeightfieldRSXStreaming SingleStepCharacter",
+            "PickupEntityData c GameEntityData Mesh:MeshAsset MeshShaderSet:MeshShaderSetAsset UseTeamShaderSet UseWeaponMesh TimeToLive UnspawnOnPickup ContentIsStatic PositionIsStatic IgnoreNullWeaponSlots ForceWeaponSlotSelection DisplayInMiniMap HasAutomaticAmmoPickup InteractionRadius",
+            "PickupSettingsData s - MeshRenderOffset:Vec3 MeshRenderRotation:Vec3",
+            "PingPongNodeData c BaseNodeData StateANodeData:BaseNodeData StateBNodeData:BaseNodeData TransitionNodeData:BaseNodeData StateParameter:FloatParameter",
+            "PixelShaderAsset c BaseShaderAsset",
+            "Plane s - x y z w",
+            "PlayVideoEntityData c GameEntityData BinkMovie:BinkTextureAsset KeepBlackScreen",
+            "PlayerEntryComponentData c EntryComponentData AnimTree:AnimTreeDataAsset",
+            "PointEnvelope c - Points[]:PointEnvelopePoint",
+            "PointEnvelopePoint s - X Y",
+            "PointLightEntityData c LightEntityData Color:Vec3 Intensity Radius ShadowbufferOffset ShadowbufferResolution ShadowmapResolution ContributionName DiffuseEnable SpecularEnable QuadraticAttenuation Shadowbuffer Shadowmap",
+            "PointSystemParamsAsset c Asset MeleeKillWeapon:StatsCategoryData StringForMeleeKill PointsForMeleeKill StringForKill PointsForKill StringForHeadshot PointsForHeadshot StringForHotVehicleDestroy PointsForHotVehicleDestroy StringForTeamKill PointsForTeamKill StringForSuicide PointsForSuicide StringForDriverAssist PointsForDriverAssist StringForSquadDriverAssist PointsForSquadDriverAssist StringForVehicleAssist PointsForVehicleAssist StringForSquadVehicleAssist PointsForSquadVehicleAssist StringForAvengerKill PointsForAvengerKill StringForSaviorKill PointsForSaviorKill StringForRepairTeamVehicle PointsForRepairTeamVehicle StringForRepairSquadVehicle PointsForRepairSquadVehicle StringForDamageTeamVehicle PointsForDamageTeamVehicle StringForTeamHealing PointsForTeamHealing StringForTeamDamage PointsForTeamDamage StringForSquadHealing PointsForSquadHealing StringForKillAssist PointsForKillAssist StringForSquadKillAssist PointsForSquadKillAssist StringForTaggedDestroyAssist PointsForTaggedDestroyAssist StringForTaggedKillAssist PointsForTaggedKillAssist StringForObjectiveDamage PointsForObjectiveDamage StringForDisarmObjective PointsForDisarmObjective StringForCapturedCapturePoint PointsForCapturedCapturePoint StringForCapturedCapturePointAssist PointsForCapturedCapturePointAssist StringForObjectiveTeamDamage PointsForObjectiveTeamDamage StringForObjectiveDestruction PointsForObjectiveDestruction StringForObjectiveTeamDestruction PointsForObjectiveTeamDestruction StringForDefensiveKillBonus PointsForDefensiveKillBonus StringForOffensiveKillBonus PointsForOffensiveKillBonus StringForHostileDmzKill PointsForHostileDmzKill StringForDmzCampingKill PointsForDmzCampingKill StringForVehicleKillAssist PointsForVehicleKillAssist StringForVehicleDestroyAssist PointsForVehicleDestroyAssist HotVehicleDestroyTimeout AvengerKillTimeout SaviorKillTimeout RepairTeamVehicleLimit DamageTeamVehicleLimit TeamHealingLimit TeamDamageLimit SaviorDamageLimit KillAssistLimit ObjectiveDamageLimit VehicleKillAssistLimit VehicleDestroyAssistLimit DefensiveKillBonusRadius OffensiveKillBonusRadius VehicleAirTimeLimit SoldierAirTimeLimit DriverTimeLimit IngameTimeLimit StrikeKillLimit StrikeKillTimeLimit SquadKillLimit Ranks[]:RankLevelData DogTags[]:DogTagData",
+            "PolynomialColorInterpData c EvaluatorData Color0:Vec3 Color1:Vec3 Coefficients:Vec4",
+            "PolynomialData c EvaluatorData Coefficients:Vec4 ScaleValue MinClamp MaxClamp",
+            "PolynomialOperation e - Multiplication Addition Subtraction",
+            "PolynomialOperatorData c EvaluatorData FirstOperand:PolynomialTempData SecondOperand:PolynomialTempData Operation:PolynomialOperation MinClampResult MaxClampResult",
+            "PolynomialTempData s - Coefficients:Vec4 ScaleValue MinClamp MaxClamp",
+            "PoseConstraintsData s - StandPose CrouchPose PronePose",
+            "PositionEvaluationConstantData c - MaxCachedNodeIds FrontLineSearchSensitivity FrontLineSearchDepth FrontLineAccuracy RandomPositionCount OwnRandomPositionsRadius",
+            "PostProcessDebugMode e - PpdmNormal PpdmBloom PpdmDofBlur PpdmBlur PpdmBlurStep PpdmDepth",
+            "PowerToolWeaponEffectsData c WeaponEffectsData RepairSound:SoundAsset RepairCompletedSound:SoundAsset DamageSound:SoundAsset RepairMaterial",
+            "PreRoundEntityData c GameEntityData PlayerCountNeeded NotEnoughPlayersRestartTimer",
+            "PrimitiveConfigData c -",
+            "ProceduralLeaningNodeData c BaseNodeData UphillMaxTranslation:Vec3 DownhillMaxTranslation:Vec3 MaxAccelerationTranslation:Vec3 MaxTurnTranslation:Vec3 MovementSpeedParameter:FloatParameter MovementAngleParameter:FloatParameter RotationSpeedParameter:FloatParameter UphillMaxRotation UphillMaxSlope UphillMinSlope DownhillMaxRotation DownhillMaxSlope DownhillMinSlope MaxAccelerationRotation AccelerationLimit AccelerationLeaningTime MaxTurnRotation MaxRotationSpeed MinRotationSpeed",
+            "ProceduralLevelCreateDesc c Asset SaveToDiskEnable OutputName OutputPath",
+            "ProceduralNoiseType e - PntPerlin PntSimplex PntSimulation",
+            "ProcessorConnection c - Source:ProcessorData Dest:ProcessorData",
+            "ProcessorData c EmitterComponentData NextProcessor:ProcessorData Edited ProcessorType:ProcessorType ProcessorGroup:EmitterProcessorGroup Enable EvaluatorInput:EmittableField AcceptsEvaluator DefaultValues:Vec4",
+            "ProcessorType e - PtBaseEmitter PtSpawnRate PtPreSpawn PtSpawnCompositeMeshParts PtSpawnSpeed PtSpawnPosition PtSpawnDirection PtSpawnSize PtSpawnAnimation PtSpawnAnimationFrame PtSpawnRotation PtSpawnRotationSpeed PtUpdatePosition PtUpdateAge PtTurbulance PtGravity PtLocalForce PtAirResistance PtUpdateLinearVelocity PtUpdateCollision PtUpdateOrientation PtEmitter PtUpdateBoundingBox PtUpdateColor PtUpdateColorLeaf PtUpdateTransparency PtUpdateTextureCoords PtCycleAnimations PtUpdateRotation PtUpdateSizeX PtUpdateSizeY PtUpdateSizeZ PtUpdateSize PtUpdateAlphaLevelMin PtUpdateAlphaLevelMax PtUpdateAlphaLevelScale PtUpdateClipScale ProcessorTypeCount",
+            "ProjectileEntityData c GamePhysicsEntityData InitialSpeed TimeToLive InitMeshHideTime VisualConvergeDistance DetonateOnTimeout Explosion:ExplosionEntityData SuppressionData:WeaponSuppressionData",
+            "ProjectileImpulseTestEntityData c TestEntityData fireRate Projectile:ProjectileEntityData",
+            "ProjectorLightEntityData c LightEntityData Color:Vec3 Texture:TextureAsset Projection:ProjectorLightProjection ContributionName ShadowmapResolution ShadowbufferResolution ShadowbufferOffset Intensity OrthoWidth OrthoHeight FieldOfView Aspect NearPlane ViewDistance DiffuseEnable SpecularEnable QuadraticAttenuation Shadowbuffer Shadowmap",
+            "ProjectorLightProjection e - PlpPerspective PlpOrthographic",
+            "PropellerEngineConfigData c EngineConfigData HorisontalForceOffset:Vec3 PropellerType:PropellerType ForceMagnitudeInputType:ForceMagnitudeInputType DirectionVectorIndex ForceMagnitudeMultiplier LiftForceSpringConstant LiftForceDampingConstant CyclicInputScaleRoll CyclicRollLiftMod CyclicRollStrafeMod CyclicInputScalePitch CyclicPitchLiftMod CyclicPitchStrafeMod CyclicPitchStrafeBrakeMod CollectiveInputIdle CollectiveInputScale DefaultAngleOfAttack AttackAngleMod StabilizerMod HorisontalMinEffectVelocity HorisontalMinEffectMod EnableNewHelicopter SPAllowed SPDefault SPForwardStrength SPSidewaysStrength SPVerticalStrength PitchStrength PitchLimit PitchFromVel VelocityFromPitch RollStrength BankingStrength BankingLimit PitchUpWhenBankStrength PitchUpWhenBankLimit GravityMod",
+            "PropellerType e - Regular Rotor",
+            "PropertyCurveType e - PCT_NO_EFFECT PCT_ALWAYS_ON PCT_ALWAYS_OFF PCT_ANIMATED PCT_MANUAL_INPUT",
+            "PropertyKeyData s - InterpolationType:InterpolationType Time SortKey",
+            "PropertyTrackData c - PropertyKeys[]:PropertyKeyData Target PropertyName",
+            "ProximityData c - ProximityType:ProximityObjectType",
+            "ProximityObjectType e - PotProximityDisabled PotVaultableLow PotVaultableHigh PotSupportedShooting PotInteractWith",
+            "Ps3MemoryType e - PmtDefault PmtCell PmtRsx",
+            "PulseEntityData c LogicEntityData Interval",
+            "QualityMapData c BaseInfluenceMapData",
+            "Quat s - x y z w",
+            "RadarSweepComponentData c ComponentData SweepForControllables ControllableSweepRadius ControllableSweepInterval SweepForMines MineSweepRadius MineSweepInterval OnlySpootControllablesForLocalPlayer",
+            "RadioComponentData c ComponentData SoundEffect:SoundAsset",
+            "RagdollAsset c Asset UseServerRagdoll",
+            "RagdollImpulse s - BoneName RandomMinImpulse:Vec3 RandomMaxImpulse:Vec3",
+            "RagdollNodeData c BaseNodeData",
+            "RandomEvaluatorData c EvaluatorData Max Min",
+            "RandomPulseEntityData c LogicEntityData MinInterval MaxInterval",
+            "RandomSelectorGroupData c AnimNodePortGroupData NodeData:BaseNodeData LowerTime UpperTime",
+            "RandomSelectorMainGroupData c AnimNodePortGroupData NodeData:BaseNodeData LowerTime UpperTime RelativeValue",
+            "RandomSelectorNodeData c BaseNodeData MainNodes[]:RandomSelectorMainGroupData RandomNodes[]:RandomSelectorGroupData ResetRandomTimes",
+            "RandomTriggerEntityData c TriggerEventEntityData RandomEventWeight[]",
+            "RandomType e - GTRandomUniform",
+            "RandomWalkOrderEntityData c OrderEntityData Geometry[]:GeometryEntityData",
+            "RandomXYZEvaluatorData c EvaluatorData MaxX MinX MaxY MinY MaxZ MinZ",
+            "RankLevelData c - RankName PointsNeeded UnlockCredits Image:TextureAsset ImageName Sound:WaveAsset SoundName VO:DialogLineNode VOEvent:VOEventType",
+            "ReadinessLevel e - RLPatrol RLReady RLCombat RLNone",
+            "ReadinessLevelCharacteristics s - MinReactionTime MaxReactionTime ReductionTime",
+            "ReadinessLevels s - Patrol:ReadinessLevelCharacteristics Ready:ReadinessLevelCharacteristics Combat:ReadinessLevelCharacteristics",
+            "ReadinessState e - RSPatrol RSReady RSCombat",
+            "ReceiveEntry c SoundNodePortGroup Out:SoundNodePort Source:SoundGraphParameter Parameter SavedValue",
+            "ReceiveNode c SoundNode Entries[]:ReceiveEntry",
+            "ReferenceObjectData c GameObjectData Transform:LinearTransform ReferencedObject:ObjectBlueprint ObjectSets[]:ObjectSet MeshShaderSet:Asset PhysicsMaterialSet:Asset",
+            "RegroupOrderEntityData c OrderEntityData Areas[]:GeometryEntityData FightWhileRegrouping CrouchOnArrival",
+            "ReloadLogic e - rlWeaponSwitchCancelsUnfinishedReload rlReloadUnaffectedByWeaponSwitch",
+            "ReloadType e - rtSingleBullet rtMagazine",
+            "RemoteEntryComponentData c EntryComponentData Dummy",
+            "RenderMapMode e - RmmRead RmmWrite RmmReadWrite RmmWriteDiscard RmmWriteNoOverwrite",
+            "RenderResourceUsage e - RruImmutable RruStatic RruDynamic",
+            "RepairStationEntityData c GameEntityData TeamId:TeamId RepairValue AllowedVehicles[]:VehicleAsset Geometry[]:GeometryEntityData",
+            "RepairToolWeaponEffectsData c PowerToolWeaponEffectsData RechargeSpeed",
+            "ReplacementAnimationPairData s - Animation:BaseAnimationAsset ReplacementAnimation:BaseAnimationAsset",
+            "ResamplingQuality e - SincBest SincMedium SincFastest ZeroOrderHold LinearQuality",
+            "ResourceManagerSettings c - DeferredLoadingEnable",
+            "ResultAnimTreeData c - Nodes[]:BaseNodeData AnimationList[]:BaseAnimationAsset AimAnimationList[]:AimAnimationAsset Controls[]:BaseAnimationControlData AimControls[]:AimControlData EffectInfluenceMaps[]:InfluenceMapData Preprocessors[]:BasePreprocessorData RootNode:BaseNodeData Skeleton:SkeletonAsset ParameterGroupData:ParameterGroupData AbsoluteTimeParameter:FloatParameter DeltaTimeParameter:FloatParameter PoseParameter:IntParameter Name Priority BlendInTime IgnorePriority",
+            "ResultInfluenceMapData c - Weights[] Skeleton:SkeletonAsset",
+            "ReverbAsset c - ImpulseResponse:IrAsset Indoor MaxArea Gain",
+            "ReverbSettingsAsset c Editable Reverbs[]:ReverbAsset",
+            "RichPresenceConnection c - RichPresenceIndex ContextPairs[]:RichPresenceContextPair PropertyPairs[]:RichPresencePropertyPair",
+            "RichPresenceContext c - Name Index PossibleValues[]:RichPresenceContextValue ContextType:RichPresenceContextType",
+            "RichPresenceContextPair c - ContextIndex ValueIndex ContextType:RichPresenceContextType",
+            "RichPresenceContextType e - RichPresenceContextType_Normal RichPresenceContextType_RankedMatch",
+            "RichPresenceContextValue c - Name Index",
+            "RichPresenceData c Asset Strings[]:RichPresenceString Default:RichPresenceString Inactive:RichPresenceString Contexts[]:RichPresenceContext Properties[]:RichPresenceContext",
+            "RichPresenceProperty c - Name Index PropertyType:RichPresencePropertyType",
+            "RichPresencePropertyPair c - Property:RichPresenceProperty",
+            "RichPresencePropertyType e - RichPresencePropertyType_Float RichPresencePropertyType_Integer RichPresencePropertyType_LongFloat RichPresencePropertyType_LongInteger",
+            "RichPresenceString c - Name Index",
+            "RigidMeshAsset c MeshAsset SootType:SootType SootVoxelSize SootSplitableTriangleEdgeLength Sectorization:MeshSectorizationAsset",
+            "RigidMeshEntityData c EntityData LightMapEnable Mesh:RigidMeshAsset MeshShaderSet:MeshShaderSetAsset EnableGroundmapLighting",
+            "RigidModelEntityData c GamePhysicsEntityData Mesh:RigidMeshAsset MeshShaderSet:MeshShaderSetAsset",
+            "RigidModelGroupEntityData c GroupEntityData",
+            "RigidModelGroupMemberData c GroupMemberData MeshEntityType:RigidMeshEntityData",
+            "RotateVectorData c EvaluatorData Angle RotateWithinPlane",
+            "RotationAxis e - raX raY raZ",
+            "RotationBodyData c MovingBodyData AngularMomentumMultiplier AngularMomentumThreshold AngularMomentumDamping AngularConstraintMin AngularConstraintMax RotationAxis UseAngularMomentumThreshold UseAngularMomentumDamping UseAngularConstraint",
+            "RotorComponentData c ComponentData LowRpmModel:RotorModelData HighRpmModel:RotorModelData RotationAxis:RotationAxis RotationMultiplier ChangeModelRpm BlowEffect:EffectAsset OnlyTriggerBlowEffectInWater TriggerGroundEffectHeight CriticallyDamagedRotationForce",
+            "RotorModelData s - RotationRpm MeshName",
+            "RouteType e - RouteStop RouteCircular RoutePingPong",
+            "RpgSkill e - AccurateWithTracer AlwaysAccurate OnlyWithTracer",
+            "RumbleFiringData s - LowRumble HighRumble RumbleDuration",
+            "RuntimeDialogLineNode s - HashedName Path WaveCount",
+            "SampleTextureData c EvaluatorData GradientData[]:Vec4 ColorIntensityMax:Vec3 ColorIntensityMin:Vec3 TextureDimensions:Vec2 Texture:TextureAsset TextureOriginU TextureOriginV",
+            "SamplerGroup c SoundNodePortGroup Wave:SoundNodePort Random RandomOnDemandVariationCount ZeroLatency Offset:SoundNodePort Delay:SoundNodePort Pitch:SoundNodePort Amplitude:SoundNodePort Trigger:SoundNodePort Release:SoundNodePort Output:SoundNodePort Finished:SoundNodePort WaveMap[]:SamplerWaveMapEntry ChannelCount",
+            "SamplerNode c SoundNode Groups[]:SamplerGroup",
+            "SamplerWaveMapEntry c - Wave:WaveAsset BasePitch Loop:LoopType",
+            "SaveEntityData c GameEntityData SaveScreenTexture:TextureAsset LevelName SaveFileName SaveNameSID",
+            "ScaleClampNode c SoundNode In:SoundNodePort InMin:SoundNodePort InMax:SoundNodePort OutMin:SoundNodePort OutMax:SoundNodePort Out:SoundNodePort",
+            "SceneData c WorldData InputController:SceneObjectData CameraController:SceneObjectData Settings:SceneSettings StaticCullTree:StaticCullTreeData",
+            "SceneNode c VoiceOverChildNode Children[]:VoiceOverChildNode",
+            "SceneObjectData c EntityData Visible",
+            "SceneSettings c - FieldOfView NearPlane ViewDistance CameraTranslationScale CameraForceHeight CameraForceHeightEnable LockCamera ResetLockedCamera UseCamera CameraTransform:LinearTransform MouseSensitivityY MouseSensitivityX EmitterSystemMetrics:EmitterSystemMetrics RenderSettings:WorldRenderSettings",
+            "ScopeFilterData c Asset ScissorRegion:Vec4",
+            "ScorePartComponentData c PartComponentData Score ScoreString",
+            "ScoringAction e - ScoringAction_CaptureCapturePoint ScoringAction_Create ScoringAction_Damage ScoringAction_DamageAssist ScoringAction_Destroy ScoringAction_DestroyHeadshot ScoringAction_DestroyRoadKill ScoringAction_NeutralizeCapturePoint ScoringAction_Repair ScoringAction_Resupply ScoringAction_Spot ScoringAction_Suppress ScoringAction_LastScoringActionItem",
+            "ScoringBucket e - ScoringBucket_General ScoringBucket_Teamwork ScoringBucket_Bonus ScoringBucket_Squad ScoringBucket_Objective ScoringBucket_LastScoringBucketItem",
+            "ScoringData c Asset ScoreTypes[]:ScoringTypeData CsvFile",
+            "ScoringRelationship e - ScoringRelationship_Any ScoringRelationship_Friendly ScoringRelationship_Enemies",
+            "ScoringTypeData c Asset Subject:StatsCategoryData Tool:StatsCategoryData Action:ScoringAction Object:StatsCategoryData Relationship:ScoringRelationship DescriptionSid ScoringBucket:ScoringBucket CsvIdentifier Score PercentageLimit NumberOfTicks TickInterval TickScoreValue",
+            "ScreenFadeEntityData c GameEntityData FadeTime ControlledByClient WaitOnBlackForStreaming",
+            "SearchAndDestroyOrderEntityData c OrderEntityData TargetBotSoldier[]:SoldierSpawnBaseEntityData Area[]:GeometryEntityData TargetPosKnowledge:TargetPosKnowledgeType FindTargetTime TargetAreaFollowsTarget",
+            "SelectorByPoseNodeData c BaseNodeData Idle:AnimationNodeData Transition:AnimationNodeData BlendNodes LegPositionsIdle[]:Vec3 LegPositionsTransition[]:Vec3",
+            "SelectorNodeData c BaseNodeData AlwaysNodes[]:AlwaysNodeGroupData BoolNodes[]:BoolNodeGroupData FloatNodes[]:FloatNodeGroupData IntNodes[]:IntNodeGroupData",
+            "SensingConstantData c - SensingTimeSpan FireKeepTime AttackerTrackTime LineOfSightTestTime MaxRays VisionBoundingBoxSize VisionHumanBoxOffset MaximumMergeDistance CloseDistance CloseFireImpactDistance CloseExplosiveImpactDistance CloseShellDistance VolumeModifier MovementModifier LuckModifier SmokeSphereRadius SmokeSphereDuration",
+            "SensingTemplateData c Asset AwareForgetTime LostForgetTime TimeUntilUnseenIsLost HearingDistance ViewAngle PeripheralViewAngle SeeingDistance ReadyFOVMultiplier CombatFOVMultiplier SensingSkill",
+            "SensitivityAtVelocity s - SteeringSensitivity Velocity",
+            "SequenceData c LogicEntityData Targets[] PropertyTracks[]:PropertyTrackData Events[]:SequenceEventData SequenceLength Looping",
+            "SequenceEventData s - Target Event:EventSpec Time SortKey",
+            "SequenceGeneratorNode c SoundNode Trigger:SoundNodePort Reset:SoundNodePort Min:SoundNodePort Max:SoundNodePort Step:SoundNodePort Value:SoundNodePort",
+            "ServerConnectTriggerEntityData c GameEntityData",
+            "ServerSettings c - IsFastStartupEnabled IsRenderPhysicsWater IsWaterPhysicsEnabled IsGodMode IsRenderDamageEvents HasUnlimitedAmmo HasUnlimitedMags RespawnOnDeathPosition IsStatsEnabled IsNetworkStatsEnabled IsAiEnabled IsDestructionEnabled IsTreeDestructionEnabled IsSoldierAnimationEnabled IsSoldierDetailedCollisionEnabled IsFragalyzerLogEnabled IsFragalyzerLocalLogEnabled IsStaticModelsIterable Level LoadSavePoint SavePoint DisableCutscenes HavokVisualDebugger HavokCaptureToFile ShowTriggerDebugText TimeoutGame TimeoutTime DifficultyMode PlayerCountNeededForMultiplayer AILooksIntoCamera AllowDestructionOutsideCombatArea IsSpotWhenZoomedEnabled IsInternetSimulationEnabled MinLatency MaxLatency PacketDrops DropSpikeChance MinDropDuration MaxDropDuration ReorderingChance DuplicationChance CorruptionChance PreloadingEnabled ThreadedLoadingEnable JobEnable DrawActivePhysicsObjects UnrestrictedUnlocks IsRanked ScoringLogEnabled LoadingTimeout IngameTimeout OutgoingFrequency IsReconfigurable Playlist ForcePlaylist DedicatedServerCpu AutoUnspawnBangers AutokillSoldiers RegulatedAIThrottle DisableTelemetry EnableMixedPlay",
+            "ShaderAsset c Editable",
+            "ShaderColorizeMode e - ScmNone ScmDrawBlock ScmSurfaceShader ScmVertexShader ScmPixelShader",
+            "ShaderContainerAsset c Asset VertexShaders[]:ShaderContainerElement PixelShaders[]:ShaderContainerElement SourceFile Source",
+            "ShaderContainerElement s - Name Ps3ExtraCmdLine",
+            "ShaderDatabaseAsset c Asset LevelName",
+            "ShaderDatabaseCollection c Asset Groups[]:ShaderDatabaseGroup",
+            "ShaderDatabaseGroup s - Name Path:ShaderRenderPath",
+            "ShaderGeometrySpace e - SgsObject SgsWorld SgsScreen",
+            "ShaderInstancingMethod e - ShaderInstancingMethod_None ShaderInstancingMethod_WorldTransform4x3 ShaderInstancingMethod_Ps3SpuWorldTransform4x3",
+            "ShaderRenderMode e - SrmNormal SrmShadowbuffer SrmShadowbufferZTrans SrmShadowmap SrmPointShadowbuffer SrmZOnly SrmVelocity SrmSimple SrmSimpleLighting SrmOverdraw SrmShowOpacity SrmShowVertexNormal SrmShowVertexTangent",
+            "ShaderRenderPath e - SrpAll SrpDx9Sm2bAti SrpDx9Sm3Ati SrpDx9Sm3Nv SrpDx10 SrpXenon SrpPs3",
+            "ShaderShadowmapMethod e - ShaderShadowmapMethod_None ShaderShadowmapMethod_ManualPcf ShaderShadowmapMethod_HardwarePcf ShaderShadowmapMethod_CascadedBox3 ShaderShadowmapMethod_CascadedBox4 ShaderShadowmapMethodCount ShaderShadowmapMethodBitCount",
+            "ShaderShadowmapQuality e - ShaderShadowmapQuality_Pcf2x2 ShaderShadowmapQuality_Pcf4x4 ShaderShadowmapQualityCount",
+            "ShaderSkinningMethod e - SsmNone Ssm1Bone Ssm2Bone Ssm3Bone Ssm4Bone Ssm8Bone SsmNull",
+            "ShaderSystemSettings c - Path:ShaderRenderPath FrameMemoryBufferSize FlushEnable DrawZOnly DrawOpaque DrawTransparent DrawTransparentDecal DrawTransparentDepthWrite DrawOffset ColorizeMode:ShaderColorizeMode StreamingSimpleShadingEnable AlphaTestEnable AlphaBlendEnable AlphaToMaskEnable ForceAlphaTest ForceAlphaToMask ForceDoubleSided ForcePointFiltering ForceAlphaRef ZeroViewportEnable DepthEnable DepthWriteEnable DepthTestEnable ClipPlanesEnable MipmapBias MaxAnisotropy ZOnlyMaxAnisotropy XenonTrilinearThreshold SinglePrimitiveEnable DrawCallEnable DrawCallMultiplier UseHasZPass XenonZPassEnable XenonDirectConstantEnable XenonGprChangeEnable PixBlockEventsEnable GcmReplayMarkersEnable SortBlocksEnable SimpleTexturesEnable SimpleTextureFilteringEnable DebugNonFiniteColor:Vec3 LogEnable SingleFrameLogEnable SingleFrameBlockLogEnable ShaderPixScopeEnable OverdrawMaxLayerCount SimplePixelShaderEnable SimpleVertexShaderEnable PseudoInstancingEnable StatesEnable PixelShaderSrgbConversionEnable BoneConstantOptimizationEnable SortJobEnable SortSpuJobEnable PixelConstantsEnable VertexConstantsEnable PixelConstantRedundancyCheckingEnable VertexConstantRedundancyCheckingEnable DispatchExecuteEnable XenonDispatchJobEnable XenonDispatchJobCount XenonDispatchBlocksPerJob XenonDispatchMinJobBlockCount XenonDispatchOnlyJob XenonDispatchBlockOnCmdBufEnable XenonDispatchCmdBufferSegmentSize XenonDispatchCmdBufferSize Ps3PixelShaderRedundancyCheckingEnable Ps3PixelShaderHashStoreEnable Ps3GeometryJobEnable Ps3GeometryJobCount Ps3GeometryJobSpuCount Ps3GeometryJobWithoutDispatchJobEnable Ps3GeometryDebugRenderEnable Ps3DrawEdgeGeometryEnable Ps3DrawNonEdgeGeometryEnable Ps3TriangleCullEnable Ps3TriangleFrustumCullEnable Ps3TriangleBackfaceCullEnable Ps3TriangleCullZPassEnable Ps3TriangleCullDoubleSidedEnable Ps3TriangleCull1BoneSkinningEnable Ps3TriangleCull4BoneSkinningEnable Ps3TrianglePartCullEnable Ps3DrawBlockCullEnable Ps3PartitionFrustumCullEnable Ps3PartitionClipPlaneCullEnable Ps3PartitionVolumeCullEnable Ps3SpuInstancingEnable Ps3SpuClipPlaneRejectEnable Ps3SpuCullVolumesEnable Ps3DispatchJobEnable Ps3DispatchJobCount Ps3DispatchJobSpuCount Ps3DispatchOnlyJob Ps3DispatchBlocksPerJob Ps3DispatchMinJobBlockCount Ps3DispatchSpuBufferLinkingEnable Ps3DispatchFrameBlockEnable Ps3DispatchFrameGpuBlockEnable Ps3SCullEnable Ps3ZCullEnable Ps3ZCullInFrontLimit Ps3ZCullBehindLimit Ps3MinMipmap Ps3MaxMipmap Ps3TxpDemotionEnable Ps3CmdBufVertexShaderInlineEnable Ps3CmdBufTexturesEnable Ps3CmdBufTexturesInlineEnable Ps3CmdBufClearEnable Ps3FlushEnable Ps3FinishEnable",
+            "ShapeType e - STBox STSphere STCapsule STCapsuleX STCapsuleY STCapsuleZ STCylinder STCylinderX STCylinderY STCylinderZ ST_SIZE",
+            "SharedSoldierAnimationTreeData c - AnimTrees[]:AnimTreeDataAsset Skeleton:SkeletonAsset BoneCollision:SoldierBoneCollisionData LocalAnimations:IndexedAnimationData AIStateAnimation:AIStateAnimationData RagdollSettings:AnimatedSoldierRagdollSettingsData UpperBodyRotation:SoldierBodyRotationData WeaponBoneName HeadBoneName LowestBoneName HipBoneName CameraBoneName CameraFovBoneName EyesBoneName NeckBoneName OneClimbCycleDistance MinMoveSpeed MovementCycleScaleFactor",
+            "ShootAtObjectOrderEntityData c OrderEntityData TargetGroup:TargetObjectDataGroup",
+            "ShotConfigData s - InitialPosition:Vec3 InitialDirection:Vec3 InitialSpeed:Vec3 InheritWeaponSpeedAmount MuzzleExplosion:ExplosionEntityData ProjectileData:ProjectileEntityData SpawnDelay NumberOfBulletsPerShell NumberOfBulletsPerShot RelativeTargetAiming ForceSpawnToCamera ActiveForceSpawnToCamera MaxProjectilesInWorld",
+            "SimpleCarNode c SoundNode Start:WaveAsset Stop:WaveAsset Idle:WaveAsset Drive:WaveAsset Velocity:SoundNodePort InDriverPos:SoundNodePort Tilt:SoundNodePort ReleaseEvent:SoundNodePort StartOut:SoundNodePort StopOut:SoundNodePort IdleOut:SoundNodePort DriveOut:SoundNodePort Drive_Tilt_Pitch:Vec4 Drive_Vel_Pitch:Vec4 Idle_Vel_Pitch:Vec4 Idle_Drive_Vel_Fade:Vec2",
+            "SimpleTransformNode c SoundNode X:SoundNodePort Y:SoundNodePort Z:SoundNodePort Operation:MathOp",
+            "SkeletonAsset c BaseSkeletonAsset ExportBonesSelection:InfluenceMapData IkInfo:SoldierIKData PropertiesRootBoneName AimingProperty:AnimatedPropertyData ProceduralLeaningInfo:SoldierProceduralLeaningData MinMainBonesUpdateTime MaxMainBonesUpdateTime MainChildBones[] MinBoneName LODErrorFactors:QualityMapData AccumulateMotion MinBoneIndex MaxMainBoneIndex",
+            "SkeletonPoseData s - Name Translation:Vec3 Rotation:Vec3",
+            "SkinnedMeshAsset c MeshAsset SkinDecals",
+            "SkinnedMeshComponentData c ComponentData BoneFakePhysics[]:BoneFakePhysicsData Mesh:SkinnedMeshAsset Skeleton:SkeletonAsset",
+            "SlidingStateData c CharacterStateData HorizontalInputScale GravityScale",
+            "SniperLensScopeFilterData c ScopeFilterData BlurScale BlurCenter:Vec2 ChromaticAberrationColor1:Vec3 ChromaticAberrationColor2:Vec3 ChromaticAberrationStrengths:Vec2 ChromaticAberrationDisplacement1:Vec2 ChromaticAberrationDisplacement2:Vec2 RadialBlendDistanceCoefficients:Vec2 ColorTintData:ColorTintData",
+            "SoldierAimingConstraintsData c - SwimmingConstraints:AimingConstraintsData",
+            "SoldierAimingSimulationData c - ZoomLevels[]:ZoomLevelData ZoomType:ZoomTypeEnum HaloAimer:HaloAimerData StandPose:AimingPoseData CrouchPose:AimingPoseData PronePose:AimingPoseData AimingRange AimerType",
+            "SoldierAnimationTreeData c - FacialAnimations:IndexedAnimationData FacialSoundMap[]:FacialSoundMapData KitJointsAnimTree:AnimTreeDataAsset Shared:SharedSoldierAnimationTreeData",
+            "SoldierAsset c ObjectBlueprint",
+            "SoldierAutoAimData c - Poses[]:AutoAimData",
+            "SoldierBodyRotationData s - MaxAngle MaxAngleRelaxed ReturnOnIdleTime ReturnOnIdleThreshold ReturnSpeed ReturnSpeedRelaxed UseUpperBodyRotation",
+            "SoldierBoneCollisionData c - BoneCollisionData[]:BoneCollisionData",
+            "SoldierControlConstantData c - MaximumHeadTurnAngle RelaxedTurningSpeed SearchHeadTurningSpeed SlowHeadTurningSpeed NormalHeadTurningSpeed FastHeadTurningSpeed NormalTurningSpeed CrouchTurningSpeed Acceleration MoveAngularAcceleration MoveAngularSpeedFactor AimMinPrecisionTolerance PitchSpeed SlowSpeed NormalSpeed FastSpeed CrouchSpeed CatchupSpeed AimForwardSpeed AimStrafeSpeed MaxForwardDir MaxStrafeDir",
+            "SoldierEntityData c ControllableEntityData FootMaterial HeadMaterial Weapons[]:SoldierWeaponAsset WeaponUnlocks[]:SoldierWeaponUnlockData UnlockableWeapons[]:UnlockableSoldierWeaponData WeaponDataOverride:SoldierWeaponOverrideData MeleeWeaponIndex BoneFakePhysics[]:BoneFakePhysicsData Cameras[]:TargetCameraData AutoAim:SoldierAutoAimData AimingConstraints:SoldierAimingConstraintsData HeadCollision:SoldierHeadCollisionData RagdollSettings:SoldierRagdollSettingsData CharacterPhysics:CharacterPhysicsData SprintSettings:SoldierSprintSettingsData AnimTree1p:SoldierAnimationTreeData AnimTree3p:SoldierAnimationTreeData Meshes1p[]:SoldierMeshData Meshes3p[]:SoldierMeshData HidableMeshParts[]:HidableSoldierMeshWeaponPart ParachuteData:SoldierParachuteData DeathPickup:PickupEntityData Sound:SoldierSoundData StreamGroup1p:StreamGroupData ImpulseReactionTime MaxHealth RegenGracePeriod RegenerateHealth ImmortalTimeAfterSpawn CameraStrafeTiltStrength CameraPitchTiltStrength CameraExplosionImpulseMultiplier WaterDamage BelowWaterDamageDelay TimeForCorpse Category:KitCategory VOTypes[]:VOPerson EnableGroundmapLighting LowerGunOnOwnTeam ProximityCheck ReplenishInVehicle CustomOptions:CustomizationOptions GearPoints[]:SoldierGearPointData",
+            "SoldierEntryComponentData c EntryComponentData AimingConstraints:AimingConstraintsData AnimTree:AnimTreeDataAsset SoldierLowerBodyFixed",
+            "SoldierGearData c UnlockPartData Mesh:RigidMeshAsset Priority Transform:LinearTransform",
+            "SoldierGearPointData c - BoneName BoneId PossibleGear[]:SoldierGearData",
+            "SoldierGripComponentData c ComponentData",
+            "SoldierHeadCollisionData c - HeadRadius PoseStates[]:SoldierHeadCollisionPoseData",
+            "SoldierHeadCollisionPoseData s - IdleOffset:Vec3 MovingForwardOffset:Vec3",
+            "SoldierIKData c - Legs[]:LegInfoData Hands[]:HandInfoData WeaponBoneName FeetAngularCorrection FeetMinAngularY FeetMaxNegativeCorrection FeetMaxPositiveCorrection[] WeaponIkDeltaProperty:AnimatedPropertyData WeaponIkAnimationProperty:AnimatedPropertyData WeaponInfluenceMap:InfluenceMapData WeaponHandsIkInfluenceMap:InfluenceMapData HandsIkLod:LodInterval FeetIkLod:LodInterval WeaponBoneIndex WeaponHandsIkInfluenceMapEffects[]:InfluenceMapEffectData PrimaryHandLegBones[] PrimaryHandBones[] PrimaryLegBones[]",
+            "SoldierMeshData s - Mesh:SkinnedMeshAsset MeshShaderSet:MeshShaderSetAsset RandomGroup",
+            "SoldierOnSpottedType e - OSPlayer OSEnemyBotsOnly OSPlayerAndEnemyBots",
+            "SoldierParachuteData c - ParachuteMesh:RigidMeshAsset ParachuteMeshShaderSet:MeshShaderSetAsset ParachuteOffset1p:Vec3 ParachuteOffset3p:Vec3 AimingConstraints:AimingConstraintsData ParachuteTurningSpeed MaxTiltAngle TiltSpeed MaxTiltAtSpeed RandomMaxTiltAngle RandomTiltFrequency RandomTiltAxisOffset",
+            "SoldierProceduralLeaningData c - HipBoneName Lod:LodInterval HipBoneIndex PrimaryBones[]",
+            "SoldierRagdollSettingsData c - StaticDeathImpulse:Vec3 StaticExplosionImpulse:Vec3 StaticBulletImpulse:Vec3 StaticCollisionImpulse:Vec3 DeathSpasms[]:RagdollImpulse Material DeathImpulseMultiplier ExplosionImpulseMultiplier CollisionImpulseMultiplier BulletImpulseMultiplier MaxImpulse HitBoneImpulseModifier",
+            "SoldierRole e - SRCommander SRSquadLeader",
+            "SoldierSoundData c - ClothesSound:SoundAsset SwimSound:SoundAsset ClimbSound:SoundAsset JumpSound:SoundAsset FreeFallingSound:SoundAsset ParachuteActiveSound:SoundAsset MeleeAttackSound:SoundAsset WeaponDeploySound:SoundAsset WeaponZoomSound:SoundAsset ChangePoseSound:SoundAsset BreathSound:SoundAsset DeathSound:SoundAsset BulletImpactSound:SoundAsset HealingSound:SoundAsset SprintSound:SoundAsset SprintRecoverySound:SoundAsset TimeBetweenTriggers:SoundTrigInfo FootStepAnimTrigPositions3P[]:FootStepTrigger SprintTimeForRecovery",
+            "SoldierSpawnAppearanceTemplateData c Asset Body",
+            "SoldierSpawnBaseEntityData c SpawnEntityData",
+            "SoldierSpawnEntityData c SoldierSpawnBaseEntityData Vehicle[]:VehicleSpawnEntityData Squad[]:SquadEntityData AlternativeSpawnPoints[]:AlternateSpawnEntityData SoldierKit:SoldierAsset Template:SoldierSpawnTemplateData PlayerType:SoldierSpawnInclude SpawnToCheck VehiclePos HumanTargetPreference LodDistance LocationNameSid UseAsAlternateSpawnPoint TryToSpawnAwayFromSight SpawnSoldierFromBeginning OnSpottedType:SoldierOnSpottedType SoldierCreationPoint SoldierSquadId:SquadId",
+            "SoldierSpawnGhostEntityData c SoldierSpawnBaseEntityData Soldier:SoldierSpawnEntityData",
+            "SoldierSpawnInclude e - SSHumanPlayer SSAiPlayer",
+            "SoldierSpawnKitTemplateData c Asset Kit MainGun",
+            "SoldierSpawnTemplateData c Asset AllowedKits[]:SoldierSpawnKitTemplateData AllowedAppearances[]:SoldierSpawnAppearanceTemplateData Sensing:SensingTemplateData Behaviour:BehaviourTemplateData Rank",
+            "SoldierSprintSettingsData c - Fov FovInDelay FovInTime FovOutDelay FovOutTime ThrottleInputRequired RecoverTime InterruptingActions[]:EntryInputActionEnum",
+            "SoldierWeaponAsset c ObjectBlueprint",
+            "SoldierWeaponData c GameObjectData WeaponClass:WeaponClassEnum WeaponStates[]:WeaponStateData WeaponFiring:WeaponFiringData AimingController:SoldierAimingSimulationData Effects:WeaponEffectsData FirstPersonCamera:FirstPersonCameraData AIData:WeaponData Hud:HudData PickupSettings:PickupSettingsData StreamGroup1p:StreamGroupData AnimBaseSet:WeaponAnimBaseSetEnum RenderFov ZoomRenderFov HideWhenOutOfAmmo AllowSwitchingToWeaponOutOfAmmo SwitchToPrimaryWhenOutOfAmmo LowerOnOwnTeam WeaponAssetName Persistence:PersistentWeapon",
+            "SoldierWeaponDispersion s - JumpDispersionAngle ProneTransitionDispersionAngle MoveDispersionAngle MoveZoomedDispersionAngle DecreasePerSecond",
+            "SoldierWeaponOverrideData c - Overrides[]:WeaponOverrideData",
+            "SoldierWeaponUnlockData s - Weapon:SoldierWeaponAsset WeaponSlot IsSelectable IsBundledWithSelectable",
+            "SootMaterialData c - MaterialMaskingThreshold NotDarkerThan SootEnabled",
+            "SootTemplateAsset c Asset",
+            "SootTemplateData c SootTemplateAsset Name ShaderAsset TextureAsset Radius RandomRadius Rotation RandomRotation",
+            "SootType e - StDisabled StPerVertex StPerPixel",
+            "SoundAreaEntityData c GameEntityData Geometry[]:AreaGeometryEntityData OuterGeometry[]:AreaGeometryEntityData Sound:SoundTemplate BigWorld[]:BigWorldSettingsAsset FadeWidth MinY Height IsUrbanArea",
+            "SoundAsset c Editable",
+            "SoundEntityData c EffectEntityData SoundTemplate:SoundTemplate",
+            "SoundEnvironmentConstantData c - MemoryTime MinimumLoudness",
+            "SoundGraphEvent c SoundGraphParameter",
+            "SoundGraphParameter c - Id WireIndex",
+            "SoundNode c - EffectDescCachedIndex",
+            "SoundNodeConnection c - SourceNode:SoundNode TargetNode:SoundNode SourcePort:SoundNodePort TargetPort:SoundNodePort",
+            "SoundNodePort c - WireIndex UnconnectedValue",
+            "SoundNodePortGroup c -",
+            "SoundNodePortType e - SgptAudio SgptEvent SgptParam",
+            "SoundOutput c - Emitter:SoundSourceEmitter Source:SoundSource",
+            "SoundSource c - Emitters[]:SoundSourceEmitter",
+            "SoundSourceBypassHdrEmitter c SoundSourceEmitter",
+            "SoundSourceConeEmitter c SoundSourceEmitter Position:Vec3 Direction:Vec3 InnerAngle OuterAngle OutsideVolume",
+            "SoundSourceDialogEmitter c SoundSourceEmitter DialogLoudness",
+            "SoundSourceEmitter c GameObjectData MinDistance DistanceSlope AttenuationType:DistanceAttenuationType Solo HFDampingDistance HFDampingObstruction HFDampingAngle Gain",
+            "SoundSourceFlatEmitter c SoundSourceEmitter Angle Bleed",
+            "SoundSourceLfeEmitter c SoundSourceEmitter LfeLoudness",
+            "SoundState c - Name LpCutoffFrequency SendLpCutoffFrequencyToVo Duration FadeInTime FadeOutTime BypassSound:SoundTemplate FadeVolume GameMixMainFadeTime HdrSetting:HdrSetting",
+            "SoundStateSettingsAsset c Asset SoundStates[]:SoundState ImpairedHearingImpulseThreshold ScreamThreshold SupressionThreshold",
+            "SoundSystemSettings c - Equalizer:EqualizerSettings Compressor:CompressorSettings MasterVolume MasterLfeGain MasterDialogGain ReverbVolume MainMixVolume DistortionClipLevel PostEffectsGain",
+            "SoundTemplate c SoundAsset Outputs[]:SoundOutput Nodes[]:SoundNode PublicParameters[]:SoundGraphParameter PublicEvents[]:SoundGraphEvent WireCount SoundSource:SoundSource ReceiveNode:SoundNode MaxInstanceCount Loudness AILoudness ObstructionRadius DopplerFactor LfeLoudness DialogLoudness ReverbLoudness MasterPitch MasterMinDistance MasterDistanceSlope SkipDuplicateSpawns",
+            "SoundTrigInfo s - Stand Crouch Prone Swim Climb",
+            "SpawnAnimationData c ProcessorData AnimationSpeed",
+            "SpawnAnimationFrameData c ProcessorData AnimationFrame",
+            "SpawnCamera c CameraData",
+            "SpawnCompositeMeshPartsData c ProcessorData WaitingForUbbe",
+            "SpawnDirectionData c ProcessorData WaitingForUbbe InheritSpeedAndDirectionFromEmitter",
+            "SpawnEntityData c GameEntityData Team:TeamId Amount SpawnDelay InitializedSpawnDelay AllowMulipleSpawn Immortal",
+            "SpawnPointManagerData c Asset UseAiLodSystem",
+            "SpawnPositionData c ProcessorData WaitingForUbbe",
+            "SpawnRateData c ProcessorData SpawnRate TrailSegmentLength DynamicFrequencyAreaClamp DistributeOverTime DistributeOverDistance",
+            "SpawnRotationData c ProcessorData Rotation",
+            "SpawnRotationSpeedData c ProcessorData RotationSpeed",
+            "SpawnScreenWeaponData s - WeaponName Texture:TextureAsset",
+            "SpawnSizeData c ProcessorData Size",
+            "SpawnSpeedData c ProcessorData Speed",
+            "SpawnableMeshComponentData c ComponentData Mesh:MeshAsset",
+            "SpecateMode e - SmStatic SmLookAt SmFollow SmFace",
+            "SpecateTarget e - StNone StAllPlayers StTeamPlayers StSquadPlayers StOwnPlayer StOwnPlayerAndRagdoll StOwnPlayerAndVehicleRagdoll StBestSquadPlayer",
+            "SpecificAnimTreeData c AnimTreeDataAsset ReplacmentAnimations[]:BaseAnimationAsset AnimTree:AnimTreeData Skeleton:SkeletonAsset",
+            "SpectateCameraEntityData c GameEntityData Range IsFollowingAction",
+            "SpectateEntityData c GameEntityData Mode:SpecateMode Target:SpecateTarget Cameras[]:TargetCameraData SoldierCameraIndex VehicleCameraIndex",
+            "SpeedEventGateEntityData c GameEntityData MinSpeed MaxSpeed",
+            "SphereCollisionData s - ExtraRadius CounterNormalBrakeForceMod Enabled",
+            "SphereEvaluatorData c EvaluatorData Scale:Vec3 Radius Pivot:Vec3",
+            "SphereGeometryEntityData c GeometryEntityData Radius Weight",
+            "SplashData s - SplashImage:TextureAsset DisplayTime FadeTime",
+            "SplashFlow c Asset screens[]:SplashData Sound:WaveAsset",
+            "SpottingType e - STSquadLeader STDefault STSnapshot STSquadUav STTypesCount",
+            "SpringData s - Length Stiffness Damping ProgressiveStartRatio ProgressiveExponent VisualClipOffset AttachOffsetY",
+            "SquadBaseEntityData c GameEntityData",
+            "SquadData c - MaxPlayerCount",
+            "SquadDebugMenuEntityData c GameEntityData",
+            "SquadEntityData c SquadBaseEntityData Soldiers[]:SoldierSpawnEntityData Formation:FormationData SquadId BaseReadiness:ReadinessLevel SquadStartDispersed",
+            "SquadGhostEntityData c SquadBaseEntityData Squad:SquadEntityData",
+            "SquadId e - Squad1 Squad2 Squad3 Squad4 Squad5 Squad6 Squad7 Squad8 Squad9 Squad10 Squad11 Squad12 Squad13 Squad14 Squad15 Squad16 Squad17 Squad18 Squad19 Squad20 Squad21 Squad22 Squad23 Squad24 SquadNone SquadIdCount",
+            "SquadManagerEntityData c GameEntityData",
+            "StabilizerData c - PitchStrength RollStrength Advanced YawStrength AdvancedYaw VerticalVelocityStrength",
+            "StatCategoriesTree c TreeBase Categories[]:StatsCategoryData ParamX[]:CriteriaData ParamY[]:CriteriaData",
+            "StatEvent e - StatEvent_KillOf_X_As_Y StatEvent_KillOf_X_In_Y StatEvent_DeathAs_X_By_Y StatEvent_DeathBy_X_In_Y StatEvent_SecondsAs_X StatEvent_SecondsWith_X StatEvent_SecondsIn_X StatEvent_Destroy_X_As_Y StatEvent_Destroy_X_In_Y StatEvent_Destroy_X_With_Y StatEvent_CleanDestroy_X_In_Y StatEvent_VehicleKillAssist_X StatEvent_KillWith_X_As_Y StatEvent_KillWith_X_In_Y StatEvent_DeathWith_X_As_Y StatEvent_DeathWith_X_In_Y StatEvent_TaggedKill_X_With_Y StatEvent_Hit_X_With_Y StatEvent_Level_X_Completed_Y_Difficulty StatEvent_CleanLevel_X_Completed StatEvent_Headshot_X_With_Y StatEvent_HeadshotAs_X_With_Y StatEvent_Outcome_X_As_Y StatEvent_SelfHeal_With_X StatEvent_BestSquad_On_X StatEvent_ShotsFired_With_X StatEvent_ShotsHit_With_X StatEvent_Collectible_X StatEvent_AllInSquadGainAward_X StatEvent_AllInSquadKilled_X StatEvent_GoldNugget StatEvent_Heal StatEvent_KillAssist StatEvent_Repair StatEvent_Avenger StatEvent_Saviour StatEvent_FlagCaptured StatEvent_FlagCapturedAssist StatEvent_FirstMissionComplete StatEvent_CleanMission StatEvent_TreeDestroyed StatEvent_VehicleAirTime StatEvent_SoldierAirTime StatEvent_HighestPointInLevel StatEvent_BaseDestroyed StatEvent_LastBaseDestroyed StatEvent_CaptureCapturePoint StatEvent_DefensiveKill StatEvent_RankUp StatEvent_UniqueAward StatEvent_UniqueDogtag StatEvent_WallDestroyed StatEvent_FirstPosition StatEvent_HighCard StatEvent_Playgroup StatEvent_SquadSpawn StatEvent_Suicide StatEvent_PhotoTaken StatEvent_SquadAssist StatEvent_SquadAvenger StatEvent_SquadHeal StatEvent_TwoPair StatEvent_ThreeOfAKind StatEvent_FiveOfAKind StatEvent_FullHouse StatEvent_SnakeEyes StatEvent_CabDriver StatEvent_Strike StatEvent_LAST_ITEM",
+            "StatEventTriggerEntityData c GameEntityData StatEvent:StatEvent",
+            "StateContainer c - Entries[]:StateContainerEntry",
+            "StateContainerEntry s - Instance Identifier",
+            "StaticCameraData c TargetCameraData LeftCurve[]:Vec3 RightCurve[]:Vec3 UpCurve[]:Vec3 DownCurve[]:Vec3 ImpulseSettings:CameraImpulseShakeData LoosePartPhysicsArray[]:LoosePartPhysicsData LeftYawAngle RightYawAngle UpPitchAngle DownPitchAngle AverageFilterFrames AccumulateInput YawSensitivityNonZoomed YawSensitivityZoomed PitchSensitivityNonZoomed PitchSensitivityZoomed MirrorCurve",
+            "StaticCloudLayerData c Asset SimpleCloudPlane:StaticCloudPlaneLayerData VolumetricCloudPlane:StaticCloudVolumeLayerData",
+            "StaticCloudPlaneLayerData s - Alphamap:TextureAsset",
+            "StaticCloudVolumeLayerData s - Alphamap:TextureAsset",
+            "StaticCullNode s - Right Max SphereKeyX SphereKeyY SphereKeyZ SphereKeyW",
+            "StaticCullSettings c - Enable MergePassCount UseOldCullAgainstOcclusion",
+            "StaticCullTreeData c - Nodes[]:StaticCullNode EnumOffset",
+            "StaticEnvmapEntityData c EntityData StaticEnvmap:TextureAsset InfluenceRadiusInner InfluenceRadiusOuter",
+            "StaticFogData c Asset FunctionType:FogFunctionType",
+            "StaticModelEntityData c GamePhysicsEntityData ObjectSets[]:ObjectSet PartLinks[]:PartLinkData TreeBanger:TreeBangerEntityData Mesh:MeshAsset ConstructiblePreviewData:ConstructiblePreviewData MeshShaderSet:MeshShaderSetAsset PhysicsMaterialSet:PhysicsMaterialSetAsset LightMapEnable IrradianceVolumeReceiver Skeleton:SkeletonAsset StartAnimationOnCreation AnimTree:AnimTreeDataAsset LoopAnimation AnimationCullDistance RootBone EdgeModels:EdgeModelInstances EdgeModelLodBox:BoundingBoxAsset CanServeAsConstructibleGround SkinnedMeshTransforms[]:LinearTransform",
+            "StaticModelGroupEntityData c GroupEntityData",
+            "StaticModelGroupMemberData c GroupMemberData MeshEntityType:EntityData FirstNetworkId NetworkIdCount NetworkIdCountPerInstance FirstPartHealthStateNetworkIds[] FirstPartHealthStateIndices[]",
+            "StaticModelPartToBangerParts s - BangerPartIndices[]",
+            "StaticModelTriggerEntityData c TriggerEventEntityData StaticModel:ReferenceObjectData PartName PartCountInPerCent PartCount UseCurrentPartDestroyedOnEnable",
+            "StaticOutdoorLightData c Asset LightingModel:LightingModelType",
+            "StaticPositionEntityData c GameEntityData",
+            "StaticSkyData c Asset",
+            "StaticSunData c Asset",
+            "StatsCategoryData c TreeNodeBase Categories[]:StatsCategoryData Members[] CheckedMembers[]:StatsCategoryReferencedData Code",
+            "StatsCategoryReferencedData c -",
+            "StatsCategoryReferencedObjectData c StatsCategoryReferencedData Object:GameObjectData ObjectClassName ObjectInstanceGuid",
+            "StatsCategoryReferencedSoldierKitData c StatsCategoryReferencedData KitCategory:KitCategory",
+            "StatsCategoryReferencedSoldierRoleData c StatsCategoryReferencedData Role:SoldierRole",
+            "StencilMaskState e - SmsNone SmsWrite SmsRead",
+            "StrafePreprocessorData c BasePreprocessorData RightFrontAngle RightBackAngle LeftFrontAngle LeftBackAngle MovementAngleParameter:FloatParameter FrontParameter:BoolParameter",
+            "StreamGroupData c - Assets[]:Asset",
+            "StreamPool c Editable StreamPoolName StreamBufferSizeXenon StreamBufferSizePs3 StreamBufferSizeWin32 StreamCountXenon StreamCountPs3 StreamCountWin32",
+            "StreamPools c Editable StreamPool[]:StreamPool",
+            "StrengthType e - Infantry LightArmour HeavyArmour Helicopter NumberOfStrengthTypes",
+            "Strengths s - Infantry LightArmour HeavyArmour Helicopter",
+            "StringSelectorNodeData c BaseNodeData NodesInfoMap[]:StringSelectorNodeGroupData RealNodeData[]:BaseNodeData TemplateNodeData:BaseNodeData SelectionParameter:IntParameter FolderSubstringTemplate",
+            "StringSelectorNodeGroupData c AnimNodePortGroupData SelectionIndex FolderSubstring",
+            "StringSetting s - Name Value",
+            "SubsystemTimingConfigData s - Pathfinding Traversals AreaDistribution DynamicObjectEnvironment Sensing Evaluation GoalUpdates BehaviourSelection BehaviourExecution SquadUpdate",
+            "SubtitleDataNode c TreeNodeBase Time DisplayTime SID1 SID2",
+            "SubtitleDataTree c TreeBase Subtitles[]:SubtitleMainDataNode",
+            "SubtitleMainDataNode c TreeNodeBase Language:LanguageFormat Subtitles[]:SubtitleDataNode",
+            "SweepSelectionType e - SstTargetLost SstFirstTime",
+            "SwimmingStateData c CharacterStateData BodyUnderWater",
+            "TacticalObjectiveEntityData c GameEntityData MissionSid BriefingSidTeam1 BriefingSidTeam2 Team1Timer Team2Timer",
+            "TankControlConstantData c - YawStrength SmoothTurnSpeedAngle SmoothTurnSpeedLimit TurnSpeedLimit",
+            "TankNode c SoundNode Start:WaveAsset Stop:WaveAsset Idle:WaveAsset Loaded:WaveAsset UnLoaded:WaveAsset Interior:WaveAsset InteriorStrain:WaveAsset TracksSlow:WaveAsset TracksFast:WaveAsset PipeAttacks[]:WaveAsset IdleOut:SoundNodePort StartOut:SoundNodePort StopOut:SoundNodePort LoadedOut:SoundNodePort UnLoadedOut:SoundNodePort InteriorOut:SoundNodePort InteriorStrainOut:SoundNodePort TracksFastOut:SoundNodePort TracksSlowOut:SoundNodePort PipeAttackOut:SoundNodePort Throttle:SoundNodePort RPM:SoundNodePort Velocity:SoundNodePort AngularVelocity:SoundNodePort InDriverPos:SoundNodePort InteriorCam:SoundNodePort ReleaseEvent:SoundNodePort Idle_TheRest_Vel_Fade:Vec2 Idle_RPM_Pitch:Vec4 Load_UnLoad_Throttle_Fade:Vec2 Load_UnLoad_Vel_Pitch:Vec4 Load_UnLoad_RPM_Pitch:Vec4 Int_IntStrain_Vel_Fade:Vec2 IntStrain_Vel_Pitch:Vec4 TrackSlow_Fast_Vel_Fade:Vec2 TrackSlow_Fast_Vel_Pitch:Vec4 AngularVelocityToVelocityScale AngularVelocityToThrottleScale",
+            "TargetCameraData c CameraData Hud:HudData CriticalHudFx:HudFxData",
+            "TargetEntityData c GamePhysicsEntityData",
+            "TargetEvaluationConstantData c - KeepTargetTime MaxBattleStrength UpdateInterval",
+            "TargetObjectData c LogicEntityData StrengthType:StrengthType SequenceNumber Area:GeometryEntityData SpawnEntity:SpawnEntityData",
+            "TargetObjectDataGroup c LogicEntityData TargetObjects[]:TargetObjectData",
+            "TargetOrderEntityData c OrderEntityData Target[]:SoldierSpawnBaseEntityData",
+            "TargetPosKnowledgeType e - TargetPosKnown TargetPosUnknown TargetPosFind",
+            "TeamAsset c Asset",
+            "TeamData c TeamAsset Kits[]:SoldierAsset Faction:FactionId MaxPlayerCount MaxPlayersPerSquad",
+            "TeamEntityData c GameEntityData Order_AttackDefend:VoiceOverEntityData Order_Go:VoiceOverEntityData Order_NeedBackup:VoiceOverEntityData Order_NeedPickup:VoiceOverEntityData Order_NeedAmmo:VoiceOverEntityData Order_NeedMedic:VoiceOverEntityData Order_FollowMe:VoiceOverEntityData Team:TeamData Id:TeamId SquadSpawnCamera:ChaseCameraData",
+            "TeamFilterEntityData c GameEntityData AllowTeam:TeamId",
+            "TeamId e - TeamNeutral Team1 Team2 Team3 Team4 Team5 Team6 Team7 Team8 Team9 Team10 Team11 Team12 Team13 Team14 Team15 Team16 TeamIdCount",
+            "TeamVehicleAsset s - Vehicle:VehicleAsset Team:TeamId",
+            "TeamVehicleProjectileEntityData c ProjectileEntityData Vehicles[]:VehicleAsset EnterDelay ExitAfterFireDelay OnProjectileDestroyedUnspawnVehicle",
+            "TerrainAsset c Asset",
+            "TerrainData c TerrainAsset Heightfields[]:TerrainHeightfieldData TerrainSplines[]:TerrainSplineData ConvertedTerrainSplines[]:TerrainSplineData MaterialMap:TerrainMaterialMapAsset Water:WaterData RootDecal:TerrainGroupDecal MaskTileSize MaterialMaskStepSize DefaultFullDepthEnable",
+            "TerrainDecal c - Material:TerrainDecalMaterial Name Enable",
+            "TerrainDecalData c -",
+            "TerrainDecalMaterial c Asset Enable BaseMaterialEnable OpaqueMaskEnable UndergrowthEnable UndergrowthTypes[]:TerrainUndergrowthType Shader:ShaderAsset ZOnlyShader:ShaderAsset DebugColor:Vec3 MaskFunctions[]:TerrainMaskFunction",
+            "TerrainDecalTexCoordParams s - TileIndexX TileIndexY TileCountX TileCountY FlipX FlipY",
+            "TerrainEntityData c GamePhysicsEntityData TerrainAsset:TerrainData OutsideTerrainMaterial",
+            "TerrainFullDecal c TerrainDecal MaskTextures[]:TerrainMaskTexture MaskTextureType:TerrainMaskTextureType MaskPixelsPerMeter GridCellSize GridCellResolution",
+            "TerrainGroupDecal c TerrainDecal Decals[]:TerrainDecal",
+            "TerrainHeightfieldData c - Files[] FileGrid[]:TerrainHeightfieldGridCellInfo DepthFiles[] Resolution InnerResolution SizeXZ SizeY",
+            "TerrainHeightfieldGridCellInfo c - File TopLeftCorner:Vec3 BottomRightCorner:Vec3",
+            "TerrainLayerData c -",
+            "TerrainMaskFunction s - MinAltitude MaxAltitude MinSlope MaxSlope",
+            "TerrainMaskTexture s - PosMin:Vec2 PosMax:Vec2 File Enable",
+            "TerrainMaskTextureType e - TmttNone TmttStandard TmttArea",
+            "TerrainMaterialMapAsset c Asset MaterialNames[] MaterialMapFileName",
+            "TerrainQuadDecal c TerrainDecal Transform:LinearTransform UserMasks:Vec4 Template:TerrainQuadDecalTemplate TexCoord:TerrainDecalTexCoordParams",
+            "TerrainQuadDecalConnection s - Point1:Vec2 Point2:Vec2",
+            "TerrainQuadDecalTemplate c Asset Connections[]:TerrainQuadDecalConnection TexCoord:TerrainDecalTexCoordParams",
+            "TerrainQuadGeometryData c -",
+            "TerrainSplineData c GameObjectData Points[]:TerrainSplinePointData Planes[]:TerrainSplinePlaneData AttachedStart:TerrainSplinePointData AttachedEnd:TerrainSplinePointData InnerSpline:TerrainSplineData",
+            "TerrainSplineDecal c TerrainDecal Spline:TerrainSplineData InnerSpline:TerrainSplineData UseInnerSpline",
+            "TerrainSplinePlaneData c - DefaultUserMasksLeft:Vec4 DefaultUserMasksRight:Vec4 Points[]:TerrainSplinePlanePointData Parent:TerrainSplineData PlaneType:TerrainSplinePlaneType StartIndex EndIndex DefaultSegments DefaultAlpha DefaultLeftEdge DefaultRightEdge DefaultTextureStretch DefaultLift DefaultFoamLeft DefaultFoamRight DefaultWaveHeightLeft DefaultWaveHeightRight BaseSpeed NoiseWidth FilledSplineRepeatX FilledSplineRepeatY FilledSplineRotation",
+            "TerrainSplinePlanePointData c - UserMasks:Vec4 UserMasksLeft:Vec4 UserMasksRight:Vec4 AffectedPoint:TerrainSplinePointData Segments LeftEdge RightEdge WaterSpeed",
+            "TerrainSplinePlaneType e - Road River FillConvex FilledInner Lake",
+            "TerrainSplinePointData c - Position:Vec3 Parent:TerrainSplineData",
+            "TerrainUndergrowthType c - MinScale:Vec2 MaxScale:Vec2 MinMaskScaleFactor:Vec2 Mesh:RigidMeshAsset MeshShaderSet:MeshShaderSetAsset CacheShader:ShaderAsset Density Variation MinMask MaxMask WindScale ViewDistance Enable RotateEnable SkewEnable",
+            "TerrainViewMode e - TvmDefault TvmSimple TvmMaterialCount TvmMaterialDebugColor TvmMaterialCombo TvmMaskCount TvmOverdrawMask TvmOverdrawCoverage",
+            "TestEntityData c GameEntityData",
+            "TextureAsset c TextureBaseAsset",
+            "TextureAssetGamma e - TagDefault TagLinear TagSrgb",
+            "TextureBaseAsset c Asset",
+            "TextureOutputFormat e - TofDefault TofDXT1 TofDXT3 TofDXT5 TofRGB565 TofARGB1555 TofARGB4444 TofARGB8888 TofA8 TofL8 TofL16 TofABGR16 TofABGR16F TofABGR32F TofR16F TofR32F TofDXN TofNormalmapDXT TofNormalmapDXT1 TofNormalmapDXT5RGA TofRGBE_8888 TofDXT5A TofGR16",
+            "TextureUnlockPartCollection c Asset ShaderNodeName TextureFormat:TextureOutputFormat TextureUsage:TextureUsage TextureUnlockParts[]:TextureUnlockPartData",
+            "TextureUnlockPartData c UnlockPartData Texture:TextureAsset",
+            "TextureUsage e - TuDefault TuTangentSpaceNormalmap TuObjectSpaceNormalmap TuWorldSpaceNormalmap",
+            "TicketCountPercentage s - MaxPercentOfTicketsLeft TicketLossPerMin VOEvent:VOEventType",
+            "TicketCounterEntityData c GameEntityData TeamId:TeamId TicketLossWhenLostAllBases TicketLossPerMin TicketPercentages[]:TicketCountPercentage TicketLossPerMinPointCountScale TicketLossStart InitialTicketCount SetBestSquadSpawner HaltTicketLossOnEqualPointCount",
+            "TimeControllerNodeData c BaseNodeData Animation:BaseNodeData Parameter:FloatParameter MinValue MaxValue",
+            "TimePair s - StartTime StopTime",
+            "TimeSynchronizationType e - TST_SYNCH TST_TRANSLATION TST_ROTATION",
+            "TimeSynchronizerNodeData c BaseNodeData Node:BaseNodeData SpeedParameter:FloatParameter SynchType:TimeSynchronizationType IsCyclic:TripleBool PlayFromBegining:TripleBool NormalizedTimeParameter:FloatParameter",
+            "TimeSynchronizerToParentNodeData c BaseNodeData Node:BaseNodeData",
+            "TimingConstantData c - UpdateTimePerFrame SubsystemTimeParts:SubsystemTimingConfigData PriorityClasses[]:BotPriorityConfigData",
+            "TooltipEntityData c GameEntityData EntryInputAction:EntryInputActionEnum TooltipSid",
+            "TracerDartEntityData c MeshProjectileEntityData TransmissionEffect:EffectAsset Gravity",
+            "TrackComponentData c SkinnedMeshComponentData ScrollFactor",
+            "TrackWheelComponentData c WheelComponentData BoneName",
+            "TransitionInfoData c AnimNodePortGroupData Transition:BaseNodeData FromValue ToValue",
+            "TransitionNodeData c BaseNodeData Transitions[]:TransitionInfoData ElseNode:BaseNodeData PoseSelectionParameter:IntParameter PoseAfterTransitionParameter:IntParameter DisableTransitionsParameter:BoolParameter",
+            "TraversalConfigData c - Name TimePart MaxDistance",
+            "TraversalConstantData c - BehaviourTestTraversalConstants:TraversalConfigData CoverSearchTraversalConstants:TraversalConfigData EnvironmentTraversalConstants:TraversalConfigData FrontLineTraversalConstants:TraversalConfigData",
+            "TreeBangerEntityData c BangerEntityBaseData PartLinks[]:PartLinkData SpawnEffects[]:EffectAsset",
+            "TreeBase c Asset",
+            "TreeHealthStateData c HealthStateData BranchEffects[]:EffectAsset ShakeEffects[]:EffectAsset",
+            "TreeMemberData c GroupMemberData MeshEntityType:TreeMeshEntityData PartsToBangerParts[]:StaticModelPartToBangerParts",
+            "TreeMeshAsset c CompositeMeshAsset BillboardShader:ShaderAsset BillboardResolutionX BillboardResolutionY Bendable AffectedByWind BranchesAffectedByWind LodScale CutMaterialCount",
+            "TreeMeshDummyData c -",
+            "TreeMeshEntityData c EntityData Mesh:TreeMeshAsset EnableLeaves",
+            "TreeNodeBase c - NodeName",
+            "TrialValidatorEntityData c GameEntityData ValidationStat ValidationMaxValue TrialDisabledContent",
+            "TriggerEntityData c GameEntityData Delay RunOnce",
+            "TriggerEventEntityData c TriggerEntityData",
+            "TripleBool e - TB_FALSE TB_TRUE TB_NONE",
+            "TripleStateNodeData c BaseNodeData PreNode:BaseNodeData LoopNode:BaseNodeData PostNode:BaseNodeData ElseNode:BaseNodeData ActivateNodeParameter:BoolParameter PreNodeNormalizedBlendOutTime PostNodeNormalizedBlendOutTime ContinuousTime",
+            "TurbulanceData c ProcessorData Intensity",
+            "TurnEffectData s - MaxRollAngle MaxPitchAngle YawVelocityThreshhold VelocityThreshhold SafeTime BeginTime HoldTime EndTime",
+            "TurnNodeData c BaseNodeData Idle:BaseNodeData TurnLeft:AnimationNodeData TurnRight:AnimationNodeData TurnSpeedParameter:FloatParameter TurnAngleParameter:FloatParameter TurnTimeParameter:FloatParameter",
+            "TurretControlConstantData c - SearchLookSpeed SlowLookSpeed NormalLookSpeed FastLookSpeed",
+            "TurretData c - PitchP YawP FakeShootSpaceMinDistance FakeShootSpaceMaxDistance",
+            "UI3DCameraAnimation s - FromName ToName ProjectionMatrix:Mat4 Samples[]:UI3DCameraSampledFrame",
+            "UI3DCameraSampledFrame s - Time Position:Vec3 Rotation:Quat",
+            "UI3DGeometryAnimation s - Name Samples[]:UI3DGeometrySampledFrame MinBoundingCorner:Vec3 MaxBoundingCorner:Vec3",
+            "UI3DGeometrySampledFrame s - Time Position:Vec3 Rotation:Quat Scale:Vec3",
+            "UI3DSystemAsset c Asset CameraAnimations[]:UI3DCameraAnimation GeometryAnimations[]:UI3DGeometryAnimation",
+            "UIAnimatedTextureData c - Groups[]:UIAnimatedTextureDataGroup",
+            "UIAnimatedTextureDataGroup c - Infos[]:UIAnimatedTextureDataInfo BlinkInfos[]:UIAnimatedTextureDataInfo Color:Vec3 Icon:UIHudIcon Width Height FrameRate Rotation StickOnBorder VerticalTextAnchor:UITextAnchor HorizontalTextAnchor:UITextAnchor ScaleIconSizeDist",
+            "UIAnimatedTextureDataInfo c - Name MinU MaxU MinV MaxV Delay",
+            "UIAnimatedTextureFrame c - Texture Delay",
+            "UIAnimatedTextureGroup c - Color:Vec3 Frames[]:UIAnimatedTextureFrame BlinkFrames[]:UIAnimatedTextureFrame Icon:UIHudIcon Width Height FrameRate Rotation StickOnBorder VerticalTextAnchor:UITextAnchor HorizontalTextAnchor:UITextAnchor ScaleIconSizeDist",
+            "UIAnimatedTextureManagerAsset c Asset Groups[]:UIAnimatedTextureGroup OutputAtlasFile",
+            "UIAsset c Asset SourceFile AtlasTextureFormat:TextureOutputFormat AtlasCount Config:UIConfig",
+            "UIConfig c - Menu:UIMenuConfig Hud:UIHudConfig",
+            "UIConstructibleEntitiesData c GameEntityData MenuObjects[]:ObjectBlueprint",
+            "UIFontAsset c Asset SourceFile PointSize Style:UIFontStyle TextDatabase[]:UITextDatabase",
+            "UIFontData c - Glyphs[]:UIFontGlyph Kerning[]:UIFontGlyphKerning TextureFile KerningFile Height TextureWidth TextureHeight",
+            "UIFontGlyph c - Glyph X Y Width Pitch Rows MinX MaxX MinY MaxY YOffset Advance",
+            "UIFontGlyphKerning c - First Second Kerning",
+            "UIFontMapAsset c Asset Language:LanguageFormat Proxies[]:UIFontMapProxy",
+            "UIFontMapProxy s - Language:LanguageFormat Fonts[]:UIFontProxyAsset",
+            "UIFontProxyAsset c - Font:UIFontAsset FontName PointSize Style:UIFontStyle Tracking StartOffset RowOffset",
+            "UIFontStyle e - UIFontStyle_Regular UIFontStyle_Bold UIFontStyle_Italic",
+            "UIHudConfig c - MaxOrderIconDistance Nametags[]:UINametag NametagHealthVisibleForAll Fade3DIcons InnerNametagRadius OuterNametagRadius GrenadeDistanceThreshold TaggedVehicleCrosshair:UITaggedVehicleCrosshair Minimap:UIMinimapConfig CriticalHealthThreshold ShowMedicHealthThreshold RepairVehicleThreshold",
+            "UIHudIcon e - UIHudIcon_LocalPlayer UIHudIcon_FriendlyPlayer UIHudIcon_EnemyPlayer UIHudIcon_NeutralPlayer UIHudIcon_SquadMember UIHudIcon_SquadLeader UIHudIcon_Vehicle UIHudIcon_PrimaryObjective UIHudIcon_PrimaryObjectiveBlink UIHudIcon_SecondaryObjective UIHudIcon_AreaMapMarker UIHudIcon_ObjectiveDestroy UIHudIcon_ObjectiveScout UIHudIcon_ObjectiveDefend UIHudIcon_ObjectiveGoto UIHudICon_UAV UIHudIcon_AmmoCrate UIHUDIcon_C4 UIHUDIcon_C4_small UIHUDIcon_ATMine UIHudIcon_StationaryWeapon UIHudIcon_North UIHudIcon_South UIHudIcon_West UIHudIcon_East UIHudIcon_NeutralFlag UIHudIcon_FriendlyFlag UIHudIcon_EnemyFlag UIHudIcon_NeutralFlagLit UIHudIcon_FriendlyFlagLit UIHudIcon_EnemyFlagLit UIHudIcon_SelectedSpawnPoint UIHudIcon_FriendlyFlagUnderAttack UIHudIcon_EnemyFlagUnderAttack UIHudIcon_OrderAttack UIHudIcon_OrderDefend UIHudIcon_OrderAttackSmall UIHudIcon_OrderDefendSmall UIHudIcon_BoatNeutral UIHudIcon_BoatFriendly UIHudIcon_BoatEnemy UIHudIcon_BoatSquad UIHudIcon_CarNeutral UIHudIcon_CarFriendly UIHudIcon_CarEnemy UIHudIcon_CarSquad UIHudIcon_HeliNeutral UIHudIcon_HeliFriendly UIHudIcon_HeliEnemy UIHudIcon_HeliSquad UIHudIcon_TankNeutral UIHudIcon_TankFriendly UIHudIcon_TankEnemy UIHudIcon_TankSquad UIHudIcon_StationaryNeutral UIHudIcon_StationaryFriendly UIHudIcon_StationaryEnemy UIHudIcon_StationarySquad UIHudIcon_StrategicNeutral UIHudIcon_StrategicFriendly UIHudIcon_StrategicEnemy UIHudIcon_StrategicSquad UIHudIcon_MotionRadarSweep UIHudIcon_NeedBackup UIHudIcon_NeedAmmo UIHudIcon_NeedMedic UIHudIcon_NeedPickup UIHudIcon_NeedRepair UIHudIcon_KitAssault UIHudIcon_KitDemolition UIHudIcon_KitRecon UIHudIcon_KitSpecialist UIHudIcon_KitSupport UIHudIcon_KitPickupAssault UIHudIcon_KitPickupDemolition UIHudIcon_KitPickupRecon UIHudIcon_KitPickupSpecialist UIHudIcon_KitPickupSupport UIHudIcon_Pickup UIHudIcon_TaggedVehicle UIHudIcon_HeliTargetEnemy UIHudIcon_HeliTargetFriendly UIHudIcon_ArtilleryTarget UIHudIcon_NeutralFlagAttacker UIHudIcon_FriendlyFlagAttacker UIHudIcon_EnemyFlagAttacker UIHudIcon_LaserTarget UIHudIcon_ObjectiveAttacker UIHudIcon_ObjectiveDefender UIHudIcon_HealthbarBackground UIHudIcon_Healthbar UIHudIcon_RadarSweepComponent UIHudIcon_Blank UIHudIcon_LocalPlayerBigIcon UIHudIcon_LocalPlayerOutOfMap UIHudIcon_PrimaryObjectiveLarge UIHudIcon_RpgTargetUnlocked UIHudIcon_RpgTargetLocked UIHudIcon_RpgTargetLocking UIHudIcon_ArtilleryStrikeNametag UIHudIcon_ArtilleryStrikeMinimap UIHudIcon_ConquestFlagNeutral UIHudIcon_ConquestFlagFriendly UIHudIcon_ConquestFlagEnemy UIHudIcon_ConquestFlagFriendlyUncap UIHudIcon_ConquestFlagEnemyUncap UIHudIcon_ConquestFlagFriendlySelected UIHudIcon_ConquestFlagFriendlySquadSelected UIHudIcon_ConquestFlagHotzoneSmall UIHudIcon_ConquestFlagHotzone UIHudIcon_BombRaidNeutral UIHudIcon_BombRaidFriendly UIHudIcon_BombRaidEnemy UIHudIcon_BombRaidSquad UIHudIcon_BunkerNeutral UIHudIcon_BunkerFriendly UIHudIcon_BunkerEnemy UIHudIcon_BunkerSquad UIHudIcon_Grenade UIHudIcon_GrenadeArrow UIHudIcon_FocusPointAim UIHudIcon_FocusPointLocked UIHudIcon_FocusPointAttack UIHudIcon_FocusPointDefend UIHudIcon_FlynnCrate UIHudIcon_TeamObjectMedikit UIHudIcon_TeamObjectAmmo UIHudIcon_TeamObjectDeadSoldier UIHudIcon_TeamObjectArrow UIHudIcon_RadioOrderLetMeHeal UIHudIcon_RadioOrderRequestHeal UIHudIcon_RadioOrderRequestAmmo UIHudIcon_RadioOrderLetMeGiveAmmo UIHudIcon_RadioOrderLetMeRepair UIHudIcon_RadioOrderRequestRide UIHudIcon_RadioOrderSocialise UIHudIcon_RadioOrderHighlight UIHudIcon_ConquestFlagNeutralSmall UIHudIcon_ConquestFlagFriendlySmall UIHudIcon_ConquestFlagEnemySmall UIHudIcon_ConquestFlagFriendlyUncapSmall UIHudIcon_ConquestFlagEnemyUncapSmall UIHudIcon_Count",
+            "UIMenuConfig c - IntroMovies[]:UIMovieAsset BackgroundMovies[]:BinkTextureAsset BackgroundMusic:WaveAsset DefaultScene",
+            "UIMinimapConfig s - CombatAreaCameraDelay CameraInterpolationTime CombatAreaFadeSpeed ZoomStates[]:UIMinimapZoomConfig CameraPanSensitivity MinVelocity MaxVelocity VelocityModifier ZoomConversion:UIMinimapZoomConversion CompassTexture:TextureAsset CombatAreaDetailTexture:TextureAsset BorderSize",
+            "UIMinimapShape s - ShapeType:UIMinimapShapeType AlphaMaskTexture:TextureAsset",
+            "UIMinimapShapeType e - UIMinimapShapeType_Rectangle UIMinimapShapeType_Circle UIMinimapShapeType_Count",
+            "UIMinimapZoomConfig s - State:UIMinimapZoomState Data:MinimapData Shape:UIMinimapShape",
+            "UIMinimapZoomConversion s - CameraMinDistance MinZoom CameraMaxDistance MaxZoom",
+            "UIMinimapZoomState e - UIMinimapZoomState_Default UIMinimapZoomState_Overview UIMinimapZoomState_CombatArea UIMinimapZoomState_Mission UIMinimapZoomState_Artillery UIMinimapZoomState_Spawn UIMinimapZoomState_None",
+            "UIMovieAsset c Asset Language:LanguageFormat Description Movie:UIMovieData SubtitleMovie:UIMovieData Music:WaveAsset Texture:TextureAsset OverrideBackgroundMusic Looping IsSpecialEdition",
+            "UIMovieData c - Movie:BinkTextureAsset Viewport:UIMovieViewport",
+            "UIMovieViewport s - X Y Width Height TargetWidth TargetHeight",
+            "UINametag c - Icon:UIHudIcon IconFadeDistance IconMaxDistance TextFadeDistance TextMaxDistance HealthFadeDistance HealthMaxDistance SnapToScreenEdge TextColor:Vec3",
+            "UIShaderAsset c Asset",
+            "UITaggedVehicleCrosshair s - MinDistance MaxDistance MinSize MaxSize",
+            "UITextAnchor e - UITextAnchor_None UITextAnchor_Left UITextAnchor_Right UITextAnchor_Top UITextAnchor_Bottom UITextAnchor_Center",
+            "UITextDatabase c Asset Language:LanguageFormat BinaryFile HistogramFile",
+            "UITextureAtlasData c - Infos[]:UITextureAtlasInfo",
+            "UITextureAtlasInfo c - TextureFile TextureWidth TextureHeight MinU MaxU MinV MaxV",
+            "UnlockCategoryLabel e - UCL_Unknown UCL_Infantry UCL_Vehicles UCL_Team UCL_Appearance UCL_Attire UCL_Recruit UCL_MachineGunner UCL_CombatMedic UCL_FieldWorks UCL_AntiTank UCL_Sniper UCL_SpecOps UCL_Rifleman",
+            "UnlockComponentData c ComponentData Unlock:UnlockGraphUnlock OverrideMode:ComponentUnlockOverrideMode InverseRelation",
+            "UnlockConnection c - SourceNode:UnlockGraphNode DestNode:UnlockGraphNode",
+            "UnlockGraphClass c Asset Nodes[]:UnlockGraphNode Connections[]:UnlockConnection RootNode:UnlockGraphNode CsvFile",
+            "UnlockGraphCompound c UnlockGraphUnlock",
+            "UnlockGraphCondition c UnlockGraphNode RequiredAward RequiredRank RequiredUnlock:UnlockGraphNode",
+            "UnlockGraphHeader c UnlockGraphNode",
+            "UnlockGraphLabelUnlock c UnlockGraphUnlock Label:UnlockCategoryLabel",
+            "UnlockGraphNode c - Name Enabled XPos YPos Parents[]:UnlockGraphNode Children[]:UnlockGraphNode",
+            "UnlockGraphSubCompound c UnlockGraphUnlock",
+            "UnlockGraphUnlock c UnlockGraphNode NetworkID IconID Cost CostMultiplierByLevel UniqueName Levels",
+            "UnlockPartData c Asset Unlock:UnlockGraphUnlock",
+            "UnlockTreeCategory c UnlockTreeNode Children[]:UnlockTreeNode CategoryLabel:UnlockCategoryLabel",
+            "UnlockTreeClass c TreeBase Root[]:UnlockTreeNode StartingUnlocks[]:UnlockGraphUnlock",
+            "UnlockTreeGraph c UnlockTreeNode Graph:UnlockGraphClass",
+            "UnlockTreeNode c TreeNodeBase Parent:UnlockTreeCategory",
+            "UnlockableSoldierWeaponData c UnlockPartData Weapon:SoldierWeaponAsset WeaponSlot",
+            "UpdateAgeData c ProcessorData Lifetime",
+            "UpdateAlphaLevelMaxData c ProcessorData MaxLevel",
+            "UpdateAlphaLevelMinData c ProcessorData MinLevel",
+            "UpdateAlphaLevelScaleData c ProcessorData Exponent",
+            "UpdateBoundingBoxData c ProcessorData WaitingForUbbe",
+            "UpdateClipScaleData c ProcessorData Lookup[]",
+            "UpdateCollisionData c ProcessorData Penetration Elasticity",
+            "UpdateColorData c ProcessorData Color:Vec3",
+            "UpdateLinearVelocityData c ProcessorData WaitingForUbbe",
+            "UpdateOrientationData c ProcessorData WaitingForUbbe",
+            "UpdateRotationData c ProcessorData TextureInfo1:EmitterTextureInfo",
+            "UpdateSizeData c ProcessorData Pivot:Vec2",
+            "UpdateSizeXData c ProcessorData WaitingForUbbe",
+            "UpdateSizeYData c ProcessorData WaitingForUbbe",
+            "UpdateSizeZData c ProcessorData WaitingForUbbe",
+            "UpdateTextureCoordsData c ProcessorData TextureInfo1:EmitterTextureInfo TextureBlendValue",
+            "UpdateTransparencyData c ProcessorData CullThreshold",
+            "UrgencyModifierData s - Name Modifier",
+            "UrgencySetData c - Name UrgencyModifiers[]:UrgencyModifierData",
+            "UrgencyUserData c - Base:UrgencyUserData UrgencyModifiers[]:UrgencyModifierData ModifierSets[]:UrgencySetData",
+            "UserMusicArbiterNode c SoundNode In:SoundNodePort Out:SoundNodePort",
+            "VOAsset c TreeBase Events[]:VOEvent",
+            "VOConstantData c - EnemyBehindPlayerRadius EnemyBehindPlayerArc MaxEnemyBehindPlayerHeightDiff MaxPlayerHurtDistance PlayerHurtThreshold TimeBetweenLookAtPlayersMin TimeBetweenLookAtPlayersMax TimeBeforeFirstLookAtPlayerMin TimeBeforeFirstLookAtPlayerMax MinTimeAfterInterludeBeforeLookAtPlayer LoiteringWaitTime LoiteringPauseTime",
+            "VOEvent c TreeNodeBase Rows[]:VORow EventType:VOEventType PauseTime",
+            "VOEventType e - ETReceivedNewOrder ETRpgAimedAtPlayer ETGrenadeAimedAtPlayer ETThrowGrenade ETVehicleHealthLow ETIncomingGrenade ETSoldierFire ETPlacedExplosive ETProjectileImpact ETProjectileImpactNearSoldier ETSoldierKilled ETSaviourKill ETAvengeKill ETHeadshotKill ETRoadkill ETEnterVehicle ETVehicleKilled ETAllEnemiesDead ETSoldierReloading ETSoldierEnableParachute ETSeenExplosion ETArtilleryFired ETLookAtPlayer ETPlayerHurt ETEnemySpottedBehindPlayer ETLastManStanding ETGainedReinforcements ETCommentFightHarder ETAlertLeavingArea ETSpottedObject ETSpottedExplosionPack ETSpottedMine ETVehicleRepaired ETRequestMedic ETOrderBailOut ETRequestRepair ETKnockedOver ETMeleeAttack ETWonCapturePoint ETLostCapturePoint ETRoundWon ETRoundLost ETTicketsLow ETReachTicketPercentage ETTicketsMirror ETHomeGrief ETAwayGrief ETOrderAttackNeutral ETOrderAttackEnemy ETOrderDefend ETSoldierSpawned ETRank1 ETRank2 ETRank3 ETRank4 ETRank5 ETRank6 ETRank7 ETRank8 ETRank9 ETRank10 ETRank11 ETRank12 ETRank13 ETRank14 ETRank15 ETRank16 ETRank17 ETRank18 ETRank19 ETRank20 ETRank21 ETRank22 ETRank23 ETRank24 ETRank25 ETRank26 ETNone",
+            "VOFacialAnimMapData c - WaveAssets[]:WaveAsset",
+            "VOGroup c VORowData Lines[]:VOLine Chance PauseTime",
+            "VOLine c TreeNodeBase TalkDialogLine:DialogLineNode ScreamDialogLine:DialogLineNode RadioDialogLine:DialogLineNode Source:VOSource SourcePerson:VOPerson UrgencyLevel Delay CanSkip",
+            "VOListenerParam c VOParam Listener:VOListenerParamType",
+            "VOListenerParamType e - LptInflictor LptNotInflictor LptVictim LptNotVictim",
+            "VOOrderParam c VOParam Order:OrderReadiness",
+            "VOParam c VORowData ParameterType:VOParamType",
+            "VOParamGroup c VORowData GroupType:VOParamGroupType Parameters[]:VOParam",
+            "VOParamGroupType e - PGTRadio PGTVoice",
+            "VOParamType e - PEInflictor PEVictim PEListener",
+            "VOPerson c - Name",
+            "VOPersonParam c VOParam Person:VOPerson",
+            "VOReadiness e - RRelaxed RCombat",
+            "VOReadinessParam c VOParam Readiness:VOReadiness",
+            "VORow c TreeNodeBase RowData[]:VORowData",
+            "VORowData c TreeNodeBase",
+            "VOSource e - SInflictor SInflictorFriend SInflictorLeader SVictim SVictimFriend SVictimLeader SPerson",
+            "VOTargetDistanceParam c VOParam MaxDistance",
+            "VOTypesAsset c Asset Persons[]:VOPerson Weapons[]:VOWeapon Vehicles[]:VOVehicle",
+            "VOVehicle c - Name",
+            "VOVehicleParam c VOParam Vehicle:VOVehicle",
+            "VOWeapon c - Name",
+            "VOWeaponParam c VOParam Weapon:VOWeapon",
+            "ValueDebugNode c SoundNode Values[]:DebugValueInput",
+            "Vec2 s - x y",
+            "Vec3 s - x y z",
+            "Vec3Parameter c BaseParameter InitialValue:Vec3",
+            "Vec4 s - x y z w",
+            "VegetationDensity e - All EveryOther EveryFourth EverySixth EveryEighth",
+            "VehicleAsset c ObjectBlueprint",
+            "VehicleComponentData c PartComponentData VehicleConfig:VehicleConfigData GearboxConfig:GearboxConfigData AlwaysFullThrottle WaterEffects[]:VehicleWaterEffectData WaterStreakEffects[]:VehicleWaterEffectData TriggerGroundEffectImpulse",
+            "VehicleConfigData c - CenterOfMass:Vec3 CenterOfMassHandlingOffset:Vec3 InertiaModifier:Vec3 AeroDynamicPhysics:AeroDynamicPhysicsData MotionDamping:MotionDampingData Input:VehicleInputData FloatPhysics:FloatPhysicsData Stabilizer:StabilizerData VehicleModeAtReset:VehicleMode BodyMass GravityModifier YawMin YawMax DownForceBaseFactor DownForceWheelFactor VehicleModeChangeEnteringTime VehicleModeChangeStartingTime VehicleModeChangeStoppingTime VehicleModeChangeLeavingTime StandStillLowSpeedTimeLimit StaticFrictionBreakCollisionMod StaticFrictionBreakVelocityMod CoefficientOfAirFriction AirDensity AirDragArea WindResistanceBaseFactor WindResistanceVelocityFactor WindResistanceVelocityFactorMin WindResistanceVelocityFactorMax UseDownForce UseDownForceWheelFactor UseGearbox UseStandStillBrake UseStandStillSleep UseTurnAroundForce UseMotorcycleControl InvertPitchAllowed UseWindResistance",
+            "VehicleEntityData c ControllableEntityData CriticallyDamagedEffectPosition:Vec3 PreExplosionEffectPosition:Vec3 MeshShaderSet:MeshShaderSetAsset Explosion:ExplosionEntityData ExplosionOffset:Vec3 Mesh:CompositeMeshAsset ConstructiblePreviewData:ConstructiblePreviewData CriticallyDamagedEffect:EffectAsset PreExplosionEffect:EffectAsset FrontHealthZone:VehicleHealthZoneData RearHealthZone:VehicleHealthZoneData LeftHealthZone:VehicleHealthZoneData RightHealthZone:VehicleHealthZoneData HealthZonesShareDamage HudData:VehicleHudData NameSid MaxPlayersInVehicle MinSpeedForMineActivation WaterDamage BelowWaterDamageDelay UpsideDownAngel UpsideDownDamage UpsideDownDamageDelay CriticalDamageTime PreExplosionTime WaterDamageOffset ThrowOutSoldierInsideOnWaterDamage KillSoldierCollisionSpeedThreshold ExitSpeedThreshold EnableGroundmapLighting IsAffectedByEMP MPMode:MPModeData Rumble:VehicleRumbleData EnterExitFadeWaitTime EnterExitFadeInTime ExitCameraSwitchDelay GiveScore AllowNeutralTeamChange AllowSpawnNextToVehicle",
+            "VehicleExitPointComponentData c ComponentData",
+            "VehicleGarageEntityData c GameEntityData BelongsToTeam:TeamId OccupyingRadius CanSpawn[]:VehicleAsset",
+            "VehicleHealthZoneData s - EffectPosition:Vec3 Effect:EffectAsset MaxHealth",
+            "VehicleHudData s - VehicleType:VehicleHudType Texture:TextureAsset",
+            "VehicleHudType e - VehicleHudType_Car VehicleHudType_Tank VehicleHudType_Boat VehicleHudType_Helicopter VehicleHudType_Stationary VehicleHudType_Strategic VehicleHudType_BombRaid VehicleHudType_Bunker VehicleHudType_Dummy VehicleHudType_Count",
+            "VehicleInput e - Throttle RPM Velocity InDriverPos InteriorCam Distance Tilt Gear SpringCompression Slip AngularVelocity",
+            "VehicleInputData s - ThrottleDeadzone BrakeDeadzone YawDeadzone PitchDeadzone RollDeadzone YawInertiaOutDuration YawInertiaInDuration YawInertiaMinRatio PitchInertiaOutDuration PitchInertiaInDuration PitchInertiaMinRatio RollInertiaOutDuration RollInertiaInDuration RollInertiaMinRatio",
+            "VehicleInputTweakData c - InputTweakType:VehicleInputTweakType MinSpeed MaxSpeed MinSpeedScale MaxSpeedScale",
+            "VehicleInputTweakType e - CombinedTimedSpeedTweakType CombinedSpeedTweakType SpeedTweakType ScaledSpeedTweakType",
+            "VehicleMode e - VmIdle VmEntering VmEntered VmStarting VmStarted VmStopping VmLeaving",
+            "VehicleOrderingDebugUIEntityData c GameEntityData Vehicle:VehicleAsset Team:TeamId",
+            "VehicleOrderingEntityData c GameEntityData TeamData[]:VehicleOrderingTeamData",
+            "VehicleOrderingQueueData c UnlockPartData VehicleToSpawn:VehicleAsset SimultaneousVehicles CooldownTime TimeUntilAbandoned TimeUntilAbandonedIsDestroyed KeepAliveRadius QueueType:VehicleOrderingQueueType",
+            "VehicleOrderingQueueType e - VOQTTankQueue VOQTAirplaneQueue VOQTHeliQueue VOQTQueueCount",
+            "VehicleOrderingTeamData c - Queues[]:VehicleOrderingQueueData Team:TeamId",
+            "VehicleProjectileEntityData c ProjectileEntityData Vehicle:VehicleAsset EnterDelay OnProjectileDestroyedUnspawnVehicle",
+            "VehicleRumbleData s - SpeedThreshold RumbleRadius LowRumbleModifier HighRumbleModifier LowRumbleImpulseModifier HighRumbleImpulseModifier RumbleImpulseDuration RumbleImpulseClamp EngineStartLowRumbleModifier EngineStartHighRumbleModifier EngineStartRumbleDuration",
+            "VehicleSpawnEntityData c SpawnEntityData Vehicles[]:TeamVehicleAsset Vehicle:VehicleAsset RotationRoll RotationPitch Throttle RespawnRange SpawnAreaRadius TimeUntilAbandoned TimeUntilAbandonedIsDestroyed BotBailWhenHealthBelow BotBailOutDelay KeepAliveRadius WreckDuration MaxVehicles MaxVehiclesPerMap MeshShaderSetNumber AutoSpawn ApplyDamageToAbandondedVehicles SnapToSurface SpawnVehicleFromBeginning DestroyVehiclesOnDisable SetTeamOnSpawn EffectedByImpulse LodDistance EnterRestriction:EntryEnterRestriction OnlySendEventForHumanPlayers SendWeaponEvents",
+            "VehicleStateTriggerEntityData c TriggerEntityData VehicleToCheck:VehicleSpawnEntityData LockAmount EntryInputAction:EntryInputActionEnum InputVehiclePosition Restriction:EnterVehicleRestriction SeatSpecificToEnter BulletsAmount HealthToSet HealthToCheck TriggerCriticalOnHealthSet CheckHealthOnAndAbove EffectRadius EffectVehicles EffectBangers VehiclesToExclude[]:VehicleSpawnEntityData",
+            "VehicleWaterEffectData c - Position:Vec3 Effect:EffectAsset",
+            "VersionData c Asset disclaimer Version DateTime BranchId FinalBundles",
+            "VertexSemantics e - ParticleColor ParticleWidthHeight ParticleTextureCoords1 ParticleTextureCoords2 ParticleTextureCoords3 ParticleTextureCoords4",
+            "VertexShaderAsset c BaseShaderAsset",
+            "VertexShaderFragmentAsset c Asset SourceFile Function",
+            "VignetteData s - Mode:VignetteMode HealthTriggerValue Scale:Vec2 Exponent Color:Vec3 Opacity ColorTransform:ColorTransformData BlurAmount",
+            "VignetteMode e - VMOff VMWeakHealth VMBadHealth VMCriticalHealth VMInGameMenu VMPreRound VMDeath VMHitIndicator VMShockWave VMPreset1 VMPreset2",
+            "VisualTerrainEntityData c EntityData Terrain:TerrainData Settings:VisualTerrainSettings",
+            "VisualTerrainSettings c - ViewMode:TerrainViewMode WireframeEnable Enable DrawEnable DrawPatchesEnable DrawSurroundingPatchesEnable DrawMainPatchesEnable DrawDecalEnable DrawDecalZPassEnable DrawOnlyDecalZPassEnable DecalZPassDistance DecalBias DecalZPassBias DecalOffsetY DrawUndergrowthDecalsEnable DrawPatchBoxesEnable DrawTextureTileBoxesEnable DrawDebugTextEnable DrawDebugTexturesEnable DrawWaterEnable ZeroViewportEnable GeometryLodScale ForceGeometryLodLevel ZPassDistance SlotReuseWaitCount SlotDebugOutputEnable BuildDrawJobEnable UpdateJobsEnable CullSpuJobEnable PrepareBuildSpuJobEnable BuildSpuJobEnable BuildJobCount PrioritizeCullJobsEnable RegenerateTexturesEnable ModifiersEnable HeightModificationEnable DynamicMaskEnable DynamicMaskTileSize DynamicMaskPoolWidth DynamicMaskPoolHeight DynamicMaskPixelsPerMeter DynamicMaskDecalWidthScale MaxNonVisibleTextureUpdateCount PatchSampleSize PatchSlotCount PatchLodTransitionsEnable PatchMaterialSortingEnable CullSampleBoundingBoxHeightEnable HeightfieldMipmapsEnable CastShadowsEnable MemoryBufferSize UndergrowthEnable UndergrowthCastShadowsEnable DrawUndergrowthEnable DrawUndergrowthCellBoxesEnable DrawUndergrowthDebugMaskTexturesEnable DrawUndergrowthDebugCacheTexturesEnable DrawUndergrowthStatsEnable UndergrowthTerrainColoringEnable UndergrowthGenerateEnable UndergrowthRegenerateEnable UndergrowthZPassEnable UndergrowthSimpleShaderEnable UndergrowthPoplessDistanceRatio UndergrowthUpdateJobsEnable UndergrowthBuildSpuJobEnable UndergrowthBuildJobCount UndergrowthUpdateCellCount UndergrowthCellSize UndergrowthCellMaskTextureSize UndergrowthCellCacheTextureSize UndergrowthForceCellSideCount UndergrowthMaxHeight UndergrowthWindSpeed UndergrowthDensityScale UndergrowthOverlapDensityScale UndergrowthSpuInstancingEnable UndergrowthInstanceCullEnable UndergrowthInstanceCullJobCount UndergrowthInstanceCullSpuJobEnable UndergrowthInstanceCullBoxTestEnable UndergrowthInstanceFrustumCullEnable UndergrowthInstanceOcclusionCullEnable UndergrowthInstanceAdditionalCullEnable DrawUndergrowthInstanceBoxesEnable UndergrowthMaxCullInstanceCount UndergrowthInstanceCullDynamicAllocEnable Ps3UndergrowthInstanceCellMemoryEnable OccluderJobEnable OccluderSpuJobEnable OccludedEnable OccludedMinDistance",
+            "VisualWorldState c - FogColor:Vec3 FogStart FogEnd FogClamp FogEnable",
+            "VoiceChannel e - VoiceChannel_Automatic VoiceChannel_Team VoiceChannel_Squad VoiceChannel_Count",
+            "VoiceOverChildNode c VoiceOverNodeBase",
+            "VoiceOverEntityData c GameEntityData VoiceOverLines[]:VoiceOverLineAsset Team:TeamId Subtitle:SubtitleDataTree UseSoldierGestures OverRadio RunOnce IsLowPrio MinDelayTime",
+            "VoiceOverLeafNode c VoiceOverNodeBase",
+            "VoiceOverLineAsset c - Soldier:SoldierSpawnBaseEntityData DialogLineNode:DialogLineNode OverRadio",
+            "VoiceOverNodeBase c TreeNodeBase",
+            "VoiceOverRootNode c VoiceOverNodeBase",
+            "VoiceOverTree c TreeBase VoiceOverEntries[]:RuntimeDialogLineNode TalkSoundTemplate:SoundTemplate ScreamSoundTemplate:SoundTemplate ScriptedSoundTemplate:SoundTemplate ScriptedUnpositionedSoundTemplate:SoundTemplate RadioSoundTemplate:SoundTemplate Language:LanguageFormat",
+            "WarnTarget e - wtWarnSoldierAndVehicle wtWarnSoldier wtWarnVehicle wtWarnNone",
+            "WaterData c Asset ShallowDepth ShallowExtrude DeepDepth DeepExtrude OceanRadius OceanLevel OceanEnable RiverShader:ShaderAsset LakeShader:ShaderAsset LakeOutletShader:ShaderAsset OceanShader:ShaderAsset",
+            "WaveAsset c Asset IsStreaming Seekable LengthInSeconds NameHash",
+            "WaveAssetNode c VoiceOverLeafNode WaveAsset:WaveAsset",
+            "WaveClassification c Editable WaveProperty:WaveProperty",
+            "WaveMetaData c - LengthInSeconds",
+            "WavePriority e - WpNone WpLow WpNormal WpHigh WpPermanent",
+            "WaveProperty c - Name StreamPool:StreamPool",
+            "WaveSegment e - WsLeadIn WsLoop WsLeadOut WaveSegmentCount",
+            "WaypointData c - Speed Radius",
+            "WeaponAnimBaseSetEnum e - wabsRif wabsHgr wabsAT wabsShg wabsCount wabsNone",
+            "WeaponCallbackEntityData c GameEntityData",
+            "WeaponClassEnum e - wcAssault wcShotgun wcSmg wcLmg wcSniper wcUgl wcHgr wcAt wcPistol wcATMine wcAutoInjector wcC4 wcKnife wcLaserDesignator wcMedKit wcMortarStrike wcMotionSensor wcPowerTool wcTracerDart wcCount wcNone",
+            "WeaponComponentData c PartComponentData ProjectileSpawnOffset:Vec3 WeaponMesh:MeshAsset AnimTree:AnimTreeDataAsset Skeleton:SkeletonAsset WeaponFiring:WeaponFiringData AIData:WeaponData Effects:WeaponEffectsData ImpulseStrength",
+            "WeaponData c - Strengths:Strengths Indirect IsAiAllowed MinRange MaxRange OptimalRangePercentage MinExtraReloadTime MaxExtraReloadTime AllowedAgainstImmortals CanSuppress CanAltAttack IsStandStill IsMelee BurstLimitNear BurstLimitFar MinBurstCoolDownTime MaxBurstCoolDownTime LostTargetBurstCoolDownModifier AimTransitionFireDelay AimAngularVelocity AngleToTargetSnap AimWhileReloading UseZoom AimOrigin:AimOrigin GravityModifier MinimumAccuracyBeforeFiring AdditionalMinimumAccuracyAtMinRange SweepFirstAttack SweepType:SweepSelectionType SweepDistance SweepTime InnerInaccurateDistance OuterInaccurateDistance InaccuracyFollowsTarget StartAccuracyPercentage FinalAccuracyPercentage",
+            "WeaponEffectsData c -",
+            "WeaponFiringData c - PrimaryFire:FiringFunctionData DeployTime AltDeployId ShotLimit UseAutoAiming WeaponSway:WeaponSwayData InflictSelfDamage ClearShotLimitOnKilled ReplenishWhenOutOfShots ReloadOnZoomButton VOTypes[]:VOWeapon Rumble:RumbleFiringData",
+            "WeaponHandsIkNodeData c BaseHandsIkNodeData PositionAligmentBoneName GeneralPose:AnimationAsset ApplyWeaponDelta:BaseExpressionData EnableWeaponDelta EnableWeaponAnimation WeaponBoneDelta:LinearTransform",
+            "WeaponInputRouterComponentData c ComponentData MaxFireRate RotationCount",
+            "WeaponLagEffectForceData s - OffsetForce:Vec3 RotationForce:Vec3",
+            "WeaponLagEffectSpringData s - Constant Damping",
+            "WeaponLagEffectSpringVector s - SpringX:WeaponLagEffectSpringData SpringY:WeaponLagEffectSpringData SpringZ:WeaponLagEffectSpringData",
+            "WeaponLagSpringEffectData c - OffsetSprings:WeaponLagEffectSpringVector RotationSprings:WeaponLagEffectSpringVector JumpForces:WeaponLagEffectForceData LandForces:WeaponLagEffectForceData PoseUpForces:WeaponLagEffectForceData PoseDownForces:WeaponLagEffectForceData",
+            "WeaponOverrideData c - Data Values[]:WeaponOverrideValue",
+            "WeaponOverrideValue s - ValueType:WeaponOverrideValueType Value",
+            "WeaponOverrideValueType e - OverrideValue_BulletEntity_DistributeDamageOverTime OverrideValue_BulletEntity_StartDamage OverrideValue_BulletEntity_EndDamage OverrideValue_BulletEntity_DamageFalloffStartDistance OverrideValue_BulletEntity_DamageFalloffEndDistance",
+            "WeaponPickupData s - Weapon:SoldierWeaponAsset WeaponSlot MinAmmo MaxAmmo",
+            "WeaponPickupEntityData c PickupEntityData Weapons[]:WeaponPickupData UseForPersistence",
+            "WeaponStateData s - BoneFakePhysics[]:BoneFakePhysicsData Mesh1p:SkinnedMeshAsset MeshZoom1p:SkinnedMeshAsset Mesh3p:SkinnedMeshAsset AnimTree1p:AnimTreeDataAsset AnimTree3p:AnimTreeDataAsset ZoomMeshTransitionFactor ZoomedScopeFilter:ScopeFilterData NonZoomedScopeFilter:ScopeFilterData KeepAimingTime AlwaysAimHead AnimatedFireType:AnimatedFireEnum AnimatedAimingType:AnimatedAimingEnum IsOneHanded PlayDeployAfterFire SkipDeployAnimation SkipReloadAnimation SkipFireAnimation HideProjectileAfterFireTime ProjectileBoneName Unlocks[]:WeaponUnlockVisualData Mesh3pTransforms[]:LinearTransform",
+            "WeaponSuppressionData c - MaxMultiplier MinDistance MaxDistance",
+            "WeaponSwayData c -",
+            "WeaponUnlockVisualData c UnlockPartData Mesh1p:SkinnedMeshAsset MeshZoom1p:SkinnedMeshAsset Mesh3p:SkinnedMeshAsset AnimTreeReplacement1p:AnimTreeReplacementData AnimTreeReplacement3p:AnimTreeReplacementData",
+            "WeatherStateEntityData c GameEntityData DefaultState State FadeTime TriggerEventFromClient StartTransitionOnSpawn",
+            "WeatherSystemData c Asset Setup:WeatherSystemSetup States[]:WeatherSystemState",
+            "WeatherSystemEntityData c EntityData WeatherSystem:WeatherSystemData Settings:WeatherSystemSettings",
+            "WeatherSystemInstanceData c - WeatherSystem:WeatherSystemData Settings:WeatherSystemSettings",
+            "WeatherSystemSettings c Asset InterpolationMode:WeatherstateInterpolationMode ActiveState StateFadeTimeSeconds Enable SkydomeEnable VolumetricCloudsEnable",
+            "WeatherSystemSetup c Asset R Sky:StaticSkyData Sun:StaticSunData Clouds:StaticCloudLayerData OutdoorLight:StaticOutdoorLightData Fog:StaticFogData",
+            "WeatherSystemState c Asset Sky:DynamicSkyData Sun:DynamicSunData Clouds:DynamicCloudLayerData OutdoorLight:DynamicOutdoorLightData Fog:DynamicFogData PostProcess:DynamicPostProcessData Wind:Vec2 ViewDistance ShadowViewDistance WorldViewDistance Zmin Zmax FadeTransparentStart FadeTransparentEnd FadeTransparentClamp YOffset ApplyFog",
+            "WeatherstateInterpolationMode e - WimLinear WimCubic WimCatmullRom",
+            "WeightFactorNodeData c BaseNodeData ParameterValues[]:FloatValueGroupData Node:BaseNodeData Factor Invert",
+            "WheelComponentData c PartComponentData Config:WheelConfigData PhysicsType:WheelPhysicsType",
+            "WheelConfigData c - Offset:Vec3 Inertia:Vec3 RotationBody:RotationBodyData SphereCollision:SphereCollisionData Spring:SpringData Mass Radius Width RollingResistanceInternalBaseFactor RollingResistanceBaseFactor RollingResistanceVelocityFactor EngineBrakeVelocityFactor EngineBrakeMinFactor EngineBrakeMaxFactor DiffGearRatio LowSpeedSteeringSensitivity MidSpeedSteeringSensitivity HighSpeedSteeringSensitivity SensitivityRangeScale LowSpeedSteeringSensitivityLimit MidSpeedSteeringSensitivityLimit HighSpeedSteeringSensitivityLimit TrackedTurnSpeedLimit TrackedForwardSpeedLimit SteeringSensitivity[]:SensitivityAtVelocity SlopeGripMinAngle SlopeGripMaxAngle SlopeGripExponent OffGroundGravityModifier SideSlipAngleMaxSlipCondition AngularVelocityMinSlipCondition WheelVelocityZMinSlipCondition WheelVelocityXMinSlipCondition WheelSlipRatioMaxSlipCondition LongitudinalFrictionForceMaxFactor LateralFrictionForceMaxFactor FxTorqueRadiusMultiplier FrictionMomentVelocityMin FrictionMomentVelocityMax FrictionMomentMultiplier FrictionMomentMaxFactor BrakeFactor BrakeForce HandBrakeFactor HandBrakeForce LateralPosK LateralNegK LongitudinalPosK LongitudinalNegK AlignMomScale WheelBaseLateral WheelBaseLongitudinal DrivingType SteeringType FrictionMethod RotationDirectionIndex SteeringAngleIndex PacejkaConfigIndex EngineIndex AckermanDeviceType UseRollingResistanceVelocityFactor UseRollingResistanceBaseFactor UseEngineBrake IsAllowedToSpin HasSteeringInverted UseFrictionMoment UseLowSpeedAutoBrake AdjustWheelRotation CollisionMaterial",
+            "WheelPhysicsType e - wptNormal wptFollow wptStatic",
+            "WindowSettings s - Position:Vec2 Size:Vec2 Fullscreen",
+            "WingComponentData c PartComponentData Config:WingPhysicsData",
+            "WingPhysicsData c - Lift FlapLift LiftCoefficient:Curve2D Drag FlapDrag DragCoefficient:Curve2D BaseAngleOfAttack InputForFlap FlapTurnSpeed VisualFlapTurnSpeed MaxFlapAngleScaleFactor:Curve2D LandingFlapLift LandingFlapLogic:LandingFlapData",
+            "WireConnection e - WireNotConnectedIndex",
+            "WorldBuildView c Asset Level:WorldData Sections[]:WorldSubSection",
+            "WorldData c EntityBusData AuxAssets[]:Asset Modes[] MaterialGrid:MaterialGridData",
+            "WorldInteractionComponentData c ComponentData MiddlegrowthSpeedThreshold",
+            "WorldObjectListData c - Objects[]:GameObjectData Name",
+            "WorldPartData c EntityBusData ObjectLists[]:WorldObjectListData Parts[]:WorldPartData GameModes[]:GameModeTypes Parent:WorldPartData Enabled EnabledPlatforms[]:WorldPartPlatform",
+            "WorldPartPlatform e - WppWin32 WppXenon WppPs3",
+            "WorldRenderSettings c - ClearColor:Vec3 XenonFastHdrColorScale XenonFixedHdrColorScale MinScreenArea ShadowMinScreenArea ViewportScale ShadowViewportScale ShadowmapMinFov ShadowmapFixedMovementEnable ShadowmapFixedDepthEnable ShadowmapSizeZScale ShadowmapWidth ShadowmapHeight ShadowmapSliceCount ShadowmapSliceSchemeWeight ShadowmapSliceOverlapFactor ShadowmapFirstSliceScale ShadowmapViewDistance ShadowmapExtrusionLength ShadowmapMinScreenArea Ps3Shadowmap16BitEnable Ps3ShadowmapTilingEnable CascadedBoxShadowmapEnable CascadedBoxShadowmapClipMethodEnable ApplyShadowmapsEnable GenerateShadowmapsEnable SimpleShadowmapsEnable ColoredShadowmapSlicesEnable MultisampleCount ReflectionCubemapSize MaxPointLightCount DrawDebugDynamicCubemapMipLevel OnlyShadowmapSlice ViewMode:WorldViewMode Enable HdrEnable XenonFastHdrEnable XenonFastHdrResolveScaleEnable XenonFloatDepthBufferEnable Ps3TilingEnable Ps3ZCullEnable Ps3SCullEnable GammaCorrectionEnable ShadowmapsEnable TonemapEnable ShadowExtrusionCullingEnable DrawLightSources DrawSolidBoundingBoxes DrawLineBoundingBoxes DrawBoundingSpheres DrawFrustums DrawShadowFrustums DrawDebugShadowmaps DrawDebugDynamicCubemap DrawDebugLUT DrawDebugHalfResEnvironment DrawDebugStaticEnvmaps DrawDebugVisibleEntityTypes WireframeEnable WeatherSystemHalfResEnable BackgroundEnable ForegroundEnable ForegroundBlurEnable ForegroundBlurFilterEnable ForegroundDepthClearEnable ForegroundZPassEnable Ps3ShadowDepthBias Ps3ShadowSlopeScaleBias Ps3ZPassDepthBias Ps3ZPassSlopeScaleBias Dx9ShadowSlopeScaleBias Dx9ZPassDepthBias Dx9ZPassSlopeScaleBias ScopeFilterEnable ScopeFilterColorScale DynamicCubemapEnable DynamicCubemapUpdateEnable DynamicCubemapSidesPerFrameCount DynamicCubemapFilterMode:MipmapFilterMode DynamicCubemapFilterWidth DynamicCubemapMipmapGenEnable PointLightViewDistance IrradianceVolumeEnable FogEnable JobsEnable MemoryBufferSize GenericEntityRendererEnable GenericEntityMaxStaticEntityCount GenericEntityMaxDynamicEntityCount DynamicCullSpuJobEnable DynamicCullZBufferTestEnable DynamicCullDrawOccludedBoxesEnable ManualTilingEnable ColoredTilingEnable TilePredicationEnable ZBufferShadowTestEnable",
+            "WorldSubSection s - Min:Vec2 Max:Vec2",
+            "WorldViewMode e - WvmNormal WvmSimple WvmOverdraw",
+            "XenonShaderTessellationMode e - XstmDiscrete XstmContinuous XstmPerEdge",
+            "XorSelectorNodeData c BaseNodeData Nodes[]:BoolNodeGroupData ElseNode:BaseNodeData",
+            "ZRotate2DData c EvaluatorData",
+            "ZoomLevelData c - FieldOfView LookSpeedMultiplier SprintLookSpeedMultiplier MoveSpeedMultiplier SwayPitchMultiplier SwayYawMultiplier TimePitchMultiplier TimeYawMultiplier DispersionMultiplier RecoilMultiplier RecoilFovMultiplier FadeToBlackInZoomTransition StartFadeToBlackAtTime FadeToBlackDuration StartFadeFromBlackAtTime FadeFromBlackDuration TransitionTime FovDelayTime FovTransitionTime ForegroundBlurFilter:BlurFilter ForegroundBlurFilterDeviation ForegroundBlurViewDistance SpottingConeFov SpottingConeLength SpottingConeFalloff",
+            "ZoomLevelLockData s - OutlineTaggedDistance LockType:LockType",
+            "ZoomTypeEnum e - ztHoldButtonToZoom ztPressButtonToSwitchZoomLevel",
+        };
+    }
+    // END GENERATED BF1943 SCHEMA
+
+    // BF1943's reflected classes (Bf1943Schema, from the game's executable): base classes, and the class a reference
+    // in a class-typed member must point to.
+    static class Bf1943Types
+    {
+        // a member of a class or struct: its type when that is a reflected class, struct or enum (else null), and
+        // for an array its element type
+        public sealed class Member { public string Type, Element; public bool IsArray; }
+
+        static Dictionary<string, string> bases, kinds;
+        static Dictionary<string, Dictionary<string, Member>> members;
+        static Dictionary<string, HashSet<string>> enums;
+
+        static void Load()
+        {
+            if (bases != null) return;
+            bases = new Dictionary<string, string>();
+            kinds = new Dictionary<string, string>();
+            members = new Dictionary<string, Dictionary<string, Member>>();
+            enums = new Dictionary<string, HashSet<string>>();
+            foreach (string line in Bf1943Schema.Types)
+            {
+                var p = line.Split(' ');
+                string name = p[0], kind = p[1];
+                kinds[name] = kind;
+                if (kind == "e") { enums[name] = new HashSet<string>(p.Skip(3)); continue; }
+                if (kind == "c") bases[name] = p[2] == "-" ? null : p[2];
+                var ms = new Dictionary<string, Member>();
+                foreach (string token in p.Skip(3))
+                {
+                    int colon = token.IndexOf(':');
+                    string n = colon < 0 ? token : token.Substring(0, colon), t = colon < 0 ? null : token.Substring(colon + 1);
+                    bool array = n.EndsWith("[]");
+                    if (array) n = n.Substring(0, n.Length - 2);
+                    if (!ms.ContainsKey(n)) ms[n] = new Member { IsArray = array, Type = array ? null : t, Element = array ? t : null };
+                }
+                members[name] = ms;
+            }
+        }
+
+        public static bool Known(string cls) { Load(); return bases.ContainsKey(cls); }
+
+        // "c" class, "s" struct (a value type), "e" enum, or null
+        public static string Kind(string name) { Load(); string k; return name != null && kinds.TryGetValue(name, out k) ? k : null; }
+
+        public static HashSet<string> EnumValues(string name) { Load(); HashSet<string> v; return name != null && enums.TryGetValue(name, out v) ? v : null; }
+
+        // cls is ancestor or derives from it
+        public static bool IsA(string cls, string ancestor)
+        {
+            Load();
+            for (int guard = 0; cls != null && guard < 64; guard++)
+            {
+                if (cls == ancestor) return true;
+                string b;
+                cls = bases.TryGetValue(cls, out b) ? b : null;
+            }
+            return false;
+        }
+
+        // A member of a struct, or of a class or one of its bases; null when it has none of that name.
+        public static Member Find(string owner, string field)
+        {
+            Load();
+            for (int guard = 0; owner != null && guard < 64; guard++)
+            {
+                Dictionary<string, Member> ms;
+                Member m;
+                if (members.TryGetValue(owner, out ms) && ms.TryGetValue(field, out m)) return m;
+                string b;
+                owner = bases.TryGetValue(owner, out b) ? b : null;
+            }
+            return null;
+        }
+
+        // The declared class of a class-typed member, looked up on owner and its bases; null when the member is not
+        // class-typed or not reflected.
+        public static string FieldClass(string owner, string field)
+        {
+            var m = Find(owner, field);
+            return m != null && !m.IsArray && Kind(m.Type) == "c" ? m.Type : null;
+        }
+    }
+
+    // Problems that crash or break a level, found without starting the game (FORMAT.md section 7). Two rule sets:
+    // BFBC2's (derived from crashes of BFBC2 PC) and BF1943's (what every shipped BF1943 level satisfies; README).
     static class LevelCheck
     {
         public sealed class Finding
@@ -1274,19 +2723,41 @@ namespace Bfbc2Dbx
             public override string ToString() { return (Error ? "ERROR  " : "WARN   ") + Where + ": " + Message; }
         }
 
+        public const string Bf1943 = "bf1943", Bfbc2 = "bfbc2";
+
         // model groups and their members need these parts (terrain has its own collision and may leave PhysicsData empty)
         static readonly string[] WorldTypes = { "ModelGroupEntityData", "ModelGroupMemberData", "ForestEntityData", "TreeMemberData" };
         // the level's world: must be listed in LevelData Objects, or it is not loaded
         static readonly string[] ListedWorldTypes = { "TerrainEntityData", "ModelGroupEntityData", "ForestEntityData", "StaticEnvmapEntityData" };
+        static readonly string[] ListedWorldTypes1943 = { "TerrainEntityData", "ModelGroupEntityData", "ForestEntityData" };
         static readonly string[] WorldParts = { "PhysicsData", "MeshEntityType" };
+        static readonly string[] WorldParts1943 = { "PhysicsData", "MeshEntityType", "MemberType" };
 
-        // slotsFrom: the level whose cull trees the file uses (or null); bundles: unpacked folders to resolve
-        // references into other files (or none).
+        // The rule set for a file: BFBC2's when its LevelData has BFBC2's fields (DataConnections, Descriptor,
+        // MemoryReportGroup: every BFBC2 PC level has them, no BF1943 level does), else BF1943's.
+        public static string Detect(DbxFile f)
+        {
+            var level = f.Instances().FirstOrDefault(i => (f.Get(i, "type") ?? "").EndsWith(".LevelData"));
+            if (level == null || !level.IsContainer) return Bf1943;
+            var names = new HashSet<string>(level.Children.Select(c => f.Get(c, "name") ?? ""));
+            return names.Contains("DataConnections") || names.Contains("Descriptor") || names.Contains("MemoryReportGroup") ? Bfbc2 : Bf1943;
+        }
+
         public static List<Finding> Run(DbxFile f, DbxFile slotsFrom, IList<string> bundles)
         {
+            return Run(f, slotsFrom, bundles, Detect(f));
+        }
+
+        // slotsFrom: the level whose cull trees the file uses (or null); bundles: unpacked folders to resolve
+        // references into other files (or none); rules: Bf1943 or Bfbc2.
+        public static List<Finding> Run(DbxFile f, DbxFile slotsFrom, IList<string> bundles, string rules)
+        {
+            bool bf1943 = rules == Bf1943;
             var found = new List<Finding>();
             var guids = new HashSet<string>(f.Instances().Select(i => f.Get(i, "guid") ?? ""), StringComparer.OrdinalIgnoreCase);
             var external = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var wanted = new Dictionary<string, List<string[]>>(StringComparer.OrdinalIgnoreCase);   // BF1943: declared class per external reference
+            var parts = bf1943 ? WorldParts1943 : WorldParts;
             foreach (var inst in f.Instances())
             {
                 string type = f.Get(inst, "type") ?? "", where = Short(type) + " " + f.Get(inst, "guid");
@@ -1302,7 +2773,7 @@ namespace Bfbc2Dbx
                     {
                         if (inObjects && f.TagOf(e) == "item")
                             found.Add(new Finding { Error = true, Where = where + " " + path, Message = "empty entry in the level's object list (the game reads it without a check and crashes)" });
-                        else if (world && WorldParts.Contains(f.Get(e, "name")))
+                        else if (world && parts.Contains(f.Get(e, "name")))
                             found.Add(new Finding { Error = true, Where = where + " " + path, Message = "world object without " + f.Get(e, "name") + " (the model-group set-up crashes on it)" });
                     }
                     else if (isLocal && !guids.Contains(r))
@@ -1314,16 +2785,29 @@ namespace Bfbc2Dbx
                         string key = r.Substring(0, cut) + "|" + r.Substring(cut + 1);
                         if (!external.TryGetValue(key, out users)) external[key] = users = new List<string>();
                         if (users.Count < 3) users.Add(where + " " + path);
+                        string want = bf1943 && path.IndexOf('.') < 0 && path.IndexOf('[') < 0 ? Bf1943Types.FieldClass(Short(type), path) : null;
+                        if (want != null)
+                        {
+                            List<string[]> w;
+                            if (!wanted.TryGetValue(key, out w)) wanted[key] = w = new List<string[]>();
+                            if (!w.Any(x => x[0] == want)) w.Add(new[] { want, where + " " + path });
+                        }
                     }
                 });
             }
-            CheckWorldListed(f, found);
+            CheckWorldListed(f, found, bf1943 ? ListedWorldTypes1943 : ListedWorldTypes);
             CheckSlots(f, slotsFrom, found);
-            if (bundles.Count > 0) CheckExternal(external, bundles, found);
+            if (bf1943) LevelRules1943.Check(f, found);
+            if (bundles.Count > 0)
+            {
+                var index = BundleIndex(bundles);
+                CheckExternal(external, wanted, index, found);
+                if (bf1943) LevelRules1943.CheckCullTrees(f, index, found);
+            }
             return found;
         }
 
-        static void CheckWorldListed(DbxFile f, List<Finding> found)
+        static void CheckWorldListed(DbxFile f, List<Finding> found, string[] listedTypes)
         {
             var level = f.Instances().FirstOrDefault(i => (f.Get(i, "type") ?? "").EndsWith(".LevelData"));
             if (level == null) return;
@@ -1332,14 +2816,14 @@ namespace Bfbc2Dbx
             foreach (var i in f.Instances())
             {
                 string type = f.Get(i, "type") ?? "", guid = f.Get(i, "guid");
-                if (ListedWorldTypes.Any(w => type.EndsWith(w)) && !listed.Contains(guid))
+                if (listedTypes.Any(w => type.EndsWith(w)) && !listed.Contains(guid))
                     found.Add(new Finding { Error = false, Where = Short(type) + " " + guid, Message = "not in the level's object list, so it is not loaded (missing terrain or buildings in game)" });
             }
         }
 
-        static string Short(string type) { int dot = type.LastIndexOf('.'); return dot >= 0 ? type.Substring(dot + 1) : type; }
+        internal static string Short(string type) { int dot = type.LastIndexOf('.'); return dot >= 0 ? type.Substring(dot + 1) : type; }
 
-        static void Walk(DbxFile f, Element e, string path, Action<Element, string> visit)
+        internal static void Walk(DbxFile f, Element e, string path, Action<Element, string> visit)
         {
             if (!e.IsContainer) return;
             var seen = new Dictionary<string, int>();
@@ -1367,7 +2851,8 @@ namespace Bfbc2Dbx
                 found.Add(new Finding { Error = false, Where = "cull slots", Message = wrong.Count + " objects have another slot than the same object in the cull trees' level (e.g. " + string.Join(", ", wrong.Take(3).Select(o => o.Blueprint + " " + o.SlotValue)) + ") - see-through objects; fix with: DbxEdit fixslots" });
         }
 
-        static void CheckExternal(Dictionary<string, List<string>> external, IList<string> bundles, List<Finding> found)
+        // partition name ("levels/x/y", no extension) -> file, over the unpacked bundle folders (the first one wins)
+        static Dictionary<string, string> BundleIndex(IList<string> bundles)
         {
             var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string b in bundles)
@@ -1377,7 +2862,13 @@ namespace Bfbc2Dbx
                     rel = rel.Substring(0, rel.Length - 4);
                     if (!index.ContainsKey(rel)) index[rel] = p;
                 }
-            var loaded = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            return index;
+        }
+
+        static void CheckExternal(Dictionary<string, List<string>> external, Dictionary<string, List<string[]>> wanted,
+                                  Dictionary<string, string> index, List<Finding> found)
+        {
+            var loaded = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);   // guid -> type
             int missingFiles = 0;
             foreach (var kv in external)
             {
@@ -1389,18 +2880,492 @@ namespace Bfbc2Dbx
                         found.Add(new Finding { Error = false, Where = kv.Value[0], Message = "refers to " + partition + ", which is not in the given folders" });
                     continue;
                 }
-                HashSet<string> g;
+                Dictionary<string, string> g;
                 if (!loaded.TryGetValue(path, out g))
                 {
                     var d = new DbxFile(path);
-                    g = d.IsBinary ? new HashSet<string>(d.Instances().Select(i => d.Get(i, "guid") ?? ""), StringComparer.OrdinalIgnoreCase) : null;
+                    g = null;
+                    if (d.IsBinary)
+                    {
+                        g = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var i in d.Instances()) g[d.Get(i, "guid") ?? ""] = Short(d.Get(i, "type") ?? "");
+                    }
                     loaded[path] = g;
                 }
-                if (g != null && !g.Contains(guid))
+                string targetType = null;
+                if (g != null && !g.TryGetValue(guid, out targetType))
                     found.Add(new Finding { Error = true, Where = kv.Value[0], Message = "refers to instance " + guid + " in " + partition + ", which that file does not have" });
+                else if (g != null && wanted.ContainsKey(kv.Key))
+                    foreach (var w in wanted[kv.Key])
+                        if (!Bf1943Types.IsA(targetType, w[0]))
+                            found.Add(new Finding { Error = true, Where = w[1], Message = "refers to a " + targetType + " in " + partition + "; BF1943's schema declares this field a " + w[0] + " reference" });
             }
             if (missingFiles > 30)
                 found.Add(new Finding { Error = false, Where = "references to other files", Message = (missingFiles - 30) + " more files not in the given folders" });
+        }
+    }
+
+    // BF1943's own rules (FORMAT.md section 7, README "Check a level"): each one holds in every shipped BF1943 level
+    // (wake_island_s, guadal_canal, iwo_jima_s, coral_sea, wake_island_tutorial), as derived and recorded by the research
+    // workspace's src/assetresearch/derive_level_rules1943.py (research/evidence/bf1943-level-check-rules.json).
+    // Errors: the file is inconsistent with itself or with BF1943's classes. Warnings: the level is unlike every shipped one.
+    static class LevelRules1943
+    {
+        // a group's members are its kind's
+        static readonly Dictionary<string, string> GroupMember = new Dictionary<string, string> {
+            { "StaticModelGroupEntityData", "StaticModelGroupMemberData" }, { "RigidModelGroupEntityData", "RigidModelGroupMemberData" },
+            { "MiddlegrowthModelGroupEntityData", "MiddlegrowthModelGroupMemberData" }, { "ForestEntityData", "TreeMemberData" } };
+
+        // "<owner>.<array path> <class>": what the items of these arrays hold - the nearest common base, in BF1943's schema,
+        // of everything the shipped levels put there (the schema does not give array element types)
+        static readonly string[] ArrayTypes = {
+            "AreaTriggerEntityData.Geometry GeometryEntityData", "AreaTriggerEntityData.Soldiers SoldierSpawnEntityData",
+            "CapturePointEntityData.Geometry GeometryEntityData", "CapturePointEntityData.Spawners SpawnEntityData",
+            "CombatAreaTriggerEntityData.Geometry AreaGeometryEntityData", "CombatAreaTriggerEntityData.SurroundingGeometry AreaGeometryEntityData",
+            "DmzEntityData.Geometry AreaGeometryEntityData", "ForestEntityData.MemberDatas TreeMemberData",
+            "HotZoneEntityData.Geometry AreaGeometryEntityData", "LevelData.EventConnections.Source GameObjectData",
+            "LevelData.EventConnections.Target GameObjectData", "LevelData.Objects GameObjectData",
+            "MiddlegrowthModelGroupEntityData.MemberDatas MiddlegrowthModelGroupMemberData", "MissionObjectiveEntityData.MapMarkers MapMarkerEntityData",
+            "ObjectSet.Components ReferenceObjectData", "ReferenceObjectData.ObjectSets ObjectSet",
+            "RepairStationEntityData.Geometry AreaGeometryEntityData", "RichPresenceConnection.ContextPairs RichPresenceContextPair",
+            "RigidModelGroupEntityData.MemberDatas RigidModelGroupMemberData", "SoldierSpawnEntityData.AlternativeSpawnPoints AlternateSpawnEntityData",
+            "SoundAreaEntityData.Geometry AreaGeometryEntityData", "SoundAreaEntityData.OuterGeometry AreaGeometryEntityData",
+            "SpectateEntityData.Cameras TargetCameraData", "StaticModelGroupEntityData.MemberDatas StaticModelGroupMemberData",
+            "TeamEntityData.Squads SquadData", "TerrainSplineData.Planes TerrainSplinePlaneData", "TerrainSplineData.Points TerrainSplinePointData",
+            "TerrainSplinePlaneData.Points TerrainSplinePlanePointData", "VoiceOverEntityData.VoiceOverLines VoiceOverLineAsset" };
+
+        // references from listed entities to entities the level must create: they point at listed instances in every shipped level
+        static readonly HashSet<string> CreatedFields = new HashSet<string> { "Source", "Target", "Spawners", "AlternativeSpawnPoints",
+            "MapMarker", "MapMarkers", "Geometry", "SurroundingGeometry", "Soldiers", "ObjectToFollow", "PlayerToCheck", "VehicleToCheck" };
+
+        // listed exactly once in every shipped level
+        static readonly string[] Singletons = { "TerrainEntityData", "CombatAreaTriggerEntityData", "HumanPlayerEntityData", "AutoTeamEntityData",
+            "PreRoundEntityData", "MissionEntityData", "HotZoneEntityData" };
+
+        static Dictionary<string, string> arrayTypes;
+
+        sealed class Ctx
+        {
+            public DbxFile F;
+            public List<LevelCheck.Finding> Found;
+            public readonly Dictionary<string, Element> ByGuid = new Dictionary<string, Element>(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> Listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public string TypeOf(Element i) { return LevelCheck.Short(F.Get(i, "type") ?? ""); }
+            public string TypeOf(string guid) { Element e; return guid != null && ByGuid.TryGetValue(guid, out e) ? TypeOf(e) : null; }
+            public string Where(Element i) { return TypeOf(i) + " " + F.Get(i, "guid"); }
+            public void Error(string where, string message) { Found.Add(new LevelCheck.Finding { Error = true, Where = where, Message = message }); }
+            public void Warn(string where, string message) { Found.Add(new LevelCheck.Finding { Error = false, Where = where, Message = message }); }
+        }
+
+        public static void Check(DbxFile f, List<LevelCheck.Finding> found)
+        {
+            if (arrayTypes == null)
+            {
+                var t = new Dictionary<string, string>();
+                foreach (string line in ArrayTypes) { var p = line.Split(' '); t[p[0]] = p[1]; }
+                arrayTypes = t;
+            }
+            var c = new Ctx { F = f, Found = found };
+            var all = f.Instances().ToList();
+
+            // GUIDs unique; classes BF1943 has
+            var unknown = new HashSet<string>();
+            foreach (var i in all)
+            {
+                string g = f.Get(i, "guid") ?? "";
+                if (c.ByGuid.ContainsKey(g)) c.Error(c.Where(i), "another instance has the same GUID: references to it are ambiguous (GUIDs are unique in every shipped level)");
+                else c.ByGuid[g] = i;
+                string type = c.TypeOf(i);
+                if (!Bf1943Types.Known(type) && unknown.Add(type))
+                    c.Error(c.Where(i), type + " is not a class of BF1943 (its reflection schema has no such class), so the game cannot create it");
+            }
+
+            // one LevelData, the partition's primary instance
+            var levels = all.Where(i => c.TypeOf(i) == "LevelData").ToList();
+            if (levels.Count != 1)
+                c.Error("partition", levels.Count + " LevelData instances (every shipped level partition has exactly one)");
+            var level = levels.FirstOrDefault();
+            if (level != null)
+            {
+                string primary = f.Get(f.TopLevel[0], "primaryInstance");
+                if (!Guid.Same(primary, f.Get(level, "guid")))
+                    c.Error("partition", "primaryInstance is " + (primary ?? "missing") + ", not the LevelData " + f.Get(level, "guid") + " (as in every shipped level)");
+                var objects = Items(f, level, "Objects");
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (int k = 0; k < objects.Count; k++)
+                {
+                    string r = f.Get(objects[k], "ref");
+                    if (r == null || r == "null") continue;
+                    if (!seen.Add(r)) c.Warn(c.Where(level) + " Objects[" + k + "]", r + " is listed twice (each shipped level lists an object once)");
+                    c.Listed.Add(r);
+                }
+            }
+
+            CheckReferenceTypes(c, all);
+            CheckSchema(c, all);
+            CheckGroups(c, all);
+            CheckSlots(c, all);
+            if (level != null) CheckGameplay(c, all, level);
+        }
+
+        // class-typed fields hold their declared class (schema); arrays hold what the shipped levels' do
+        static void CheckReferenceTypes(Ctx c, List<Element> all)
+        {
+            var f = c.F;
+            foreach (var i in all)
+            {
+                string type = c.TypeOf(i), where = c.Where(i);
+                LevelCheck.Walk(f, i, "", (e, path) =>
+                {
+                    string r = f.Get(e, "ref");
+                    if (r == null || r == "null" || r.Length != 36 || r.IndexOf('/') >= 0) return;
+                    string target = c.TypeOf(r);
+                    if (target == null) return;                              // unresolved: reported already
+                    bool top = path.IndexOf('.') < 0 && path.IndexOf('[') < 0;
+                    string want = top ? Bf1943Types.FieldClass(type, path) : null;
+                    if (want == null && !top) arrayTypes.TryGetValue(type + "." + Unindexed(path), out want);
+                    if (want != null && !Bf1943Types.IsA(target, want))
+                        c.Error(where + " " + path, "refers to a " + target + " (" + r + "); " + (top
+                            ? "BF1943's schema declares this field a " + want + " reference"
+                            : "in every shipped level these items are " + want + "s"));
+                });
+            }
+        }
+
+        // model groups and the forest: member kind, InstanceCount, the physics-part chain
+        static void CheckGroups(Ctx c, List<Element> all)
+        {
+            var f = c.F;
+            foreach (var g in all)
+            {
+                string kind;
+                if (!GroupMember.TryGetValue(c.TypeOf(g), out kind)) continue;
+                var members = Items(f, g, "MemberDatas");
+                int run = 0;
+                for (int k = 0; k < members.Count; k++)
+                {
+                    string where = c.Where(g) + " MemberDatas[" + k + "]";
+                    Element m;
+                    string r = f.Get(members[k], "ref");
+                    if (r == null || !c.ByGuid.TryGetValue(r, out m)) continue;
+                    if (c.TypeOf(m) != kind) { c.Error(where, "a " + c.TypeOf(g) + " holds " + kind + "s, not a " + c.TypeOf(m)); continue; }
+                    int fp = Int(f, m, "FirstPhysicsPart"), pc = Int(f, m, "PhysicsPartCount"), per = Int(f, m, "PhysicsPartCountPerInstance"),
+                        count = Int(f, m, "InstanceCount"), spawns = Items(f, m, "SpawnDatas").Count;
+                    string mw = c.Where(m);
+                    if (count != spawns)
+                        c.Error(mw, "InstanceCount " + count + ", but " + spawns + " SpawnDatas (one per instance in every shipped level)");
+                    if (fp != run)
+                        c.Error(mw, "FirstPhysicsPart " + fp + ", expected " + run + ": a group's members' physics parts follow each other (the first starts at 0, each next at the previous one's PhysicsPartCount)");
+                    if (pc - fp != count * per)
+                        c.Error(mw, "PhysicsPartCount " + pc + " - FirstPhysicsPart " + fp + " = " + (pc - fp) + ", expected InstanceCount " + count + " x PhysicsPartCountPerInstance " + per + " = " + count * per + " (PhysicsPartCount is the end of the member's parts)");
+                    run = pc;
+                }
+            }
+        }
+
+        // the cull slots: group instances 1..N, placed objects above them, a blueprint's objects all slotted or none
+        static void CheckSlots(Ctx c, List<Element> all)
+        {
+            var f = c.F;
+            var slots = new Dictionary<int, int>();
+            foreach (var i in all)
+                foreach (var s in Items(f, i, "SpawnDatas"))
+                {
+                    int v = Int(f, s, "Enumeration");
+                    int n;
+                    slots.TryGetValue(v, out n);
+                    slots[v] = n + 1;
+                }
+            int total = slots.Values.Sum();
+            if (total > 0)
+            {
+                foreach (var kv in slots.Where(kv => kv.Value > 1).Take(20))
+                    c.Warn("group instance slot " + kv.Key, "used by " + kv.Value + " model-group or forest instances (SpawnDatas Enumeration): they are shown and hidden together");
+                var missing = Enumerable.Range(1, total).Where(v => !slots.ContainsKey(v)).ToList();
+                if (missing.Count > 0)
+                    c.Warn("group instance slots", "the " + total + " model-group and forest instances' slots (SpawnDatas Enumeration) are not 1.." + total
+                           + " (e.g. " + string.Join(", ", missing.Take(5)) + " missing), as in every shipped level: the cull trees number them so");
+            }
+            var placed = PlacedObject.All(f).Where(o => o.Slot != null).ToList();
+            var low = placed.Where(o => o.SlotValue != 0 && o.SlotValue <= total).ToList();
+            if (low.Count > 0)
+                c.Warn("cull slots", low.Count + " placed objects have a model-group instance's slot (1.." + total + "; e.g. " + string.Join(", ", low.Take(3).Select(o => o.Blueprint + " " + o.SlotValue))
+                       + "): in every shipped level placed objects' slots come after the group instances'");
+            foreach (var b in placed.GroupBy(o => o.Blueprint))
+            {
+                int zero = b.Count(o => o.SlotValue == 0);
+                if (zero > 0 && zero < b.Count())
+                    c.Warn("blueprint " + b.Key, zero + " of its " + b.Count() + " placed objects have slot 0 and the others have slots (e.g. " + b.First(o => o.SlotValue == 0).Guid
+                           + "); every shipped level slots all or none of a blueprint's objects - fix with: DbxEdit fixslots");
+            }
+        }
+
+        // teams, tickets, bases, spawns, what the level creates
+        static void CheckGameplay(Ctx c, List<Element> all, Element level)
+        {
+            var f = c.F;
+            string lw = c.Where(level);
+            var listed = all.Where(i => c.Listed.Contains(f.Get(i, "guid") ?? "")).ToList();
+            var teams = listed.Where(i => c.TypeOf(i) == "TeamEntityData").Select(i => Text(f, i, "Id") ?? "?").OrderBy(x => x, StringComparer.Ordinal).ToList();
+            if (string.Join(",", teams) != "Team1,Team2,TeamNeutral")
+                c.Warn(lw + " Objects", "lists TeamEntityData " + (teams.Count == 0 ? "none" : string.Join(", ", teams)) + "; every shipped level lists TeamNeutral, Team1 and Team2, once each");
+            var tickets = listed.Where(i => c.TypeOf(i) == "TicketCounterEntityData").Select(i => Text(f, i, "TeamId") ?? "?").OrderBy(x => x, StringComparer.Ordinal).ToList();
+            if (string.Join(",", tickets) != "Team1,Team2")
+                c.Warn(lw + " Objects", "lists ticket counters for " + (tickets.Count == 0 ? "no team" : string.Join(", ", tickets)) + "; every shipped level has one for Team1 and one for Team2");
+            var cps = listed.Where(i => c.TypeOf(i) == "CapturePointEntityData").ToList();
+            foreach (string team in new[] { "Team1", "Team2" })
+                if (!cps.Any(p => Text(f, p, "UnableToChangeTeam") == "true" && Text(f, p, "InitialOwnerTeam") == team))
+                    c.Warn(lw + " Objects", team + " has no base: no listed capture point with UnableToChangeTeam true and InitialOwnerTeam " + team + " (every shipped level has one per team)");
+            var owned = new HashSet<string>(cps.SelectMany(p => Items(f, p, "Spawners")).Select(it => f.Get(it, "ref") ?? ""), StringComparer.OrdinalIgnoreCase);
+            foreach (var s in listed.Where(i => c.TypeOf(i) == "SoldierSpawnEntityData"))
+                if (!owned.Contains(f.Get(s, "guid")))
+                    c.Warn(c.Where(s), "no listed capture point has this soldier spawn in its Spawners: BF1943's spawns are TeamNeutral and take their capture point's side (every shipped level's spawns have one)");
+            foreach (string t in Singletons)
+            {
+                int n = listed.Count(i => c.TypeOf(i) == t);
+                if (n != 1) c.Warn(lw + " Objects", "lists " + n + " " + t + " (every shipped level lists exactly one)");
+            }
+            string name = Text(f, level, "Name"), id = f.Get(level, "id");
+            if (name != "Levels/" + id)
+                c.Warn(lw + " Name", "is " + (name ?? "missing") + ", the instance's id " + (id ?? "missing") + ": in every shipped level the Name is Levels/<id>");
+            // references from listed entities (and LevelData) to entities the level must create
+            foreach (var i in listed.Concat(new[] { level }))
+            {
+                string type = c.TypeOf(i), where = c.Where(i);
+                LevelCheck.Walk(f, i, "", (e, path) =>
+                {
+                    string r = f.Get(e, "ref");
+                    if (r == null || r == "null" || r.Length != 36 || r.IndexOf('/') >= 0 || c.TypeOf(r) == null) return;
+                    string p = Unindexed(path), field = p.Substring(p.LastIndexOf('.') + 1);
+                    if (!CreatedFields.Contains(field) || (type == "SoundAreaEntityData" && p.StartsWith("OuterGeometry"))) return;
+                    if (!c.Listed.Contains(r))
+                        c.Warn(where + " " + path, "refers to " + c.TypeOf(r) + " " + r + ", which LevelData Objects does not list, so the level does not create it (in every shipped level it is listed)");
+                });
+            }
+        }
+
+        // Fields the shipped levels carry (6,060 times) that BF1943's classes and structs do not have. The game loads
+        // those levels, so it skips them; six of the names are nowhere in the executable.
+        static readonly HashSet<string> DataOnlyFields = new HashSet<string> {
+            "ConnectionPair.FromData", "ConnectionPair.ToData", "ForestEntityData.IsObsolete", "ForestEntityData.ReplacementObject",
+            "HavokAsset.RootNode", "HavokAsset.SourceFile", "LevelData.Parts", "MiddlegrowthModelGroupEntityData.IsObsolete",
+            "MiddlegrowthModelGroupEntityData.ReplacementObject", "ReferenceObjectData.IsInObjectSet", "RichPresenceConnection.RichPresence",
+            "RichPresenceContextPair.Context", "RichPresenceContextPair.Value", "RigidModelGroupEntityData.IsObsolete",
+            "RigidModelGroupEntityData.ReplacementObject", "StaticModelGroupEntityData.IsObsolete", "StaticModelGroupEntityData.ReplacementObject",
+            "TeamEntityData.Squads", "TerrainEntityData.IsObsolete", "TerrainEntityData.ReplacementObject" };
+
+        // every field a member of its class or struct; array elements of the declared class; enum fields hold a value name
+        static void CheckSchema(Ctx c, List<Element> all)
+        {
+            int unknown = 0;
+            foreach (var i in all)
+            {
+                string t = c.TypeOf(i);
+                if (Bf1943Types.Known(t)) Visit(c, t, i, c.Where(i), "", ref unknown);
+            }
+            if (unknown > 50) c.Warn("fields", (unknown - 50) + " more fields that BF1943's classes do not have");
+        }
+
+        static void Visit(Ctx c, string owner, Element e, string where, string path, ref int unknown)
+        {
+            var f = c.F;
+            if (!e.IsContainer) return;
+            foreach (var ch in e.Children)
+            {
+                string name = f.Get(ch, "name");
+                if (name == null) continue;
+                string p = path.Length == 0 ? name : path + "." + name, tag = f.TagOf(ch);
+                var m = Bf1943Types.Find(owner, name);
+                if (m == null)
+                {
+                    if (!DataOnlyFields.Contains(owner + "." + name) && unknown++ < 50)
+                        c.Warn(where + " " + p, owner + " has no member " + name + " in BF1943's executable (its reflection schema), so the game does not read it");
+                    continue;
+                }
+                if (tag == "complex" && Bf1943Types.Kind(m.Type) == "s") Visit(c, m.Type, ch, where, p, ref unknown);
+                else if (tag == "array" && ch.IsContainer)
+                {
+                    string ek = Bf1943Types.Kind(m.Element);
+                    for (int k = 0; k < ch.Children.Count; k++)
+                    {
+                        var it = ch.Children[k];
+                        string ip = p + "[" + k + "]";
+                        if (f.TagOf(it) == "complex" && ek == "s") Visit(c, m.Element, it, where, ip, ref unknown);
+                        string r = f.Get(it, "ref");
+                        if (ek == "c" && r != null && r != "null" && r.Length == 36 && r.IndexOf('/') < 0)
+                        {
+                            string target = c.TypeOf(r);
+                            if (target != null && !Bf1943Types.IsA(target, m.Element))
+                                c.Error(where + " " + ip, "refers to a " + target + " (" + r + "); BF1943's schema declares the elements of " + owner + "." + name + " " + m.Element + "s");
+                        }
+                    }
+                }
+                else if (tag == "field" && !ch.IsContainer && f.Get(ch, "ref") == null && Bf1943Types.Kind(m.Type) == "e")
+                {
+                    string v = XmlExport.ValueText(f, ch);
+                    var values = Bf1943Types.EnumValues(m.Type);
+                    if (!values.Contains(v))
+                        c.Error(where + " " + p, "\"" + v + "\" is not a value of " + m.Type + " (BF1943's executable has " + string.Join(", ", values.Take(6)) + (values.Count > 6 ? ", ..." : "") + ")");
+                }
+            }
+        }
+
+        // With --bundle: the LevelData's static cull trees (World.StaticCullTreeData: Nodes, EnumOffset). Nodes are a
+        // pre-order binary tree: an inner node's Right is the offset to its right child (the left one follows it); a
+        // leaf's Right has bit 31 set and its leaf number 1..L below; 256 zero nodes end the list. Leaf n is slot
+        // EnumOffset + n. SphereKeyX/Y/Z are the leaf's centre x 16 (signed 16-bit), SphereKeyW a size.
+        sealed class CullTree { public string Partition; public int EnumOffset, Nodes; public Dictionary<int, int[]> Leaves = new Dictionary<int, int[]>(); public int Duplicates; }
+
+        static CullTree LoadTree(Ctx c, Element level, string field, Dictionary<string, string> index)
+        {
+            var f = c.F;
+            var x = Child(f, level, field);
+            string r = x == null ? null : f.Get(x, "ref");
+            if (r == null || r == "null" || r.IndexOf('/') < 0) return null;
+            string part = r.Substring(0, r.LastIndexOf('/')), guid = r.Substring(r.LastIndexOf('/') + 1), path;
+            if (!index.TryGetValue(part, out path)) return null;                        // reported as a missing file
+            var d = new DbxFile(path);
+            if (!d.IsBinary) return null;
+            var t = d.Instance(guid);
+            if (t == null) return null;                                                   // reported as a missing instance
+            var tree = new CullTree { Partition = part, EnumOffset = Int(d, t, "EnumOffset") };
+            foreach (var node in Items(d, t, "Nodes"))
+            {
+                tree.Nodes++;
+                uint right = (uint)Int(d, node, "Right");
+                if ((right >> 31) == 0) continue;
+                int n = (int)(right & 0x7fffffff);
+                var key = new int[4];
+                for (int k = 0; k < 4; k++) key[k] = Short16(d, node, "SphereKey" + "XYZW"[k]);
+                if (tree.Leaves.ContainsKey(n)) tree.Duplicates++;
+                else tree.Leaves[n] = key;
+            }
+            return tree;
+        }
+
+        static bool Numbered(CullTree t) { return t.Duplicates == 0 && t.Leaves.Keys.All(n => n >= 1 && n <= t.Leaves.Count); }
+
+        public static void CheckCullTrees(DbxFile f, Dictionary<string, string> index, List<LevelCheck.Finding> found)
+        {
+            var c = new Ctx { F = f, Found = found };
+            var all = f.Instances().ToList();
+            foreach (var i in all) { string g = f.Get(i, "guid") ?? ""; if (!c.ByGuid.ContainsKey(g)) c.ByGuid[g] = i; }
+            var level = all.FirstOrDefault(i => c.TypeOf(i) == "LevelData");
+            if (level == null) return;
+            int groups = all.Sum(i => Items(f, i, "SpawnDatas").Count);
+            var client = LoadTree(c, level, "ClientStaticCullTree", index);
+            if (client != null)
+            {
+                if (!Numbered(client))
+                    c.Error(client.Partition, "the client cull tree's leaves are not numbered 1.." + client.Leaves.Count + ", each once (as in every shipped level)");
+                if (client.Leaves.Count != groups || client.EnumOffset != 0)
+                    c.Error(client.Partition, "the client cull tree has " + client.Leaves.Count + " leaves and EnumOffset " + client.EnumOffset + "; this level has "
+                            + groups + " model-group and forest instances (SpawnDatas): in every shipped level it has one leaf per instance and EnumOffset 0");
+            }
+            var tree = LoadTree(c, level, "ExclusiveStaticCullTree", index);
+            if (tree == null) return;
+            int last = tree.EnumOffset + tree.Leaves.Count;
+            if (!Numbered(tree))
+                c.Error(tree.Partition, "the exclusive cull tree's leaves are not numbered 1.." + tree.Leaves.Count + ", each once (as in every shipped level)");
+            if (tree.EnumOffset != groups)
+                c.Error(tree.Partition, "the exclusive cull tree's EnumOffset is " + tree.EnumOffset + ", not the level's " + groups
+                        + " model-group and forest instances (as in every shipped level: placed objects' slots follow them)");
+            var placed = PlacedObject.All(f).Where(o => o.Slot != null && o.SlotValue != 0).OrderBy(o => o.SlotValue).ToList();
+            var outside = placed.Where(o => o.SlotValue <= tree.EnumOffset || o.SlotValue > last).ToList();
+            if (outside.Count > 0)
+                c.Error("cull slots", outside.Count + " placed objects have a slot outside the exclusive cull tree's " + (tree.EnumOffset + 1) + ".." + last
+                        + " (e.g. " + string.Join(", ", outside.Take(3).Select(o => o.Blueprint + " " + o.SlotValue + " " + o.Guid))
+                        + "): the tree has no leaf for them. A new static object needs a rebuilt tree; slot 0 leaves it out of the trees");
+            // tiling: two leaves for a blueprint with physics, one without
+            int next = tree.EnumOffset + 1;
+            string missingBlueprint = null, gap = null;
+            foreach (var o in placed)
+            {
+                var refEl = Child(f, o.Instance, "ReferencedObject");
+                string r = refEl == null ? null : f.Get(refEl, "ref"), path;
+                if (r == null || r.IndexOf('/') < 0 || !index.TryGetValue(r.Substring(0, r.LastIndexOf('/')), out path)) { missingBlueprint = r; break; }
+                int width = Width(path);
+                if (o.SlotValue != next && gap == null)
+                    gap = o.Blueprint + " " + o.Guid + " has slot " + o.SlotValue + ", expected " + next;
+                next = o.SlotValue + width;
+            }
+            if (missingBlueprint != null)
+                c.Warn("cull slots", "not checked against the exclusive cull tree's leaves: " + missingBlueprint + " is not in the given folders");
+            else if (gap != null || next != last + 1)
+                c.Warn("cull slots", "placed objects' slots do not cover the exclusive cull tree's leaves " + (tree.EnumOffset + 1) + ".." + last + " exactly ("
+                       + (gap ?? "the last ends at " + (next - 1)) + "); in every shipped level each slotted object takes two leaves when its blueprint has a PhysicsEntityData, else one");
+            // each leaf's sphere at its object
+            var moved = new List<PlacedObject>();
+            foreach (var o in placed)
+            {
+                int[] k;
+                if (!tree.Leaves.TryGetValue(o.SlotValue - tree.EnumOffset, out k)) continue;
+                double dx = k[0] / 16.0 - o.X, dy = k[1] / 16.0 - o.Y, dz = k[2] / 16.0 - o.Z;
+                if (Math.Sqrt(dx * dx + dy * dy + dz * dz) > 6.2 * k[3] / 16.0 + 0.1) moved.Add(o);
+            }
+            if (moved.Count > 0)
+                c.Warn("cull slots", moved.Count + " placed objects are away from their slot's cull-tree leaf (e.g. " + string.Join(", ", moved.Take(3).Select(o => o.Blueprint + " " + o.Guid))
+                       + "): moved since the tree was built, or given another object's slot; in every shipped level an object lies within 6.2 x SphereKeyW / 16 of its leaf's centre");
+        }
+
+        static readonly Dictionary<string, int> widths = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        static int Width(string path)
+        {
+            int w;
+            if (widths.TryGetValue(path, out w)) return w;
+            var d = new DbxFile(path);
+            w = d.IsBinary && d.Instances().Any(i => (d.Get(i, "type") ?? "").EndsWith(".PhysicsEntityData")) ? 2 : 1;
+            widths[path] = w;
+            return w;
+        }
+
+        // a 2-byte signed number (0 when the field is missing or not one)
+        static int Short16(DbxFile f, Element e, string name)
+        {
+            var x = Child(f, e, name);
+            if (x == null || x.Kind != Element.Numbers) return 0;
+            int pos = 0, n = Varint.Read(x.Payload, ref pos), size = Varint.Read(x.Payload, ref pos);
+            return n == 1 && size == 2 ? (short)(x.Payload[pos] << 8 | x.Payload[pos + 1]) : 0;
+        }
+
+        static string Unindexed(string path)
+        {
+            var b = new StringBuilder();
+            int depth = 0;
+            foreach (char ch in path)
+            {
+                if (ch == '[') depth++;
+                else if (ch == ']') depth--;
+                else if (depth == 0) b.Append(ch);
+            }
+            return b.ToString();
+        }
+
+        static Element Child(DbxFile f, Element e, string name)
+        {
+            return e.IsContainer ? e.Children.FirstOrDefault(x => f.Get(x, "name") == name) : null;
+        }
+
+        static List<Element> Items(DbxFile f, Element e, string name)
+        {
+            var a = Child(f, e, name);
+            return a != null && a.IsContainer ? a.Children : new List<Element>();
+        }
+
+        static string Text(DbxFile f, Element e, string name)
+        {
+            var x = Child(f, e, name);
+            return x == null || x.IsContainer ? null : XmlExport.ValueText(f, x);
+        }
+
+        // a 4-byte whole number (int.MinValue when the field is missing or not one)
+        static int Int(DbxFile f, Element e, string name)
+        {
+            var x = Child(f, e, name);
+            if (x == null || x.Kind != Element.Numbers) return int.MinValue;
+            int pos = 0, n = Varint.Read(x.Payload, ref pos), size = Varint.Read(x.Payload, ref pos);
+            return n == 1 && size == 4 ? (int)BigEndian.U32(x.Payload, pos) : int.MinValue;
         }
     }
 
@@ -1423,7 +3388,7 @@ namespace Bfbc2Dbx
             if (args.Length >= 3 && args[0] == "fixslots") return FixSlots(args);
             Console.Error.WriteLine("usage: DbxEdit xml <file|folder> ... | roundtrip <file|folder> | edit <in.dbx> <out.dbx> <command|@file> ...");
             Console.Error.WriteLine("       DbxEdit import <in.xml> <out.dbx> [--like <original.dbx>] [--types <file.dbx|folder>] ...");
-            Console.Error.WriteLine("       DbxEdit check <level.dbx> [--slots-from <level.dbx>] [--bundle <folder>] ...");
+            Console.Error.WriteLine("       DbxEdit check <level.dbx> [--rules bf1943|bfbc2] [--slots-from <level.dbx>] [--bundle <folder>] ...");
             Console.Error.WriteLine("       DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>");
             Console.Error.WriteLine("  replace=<old>|<new>  drop=<guid>  dropfield=<name>  graft=<source.dbx>|<guid>");
             return 2;
@@ -1509,25 +3474,32 @@ namespace Bfbc2Dbx
             }
         }
 
-        // check <level.dbx> [--slots-from <level.dbx>] [--bundle <folder>]...   exit 0 = no errors, 1 = errors found
+        // check <level.dbx> [--rules bf1943|bfbc2] [--slots-from <level.dbx>] [--bundle <folder>]...
+        // exit 0 = no errors, 1 = errors found. The rules are chosen from the file (LevelCheck.Detect) unless given.
         static int Check(string[] args)
         {
             DbxFile slotsFrom = null;
+            string rules = null;
             var bundles = new List<string>();
             for (int i = 2; i < args.Length; i++)
             {
                 if (args[i] == "--slots-from" && i + 1 < args.Length) slotsFrom = new DbxFile(args[++i]);
                 else if (args[i] == "--bundle" && i + 1 < args.Length) bundles.Add(args[++i]);
-                else { Console.Error.WriteLine("check: unknown option " + args[i]); return 2; }
+                else if (args[i] == "--rules" && i + 1 < args.Length && (args[i + 1] == LevelCheck.Bf1943 || args[i + 1] == LevelCheck.Bfbc2)) rules = args[++i];
+                else { Console.Error.WriteLine("check: unknown option " + args[i] + " (options: --rules bf1943|bfbc2, --slots-from <level.dbx>, --bundle <folder>)"); return 2; }
             }
             var f = new DbxFile(args[1]);
             if (!f.IsBinary) { Console.Error.WriteLine("not a binary dbx: " + args[1]); return 2; }
-            var found = LevelCheck.Run(f, slotsFrom, bundles);
+            string chosen = rules ?? LevelCheck.Detect(f);
+            var found = LevelCheck.Run(f, slotsFrom, bundles, chosen);
             foreach (var x in found.OrderBy(x => x.Error ? 0 : 1)) Console.WriteLine(x);
             int errors = found.Count(x => x.Error);
-            Console.WriteLine("check " + args[1] + ": " + errors + " error(s), " + (found.Count - errors) + " warning(s)");
+            Console.WriteLine("check " + args[1] + " (" + RulesName(chosen) + " rules" + (rules == null ? ", from the file" : "") + "): "
+                              + errors + " error(s), " + (found.Count - errors) + " warning(s)");
             return errors > 0 ? 1 : 0;
         }
+
+        internal static string RulesName(string rules) { return rules == LevelCheck.Bfbc2 ? "BFBC2" : "BF1943"; }
 
         // fixslots <in.dbx> <out.dbx> --from <level.dbx>
         static int FixSlots(string[] args)

@@ -1,16 +1,23 @@
 # BF1943 DBX tools (DbxEdit)
 
-Part of the BF1943 Tool Suite. **BF1943 status: partly** (2026-10-23) - DbxEdit and DbxEditGUI read, write and
-edit BF1943's binary DBX partitions; the level check's rules and the slot fixer are BFBC2's.
+Part of the BF1943 Tool Suite. **BF1943 status: yes** (2026-10-26) - DbxEdit and DbxEditGUI read, write and
+edit BF1943's binary DBX partitions. The level check uses BF1943's own rules (see [Check a level](#check-a-level)),
+and the slot fixer repairs BF1943's cull slots.
 
 **Tested on BF1943** (all 4,062 partitions of Wake Island's bundles and the shared level bundle, 2026-10-23;
 the suite's `tests\test_bf1943_tools.py dbxedit` repeats it on 1,133 of them):
 - every partition round-trips byte for byte (`roundtrip`);
 - DbxEdit's XML equals core `dbx.py`'s on every one (`xml`);
-- the level check reports 0 errors on Wake Island's level partition (`check`).
+- the level check with BF1943's rules reports nothing (0 errors, 0 warnings) on all five shipped level partitions,
+  and with `--bundle` on each of them every reference into its bundles holds its declared class and the static cull
+  trees match the level (`check --bundle`);
+- broken copies of Wake Island fail with their rule's message, one per rule; `fixslots` repairs swapped cull slots
+  byte for byte (2026-10-26, `tests\test_levelcheck1943.py`).
 
-**Not verified on BF1943:** the rules of `check` and the slot fixer (`fixslots`) were derived from crashes of
-BFBC2 PC. A clean check on a BF1943 level means only that none of BFBC2's problems were found.
+**What a clean check means:** the level breaks none of the rules that every shipped BF1943 level keeps. The rules
+come from the game's data, not from crashes. No broken level has been run in the game, so what the game does with a
+broken rule is a hypothesis: errors mark data inconsistent with itself or with BF1943's classes, warnings mark a
+level unlike every shipped one.
 
 **Workflow for BF1943:**
 1. Extract the partitions from a bundle: `python ..\bf1943-fbrb-tool\fbrb1943.py extract <bundle.fbrb> <out dir> [filter]`.
@@ -21,7 +28,8 @@ BFBC2 PC. A clean check on a BF1943 level means only that none of BFBC2's proble
 DbxEdit runs on .NET Framework, which cannot open paths longer than 260 characters. BF1943's partition names are
 long: extract into a short folder (for example `C:\dbx`).
 
-What follows is OPFOR's DbxEdit description. Its counts and the level check's crashes are BFBC2's.
+What follows is OPFOR's DbxEdit description, with the level check rewritten for BF1943. The counts under "Tested
+(BFBC2, in OPFOR)" and the crashes of the BFBC2 rules are BFBC2's.
 
 **DbxEdit** reads, converts, checks and edits binary `.dbx` files (Frostbite 1 data as a tokenised XML tree), from
 the command line or in a window (**DbxEditGUI**). The format is the same in BFBC2 (PC and Xbox 360) and BF1943.
@@ -31,7 +39,7 @@ the command line or in a window (**DbxEditGUI**). The format is the same in BFBC
 | `DbxEdit xml` | binary `.dbx` to readable XML |
 | `DbxEdit import` | XML back to binary `.dbx` |
 | `DbxEdit edit` | change binary files directly with commands (drop, graft, copy, set, ...) |
-| `DbxEdit check` | find what crashes or breaks a level, without starting the game |
+| `DbxEdit check` | find what breaks a level, without starting the game (BF1943's or BFBC2's rules) |
 | `DbxEdit fixslots` | repair cull slots (houses and vehicles turning see-through) |
 | `DbxEdit roundtrip` | read and rewrite files, report any that would change |
 | `DbxEditGUI` | all of this in a window |
@@ -43,6 +51,26 @@ and everything DbxEdit does; the code is written from it.
 
 Run `build.bat`. It compiles `DbxEdit.exe` and `DbxEditGUI.exe` into this folder with the C# compiler
 that ships with Windows (.NET Framework 4) and needs no install.
+
+### The schema
+
+`DbxEdit.cs` holds BF1943's reflection schema for the level check, in the block between `BEGIN GENERATED BF1943
+SCHEMA` and `END GENERATED BF1943 SCHEMA`. It lists 952 classes (with their base classes), 211 structs (value types) and
+188 enums. Each class or struct comes with its 6,154 members in all (a member's type when it is a class, struct or
+enum, and an array's element type); each enum with its value names.
+
+`python -B schema1943.py [<bf1943-reflection-schema-full.json>]` writes the block and records both files' SHA-256;
+then run `build.bat`. It reads the research workspace's `research\evidence\bf1943-reflection-schema-full.json`
+(`BF1943_RESEARCH`, else `operation-rising-sun` next to the suite). That file is the schema read from the game's
+executable by `src\xexresearch\dump_reflection.py`, completed by `dump_reflection_dynamic.py`:
+- **Member records written at start-up.** 1,746 member records are zero in the executable's image; straight-line
+  code writes them when the game starts (for LevelData, at 0x82a70ae8, outside every `.pdata` function). The script
+  reads them from those constant stores: all 1,746 recovered, none conflicting.
+- **The value types.** They are registered by another function (0x8262e198) that the first script did not read.
+- **Array element types** (word 3 of an array member's record).
+
+Before completion, 17,986 of the levels' 112,047 instance fields had no member in the schema. All but the 20
+data-only fields below are now covered.
 
 ## The window
 
@@ -88,21 +116,119 @@ takes the types from **the original file**: `--like`, or `<name>.dbx` next to th
 ## Check a level
 
 ```
-DbxEdit check <level.dbx> [--slots-from <level.dbx>] [--bundle <unpacked folder>]...
+DbxEdit check <level.dbx> [--rules bf1943|bfbc2] [--slots-from <level.dbx>] [--bundle <unpacked folder>]...
 ```
 
-It reports, with the crash each one causes:
+The check has two rule sets and says which one it used. Without `--rules` it takes them from the file: BFBC2's when
+the file's LevelData has BFBC2's fields (`DataConnections`, `Descriptor` or `MemoryReportGroup`: every BFBC2 PC level
+has them, no BF1943 level does), else BF1943's. The window (Level menu) chooses the same way.
+
+### BF1943's rules
+
+Each rule holds in all five shipped BF1943 level partitions (`wake_island_s`, `guadal_canal`, `iwo_jima_s`,
+`coral_sea`, `wake_island_tutorial`). The research workspace's `src\assetresearch\derive_level_rules1943.py` derives
+them from those partitions and the reflection schema read from the game's executable (completed: see
+[The schema](#the-schema)), and records the evidence of
+each (levels, counts, types, fields) in `research\evidence\bf1943-level-check-rules.json`. The rules come from data,
+not crashes: what the game does with a broken one has not been tried.
+
+**Errors** (exit code 1) - the file is inconsistent with itself or with BF1943's classes:
+
+| Rule | Evidence in the five levels |
+|---|---|
+| instance GUIDs are unique | 12,166 instances |
+| every instance's type is a BF1943 class (the reflection schema) | 73 types, all reflected |
+| exactly one LevelData, and it is the partition's `primaryInstance` | 5 of 5 |
+| LevelData `Objects` has no null or unresolved entry *(BFBC2's rule; its crash is BFBC2's)* | 8,361 entries |
+| every local reference names an instance of the file *(BFBC2's)* | 18,802 references |
+| a reference in a class-typed field points to that class or a subclass - the field's class is the schema's | 3,789 references, 19 fields |
+| the same for references into other files, with `--bundle` | 6,447 references |
+| the items of 29 arrays hold what the shipped levels put there: the nearest common schema base, for example `CapturePointEntityData.Spawners` a `SpawnEntityData`, `*.Geometry` a geometry entity, `LevelData.Objects` and event connections a `GameObjectData` | every item of those arrays |
+| model groups, forests and their members have `PhysicsData`, `MeshEntityType` and `MemberType` (terrain may leave `PhysicsData` null) *(BFBC2's, `MemberType` added)* | 21 groups, 130 members |
+| a group's members are its kind: static, rigid or middlegrowth model group member, or tree member for the forest | 21 groups |
+| a member's `InstanceCount` is the number of its `SpawnDatas` | 130 members |
+| a group's members' physics parts follow each other: the first `FirstPhysicsPart` is 0, each next one is the previous member's `PhysicsPartCount` (an end index, not a count), and `PhysicsPartCount - FirstPhysicsPart = InstanceCount x PhysicsPartCountPerInstance` | 130 members |
+| an array item that is a reference points to the array's element class (the schema's) or a subclass | 10,775 references |
+| a field of an enum type holds one of the enum's value names (for example `Team1`, `TeamNeutral`) | 1,823 fields |
+| with `--bundle`: the client cull tree has one leaf per model-group and forest instance (`SpawnDatas`), numbered 1..N, and `EnumOffset` 0 | 5 of 5 (N = 2,505-3,852) |
+| with `--bundle`: the exclusive cull tree's leaves are numbered 1..L and its `EnumOffset` is N | 5 of 5 (L = 540-2,414) |
+| with `--bundle`: every placed object's slot is in `EnumOffset`+1 .. `EnumOffset`+L - the highest slot fits the tree | 4,595 slotted objects |
+
+**Warnings** - the level is unlike every shipped one:
+
+| Rule | Evidence in the five levels |
+|---|---|
+| terrain, forests and model groups are listed in `Objects` *(BFBC2's; BFBC2's static envmap is not in BF1943 levels)* | 5 of 5 |
+| each instance is listed in `Objects` once | 8,361 entries |
+| the cull slots of the model groups' and forest's instances (`SpawnDatas` `Enumeration`) are 1..N, each once | 14,924 instances |
+| placed objects' (`ReferenceObjectData`) non-zero slots are unique and above N *(BFBC2's uniqueness; BF1943 adds the group instances)* | 4,595 slotted of 5,855 |
+| a blueprint's placed objects are all slotted or all slot 0 | 119 blueprints |
+| `Objects` lists three teams: TeamNeutral, Team1, Team2 | 5 of 5 |
+| one ticket counter for Team1 and one for Team2 | 5 of 5 |
+| Team1 and Team2 each have a base: a listed capture point with `UnableToChangeTeam` true and `InitialOwnerTeam` theirs | 5 of 5 |
+| every listed soldier spawn is in a listed capture point's `Spawners` (BF1943's spawns are TeamNeutral and take the capture point's side) | 31 spawns |
+| event connections, spawners, map markers, alternative spawn points, trigger geometry and the entities triggers watch point at listed instances (a sound area's outer geometry is exempt) | 4,538 references |
+| exactly one terrain, combat area, human player, auto team, pre-round, mission and hot zone are listed | 5 of 5 |
+| LevelData `Name` is `Levels/<its id>` | 5 of 5 |
+| every field (of an instance, of a by-value struct, of an array element) is a member of its class or struct - except 20 fields the shipped data carries that BF1943's classes do not have (below) | 160,109 fields |
+| with `--bundle`: in slot order, the slotted placed objects cover the exclusive tree's leaves exactly - two leaves when the blueprint's partition has a `PhysicsEntityData`, else one | 4,470 objects with two, 125 with one |
+| with `--bundle`: an object lies within 6.2 x `SphereKeyW` / 16 of its leaf's centre (`SphereKeyX/Y/Z` / 16); the bound is fitted to the shipped levels (largest 6.16) | 4,595 objects; with the slots shuffled 2-5 per level pass |
+
+**Not rules** (a shipped level breaks them): capture points' `Index` unique (the tutorial repeats 1, 5 and 10);
+every capture point has spawners (Coral Sea's south base and a tutorial hangar ship have none); a live session and a
+trial validator (the tutorial has neither); every entity listed (four levels keep unlisted ones, Coral Sea three
+whole capture points). Not checked, though every shipped level has them: an empty `PathfindingTypes` and `HasAI` false
+(navigation and bots will change them).
+
+**Cull slots** (FORMAT.md section 7 gives the cull trees' format). A level's slots are the leaves of its two static
+cull trees, the partitions `levels/<level>/staticculltree_client` and `staticculltree_exclusive` that LevelData's
+`ClientStaticCullTree` and `ExclusiveStaticCullTree` name:
+- Slots 1..N are the client tree's leaves: one per model-group and forest instance (`SpawnDatas` `Enumeration`).
+- Slots N+1..N+L are the exclusive tree's leaves (`EnumOffset` N): the placed objects. Every one fits; the last
+  object's last leaf is the tree's last leaf on every level.
+- Placed objects' slots skip numbers because an object takes two leaves when its blueprint has physics (4,470 objects:
+  static and rigid models and ladders with a `PhysicsEntityData`), one when it has none (125: skydomes, wakes, a few
+  props). Both leaves have the same centre and size. No slot is free.
+- Slot 0 (1,260 objects) is outside the trees: dynamic models, effects, bangers and weather systems.
+- **So a new static object cannot get a valid slot:** the exclusive tree has no free leaf, and none can be added
+  without rebuilding the tree. `fixslots` gives it 0 (outside the trees); what the game then draws is not tried.
+- BFBC2 PC's `mp_005` has the same layout (client leaves = its 2,292 group instances, exclusive `EnumOffset` 2,292,
+  slots up to 5,975 = 2,292 + 3,683). This is a lead only.
+- **Open:** what the second leaf is for (collision or destruction are guesses) and the node's `Max`; the exact scale of
+  `SphereKeyW` (the 6.2 bound is empirical).
+
+**Data-only fields.** The shipped levels carry 20 fields (6,060 times) that BF1943's classes and structs do not have:
+- `ReferenceObjectData.IsInObjectSet` (5,855 times);
+- `IsObsolete` and `ReplacementObject` on terrain, forest and model groups;
+- `ConnectionPair.FromData` and `ToData`;
+- `HavokAsset.SourceFile` and `RootNode`;
+- `LevelData.Parts`;
+- `TeamEntityData.Squads`;
+- `RichPresenceConnection.RichPresence`;
+- `RichPresenceContextPair.Context` and `Value`.
+
+Six of the names (`IsInObjectSet`, `IsObsolete`, `ReplacementObject`, `FromData`, `ToData`, `Context`) appear nowhere in
+the executable. The others are members of other types only. The game loads these levels, so it skips such fields. The
+check accepts these 20 and warns about any other field the game's classes don't have.
+
+### BFBC2's rules
+
+`--rules bfbc2`, or a BFBC2 file. They report, with the crash each one causes in BFBC2 PC:
 
 - **empty or unresolved entries in the level's object list:** the game crashes while loading;
 - **model groups and their members without physics or mesh data:** the game crashes at the model-group
   set-up;
 - **references to instances the file doesn't have;**
-- **terrain, model groups or forests missing from the object list:** they aren't loaded;
+- **terrain, model groups, forests or the static envmap missing from the object list:** they aren't loaded;
 - **objects that share a cull slot:** they turn see-through together.
 
-Two options add more checks:
+### Options
+
+Two options add more checks (both rule sets):
 - `--slots-from` names the level whose cull trees this one uses, to find slots that don't match it.
-- `--bundle` names unpacked bundle folders, to check references into other files.
+- `--bundle` names unpacked bundle folders, to check references into other files (with BF1943's rules, also their
+  class, and the level against its static cull trees: unpack the level's own bundle too). BF1943's shipped levels name a few partitions that are in none of their bundles (Wake Island: two minimap
+  meshes); they are warnings.
 
 The exit code is 1 if there are errors.
 
@@ -112,7 +238,9 @@ DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>
 
 `fixslots` gives every placed object the cull slot of the same object in the level the cull trees belong
 to. Objects are matched by GUID, else by blueprint and position, else by the nearest unused object of the
-same blueprint within 50 m. Objects with no match get slot 0 (outside the tree).
+same blueprint within 50 m. Objects with no match get slot 0 (outside the tree). It works on BF1943 levels as on
+BFBC2's: on a copy of Wake Island with two placed objects' slots swapped it gives the original back byte for byte.
+It changes placed objects only; the model groups' instance slots are left as they are.
 
 ## Edit with commands
 
@@ -166,6 +294,12 @@ memory) and what to do - with the log's path: on the command line with exit code
 `python -B ..\tests\test_bf1943_tools.py dbxedit` (in the `bf1943` tier of `run_tests.py`; it runs `build.bat` if
 `DbxEdit.exe` is missing): DbxEdit on Wake Island's partitions, as above, and LevelDiff on a partition against
 itself. BF1943's `.dbx` partitions are also checked by the Python reader (the suite's `tests\test_bf1943_data.py dbx`).
+
+`python -B tests\test_levelcheck1943.py` (also in the `bf1943` tier; it runs `build.bat` if `DbxEdit.exe` is missing
+or older than the code): the level check on all five shipped level partitions (BF1943's rules from the file, nothing
+reported), each with `--bundle`, and 25 broken copies of Wake Island (plus one of its exclusive cull tree) - made with `xml`, a text change and
+`import` in a temporary folder - each failing with its rule's message (errors exit 1, warnings 0); `--rules bfbc2` and
+a LevelData with BFBC2's fields choosing BFBC2's rules; `--slots-from` and `fixslots` on swapped cull slots.
 DbxEdit's own tests were BFBC2's (its unit tests, the PC game's files and their fingerprints) and were removed with
 the suite's other BFBC2 tests; they are in OPFOR's `bfbc2-tool-suite` and in this repository's history.
 

@@ -160,7 +160,11 @@ Exit code 0 means written; 1 means failed; 3 means written, but some values were
 
 ## 7. Level checks (`DbxEdit check`, `DbxEdit fixslots`)
 
-`check` reports, for a level partition:
+`check` has two rule sets, BFBC2's and BF1943's, and names the one it used in its last line (`(BF1943 rules, from
+the file)`). `--rules bf1943|bfbc2` chooses; otherwise a file whose LevelData has a field `DataConnections`,
+`Descriptor` or `MemoryReportGroup` gets BFBC2's rules, any other file BF1943's.
+
+**BFBC2's rules** - `check` reports, for a level partition:
 
 - **Error:** an item in LevelData `Objects` that is `null` or refers to an instance not in the file. The
   game reads the list without a check (function 0x006EFBC0, crash at 0x006EFF8A).
@@ -178,6 +182,69 @@ Exit code 0 means written; 1 means failed; 3 means written, but some values were
 - **With `--bundle <folder>`:** references into other files are resolved against the unpacked folders.
   - Warning: a referenced file is missing.
   - Error: the file is there, but the referenced instance is not.
+
+(The crash addresses are BFBC2 PC's.)
+
+**BF1943's rules** - everything above, except that the static envmap is not required and a member's `MemberType`
+must not be `null` either, plus (each holds in all five shipped BF1943 levels; README "Check a level" gives the
+evidence). *Where* is `<type> <guid> [<field path>]`, as above.
+
+- **Error:** two instances with the same GUID.
+- **Error:** an instance whose type (the part after the last `.`) is not a class (`c`) of `Bf1943Schema.Types` (the
+  reflection schema, generated into `DbxEdit.cs` by `schema1943.py`). Reported once per type.
+- **Error:** not exactly one LevelData, or the partition's `primaryInstance` is not its GUID.
+- **Error:** a local reference in a top-level field whose member is class-typed in `Bf1943Schema.Types`
+  (looked up on the instance's class, then its bases) to an instance that is not that class or one derived from
+  it. With `--bundle`, the same for references into other files (the target's type is read from that file).
+- **Error:** an item (or a field of a complex item) of one of the arrays in `LevelRules1943.ArrayTypes` (keyed
+  `<instance type>.<array path without indices>`) refers to an instance that is not of the listed class.
+- **Error:** a `StaticModelGroupEntityData`, `RigidModelGroupEntityData`, `MiddlegrowthModelGroupEntityData` or
+  `ForestEntityData` whose `MemberDatas` item is not its member class (`...MemberData`; `TreeMemberData` for the
+  forest). For each member, in `MemberDatas` order, with *run* starting at 0: `InstanceCount` must equal the number of
+  `SpawnDatas`; `FirstPhysicsPart` must equal *run*; `PhysicsPartCount - FirstPhysicsPart` must equal
+  `InstanceCount x PhysicsPartCountPerInstance`; then *run* = `PhysicsPartCount`.
+- **Warning:** an instance listed twice in LevelData `Objects`.
+- **Warning:** a `SpawnDatas` `Enumeration` (group instance slot) used more than once (at most 20 reported), and the
+  group instance slots not being exactly 1..N (N = the number of `SpawnDatas` in the file).
+- **Warning:** placed objects with a non-zero slot of at most N (one warning with the count).
+- **Warning:** a blueprint (the `ReferencedObject` partition's last folder name, as `fixslots` uses) with placed
+  objects of slot 0 and others with a slot.
+- **Warning** (*listed* = in LevelData `Objects`): the listed `TeamEntityData` `Id`s, sorted, are not `Team1`,
+  `Team2`, `TeamNeutral`; the listed `TicketCounterEntityData` `TeamId`s are not `Team1`, `Team2`; for `Team1` or
+  `Team2`, no listed `CapturePointEntityData` has `UnableToChangeTeam` true and that `InitialOwnerTeam`; a listed
+  `SoldierSpawnEntityData` is in no listed capture point's `Spawners`; the count of listed `TerrainEntityData`,
+  `CombatAreaTriggerEntityData`, `HumanPlayerEntityData`, `AutoTeamEntityData`, `PreRoundEntityData`,
+  `MissionEntityData` or `HotZoneEntityData` is not 1; LevelData `Name` is not `Levels/` + the LevelData's `id`.
+- **Warning:** in a listed instance or the LevelData, a resolved local reference whose field (an array item's: its
+  array's) is `Source`, `Target`, `Spawners`, `AlternativeSpawnPoints`, `MapMarker`, `MapMarkers`, `Geometry`,
+  `SurroundingGeometry`, `Soldiers`, `ObjectToFollow`, `PlayerToCheck` or `VehicleToCheck` points to an instance
+  that is not listed (a `SoundAreaEntityData`'s `OuterGeometry` is exempt).
+- **Schema** (`Bf1943Schema.Types`: classes `c`, structs `s`, enums `e`). Walking each instance whose class is known:
+  a named child that is no member of its class (with bases) or struct is a **warning** (at most 50 listed, then a
+  count), unless `<owner>.<field>` is one of the 20 data-only fields (`LevelRules1943.DataOnlyFields`); a `complex`
+  child whose member type is a struct is walked as that struct; an array's `complex` items are walked as its element
+  struct; an array item referring to a local instance that is not its element class or derived from it is an
+  **error**; a text field whose member type is an enum and whose value is not one of the enum's names is an
+  **error**.
+- **With `--bundle`, the static cull trees** (format below): the client tree's leaves not numbered 1..L each once, or
+  L not the number of `SpawnDatas` in the file, or its `EnumOffset` not 0, is an **error**; the same numbering for the
+  exclusive tree, or its `EnumOffset` not that number, is an **error**; a placed object (non-zero `Enumeration`) with
+  a slot <= `EnumOffset` or > `EnumOffset` + L is an **error**. **Warnings:** taking the slotted placed objects in slot
+  order, with *next* = `EnumOffset` + 1, each object's slot must equal *next*, then *next* = slot + width (2 when the
+  partition its `ReferencedObject` names has a `PhysicsEntityData` instance, else 1), and at the end *next* must be
+  `EnumOffset` + L + 1 (a blueprint partition not in the folders skips this, with a warning); an object whose
+  `Transform` position is more than 6.2 x W / 16 + 0.1 m from its leaf's centre (X, Y, Z / 16).
+
+**Static cull trees** (`World.StaticCullTreeData`, one instance per partition; BF1943, and BFBC2 PC's `mp_005`
+alike). Fields: `Nodes` (array of complex) and `EnumOffset` (4-byte integer). Each node: `Right` (4 bytes), `Max` (4-byte
+decimal), `SphereKeyX`, `SphereKeyY`, `SphereKeyZ`, `SphereKeyW` (2 bytes each, signed).
+- The nodes are a binary tree in pre-order, starting at node 0. An inner node's left child is the next node, and its
+  right child is `Right` nodes after it.
+- A leaf has bit 31 of `Right` set. The low 31 bits are its number, 1..L: each once, and leaf *n* is cull slot
+  `EnumOffset` + *n*.
+- The tree is followed by 256 nodes that are all zero.
+- `SphereKeyX/Y/Z` are the leaf's centre in metres x 16. `SphereKeyW` is a size (its scale is not known). `Max`'s
+  meaning is not known.
 
 `fixslots <in> <out> --from <level>` gives every object the slot of the same object in `<level>`:
 

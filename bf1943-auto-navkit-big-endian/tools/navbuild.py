@@ -129,9 +129,17 @@ LADDER_STATS = {}               # ladder links made, and ladders whose ends lie 
 LADDER_ALL_GROUND = False       # link a ladder to each piece of ground within reach of its ends, not only the nearest
                                 # surface (navwalk.ladder_end_options; BF1943: soldier1943.configure sets it)
 BORDER_NODE_SPACING = 10.0
+BORDER_SEAM_LINE = False        # shared border nodes also on the seam line itself for ground that does not reach the
+                                # border line one sample beyond (2026-10-26; soldier1943.configure sets it for BF1943)
 BRIDGE_UNION = True             # 45-degree bridges: outline from the exact union (bridge_union) - False: clip_bridges
 SLOPE_MAX = 40.0                # the steepest walkable ground (deg), passed to navwalk.walkable; BF1943's soldier
                                 # physics allows 45 (DefaultSoldierPhysics MaxAscendAngle) - set per level by the caller
+AREA_CELLS = {}                 # sector id -> per area (in the file's order): its cells' global indices i, j at its
+                                # pitch (cell centre = index x pitch) and their ground heights - the kept surfaces the
+                                # area was made of, exactly. Written beside the build as <name>.cells.npz (write_file):
+                                # the outlines alone do not give a cell's height (the RSNV exporter's estimate from the
+                                # nearest outline point was 0.3 m or more off on 11 % of Coral Sea's 0.8 m cells,
+                                # 2026-10-25)
 MAX_WATER_DEPTH = 1.5           # ground deeper under water is not walkable (DICE's data: 99.9 % of its ground under
                                 # water is within 1.45 m, median over 11 levels; navwater.py)
 
@@ -651,6 +659,7 @@ def build(samples_path, tris_path, xoff, zoff, out_path, step=0.28, log=print, d
     set_pitch(0.8)
     ORDER_IDS.clear()
     LADDER_STATS.clear()
+    AREA_CELLS.clear()
     a = stage(samples_path, high_path, xoff, zoff, seeds=seeds, **common)
     if detailed:
         graphs = merge_detailed(a, detailed, xoff, zoff, seeds, common, log)
@@ -784,43 +793,56 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             other = (X + dX, Y + dY)
             if other not in info:
                 continue
-            # every kept surface on the line (all layers: floors under roofs too), grouped into connected runs
-            # along it, one run per layer
-            runs, active = [], []
-            for t in WINDOW:
-                i, j = (line, t) if dX else (t, line)
-                nxt = []
-                for k in level.surfaces(gi0 + i, gj0 + j):
-                    for r in active:
-                        if r[-1][0] == t - 1 and level.connected(r[-1][1], k, 0 if dX else 1, 1 if dX else 0):
-                            r.append((t, k))
-                            nxt.append(r)
-                            active.remove(r)
-                            break
-                    else:
-                        r = [(t, k)]
-                        runs.append(r)
-                        nxt.append(r)
-                active = nxt
-            for run in runs:
-                n = max(1, int(math.ceil(len(run) * PITCH / BORDER_NODE_SPACING)))
-                for q in range(n):
-                    t, k = run[int((q + 0.5) * len(run) / n)]
+            def line_runs(line):
+                """every kept surface on the line (all layers: floors under roofs too), grouped into connected runs
+                along it, one run per layer"""
+                runs, active = [], []
+                for t in WINDOW:
                     i, j = (line, t) if dX else (t, line)
-                    pos = (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH)
-                    if DEDUP_GRAPH_NODES and k in border_at:
-                        # a surface already holding a border node (a sector corner: on both lines): the same
-                        # node, shared with this neighbour too - DICE has border ids in 3 and 4 sectors; two ids
-                        # on one spot were joined by zero-length edges (11 of 13 campaign levels, 2026-10-20)
-                        nid, pos = border_at[k]
-                        for sec in ((X, Y), other):
-                            if not any(b[0] == nid for b in border_nodes[sec]):
-                                border_nodes[sec].append((nid, pos, k))
-                        continue
-                    nid = 0x80000000 | new_id()
-                    border_at[k] = (nid, pos)
-                    border_nodes[(X, Y)].append((nid, pos, k))
-                    border_nodes[other].append((nid, pos, k))
+                    nxt = []
+                    for k in level.surfaces(gi0 + i, gj0 + j):
+                        for r in active:
+                            if r[-1][0] == t - 1 and level.connected(r[-1][1], k, 0 if dX else 1, 1 if dX else 0):
+                                r.append((t, k))
+                                nxt.append(r)
+                                active.remove(r)
+                                break
+                        else:
+                            r = [(t, k)]
+                            runs.append(r)
+                            nxt.append(r)
+                    active = nxt
+                return runs
+            line_sets = [(line, line_runs(line))]
+            if BORDER_SEAM_LINE:
+                # the seam itself (local SECTOR_SAMPLES, both windows hold it): its runs of ground that do not go on
+                # to the border line - a piece that reaches the seam but stops short of the line one sample beyond
+                # got no shared node and was not joined across (Coral Sea's three seam breaks, 2026-10-26)
+                on_line = {k for r in line_sets[0][1] for _t, k in r}
+                seam = [r for r in line_runs(SECTOR_SAMPLES)
+                        if not any(level.neighbour(k, gi0 + (SECTOR_SAMPLES if dX else t), gj0 + (t if dX else SECTOR_SAMPLES),
+                                                   dX, dY) in on_line for t, k in r)]
+                line_sets.append((SECTOR_SAMPLES, seam))
+            for line, runs in line_sets:
+                for run in runs:
+                    n = max(1, int(math.ceil(len(run) * PITCH / BORDER_NODE_SPACING)))
+                    for q in range(n):
+                        t, k = run[int((q + 0.5) * len(run) / n)]
+                        i, j = (line, t) if dX else (t, line)
+                        pos = (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH)
+                        if DEDUP_GRAPH_NODES and k in border_at:
+                            # a surface already holding a border node (a sector corner: on both lines): the same
+                            # node, shared with this neighbour too - DICE has border ids in 3 and 4 sectors; two ids
+                            # on one spot were joined by zero-length edges (11 of 13 campaign levels, 2026-10-20)
+                            nid, pos = border_at[k]
+                            for sec in ((X, Y), other):
+                                if not any(b[0] == nid for b in border_nodes[sec]):
+                                    border_nodes[sec].append((nid, pos, k))
+                            continue
+                        nid = 0x80000000 | new_id()
+                        border_at[k] = (nid, pos)
+                        border_nodes[(X, Y)].append((nid, pos, k))
+                        border_nodes[other].append((nid, pos, k))
     # shared nodes from another stage (seams with sectors at another pitch): on this grid's ground at the node, the
     # nearest kept surface of the sector within 0.6 m of its height; nodes with no such ground are reported dropped
     dropped = set()
@@ -907,6 +929,11 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         ys = [a.min_y for a in mesh_areas] + [a.max_y for a in mesh_areas]
         bounds_ = (rect[0], rect[1], min(ys), max(ys), rect[2], rect[3])
         graphs.append((sid, bounds_, mesh, pts, pairs, (ox, oz)))
+        # the areas' own cells for the sidecar file (write_file): global cell indices at this pitch, ground heights
+        base_i, base_j = int(round(ox / PITCH)), int(round(oz / PITCH))
+        AREA_CELLS[sid] = [(np.array([base_i + c[0] for c in a['cells']], np.int32),
+                            np.array([base_j + c[1] for c in a['cells']], np.int32),
+                            np.array([level.y[c[2]] for c in a['cells']], np.float32), PITCH) for a in areas]
     return {'level': level, 'info': info, 'graphs': graphs, 'border_nodes': border_nodes, 'next_id': next_id[0],
             'dropped': dropped, 'pitch': PITCH, 'meshes': meshes, 'sectors': set(info)}
 
@@ -1180,6 +1207,59 @@ def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff):
     return added, runs_found, one_side
 
 
+def merge_coincident_border(graphs, log=print):
+    """Nodes at one position in one sector (with BORDER_SEAM_LINE, a seam-line node and a node carried across a
+    mixed-pitch seam onto a nearby surface: zero-length edges, which hpdcheck refuses): border nodes there become one
+    id, the lowest, in every sector, and an ordinary node there becomes that border node. Returns the graphs."""
+    parent = {}
+    key = lambda p: tuple(round(float(v), 3) for v in p[1])
+
+    def find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+    for _sid, _b, _m, pts, _pairs, _o in graphs:
+        at = {}
+        for p in pts:
+            if p[0] & 0x80000000:
+                if key(p) in at and find(at[key(p)]) != find(p[0]):
+                    lo, hi = sorted((find(at[key(p)]), find(p[0])))
+                    parent[hi] = lo
+                at.setdefault(key(p), p[0])
+    out, folded = [], 0
+    for sid, bnd, mesh, pts, pairs, origin in graphs:
+        border_at = {}
+        for q, p in enumerate(pts):
+            if p[0] & 0x80000000:
+                border_at.setdefault(key(p), q)
+        ids = []
+        for q, p in enumerate(pts):
+            if p[0] & 0x80000000:
+                ids.append(find(p[0]))
+            elif key(p) in border_at:
+                ids.append(find(pts[border_at[key(p)]][0]))
+                folded += 1
+            else:
+                ids.append(p[0])
+        rep = {}                                    # id -> the entry kept (a border entry where there is one)
+        for q, nid in enumerate(ids):
+            if nid not in rep or (pts[q][0] & 0x80000000 and not pts[rep[nid]][0] & 0x80000000):
+                rep[nid] = q
+        order = list(dict.fromkeys(ids))
+        index = {nid: n for n, nid in enumerate(order)}
+        new_pts = [(nid,) + tuple(pts[rep[nid]][1:]) for nid in order]
+        seen, new_pairs = set(), []
+        for a_, b_, d in pairs:
+            u, v = index[ids[a_]], index[ids[b_]]
+            if u != v and (min(u, v), max(u, v)) not in seen:
+                seen.add((min(u, v), max(u, v)))
+                new_pairs.append((u, v, d))
+        out.append((sid, bnd, mesh, new_pts, new_pairs, origin))
+    if parent or folded:
+        log(f'nodes at one position merged: {len(parent)} border id(s), {folded} ordinary node(s)')
+    return out
+
+
 def write_file(graphs, out_path, log, t0):
     """Order-node pruning, final node / edge tables, and the file."""
     hpd_sectors = []
@@ -1188,6 +1268,8 @@ def write_file(graphs, out_path, log, t0):
     clock = stamp.tm_hour * 1000000 + stamp.tm_min * 10000 + stamp.tm_sec * 100
     if ORDER_IDS and ORDER_MIN_ISLAND:
         graphs = prune_order_nodes(graphs)
+    if BORDER_SEAM_LINE:
+        graphs = merge_coincident_border(graphs, log)
     linked = {pts[i][0] for _sid, _b, _m, pts, pairs, _o in graphs for a_, b_, _d in pairs for i in (a_, b_)}
     for sid, bounds, mesh, pts, pairs, origin in graphs:
         nodes, edges = finalize_graph(pts, pairs, linked, origin)
@@ -1195,8 +1277,59 @@ def write_file(graphs, out_path, log, t0):
     out = hpdtool.HpdFile(HEADER, hpd_sectors)
     data = hpdtool.write(out)
     open(out_path, 'wb').write(data)
+    write_cells(graphs, out_path, data, log)
     log(f'wrote {out_path}: {len(hpd_sectors)} sectors, {sum(len(x.nodes) for x in hpd_sectors)} nodes, '
         f'{sum(len(x.edges) for x in hpd_sectors)} edges, {len(data)} bytes ({time.time() - t0:.0f} s)')
+
+
+def cells_path(hpd_path):
+    """The sidecar file of a build: <name>.cells.npz beside <name>.hpd."""
+    return os.path.splitext(hpd_path)[0] + '.cells.npz'
+
+
+def write_cells(graphs, out_path, data, log):
+    """The sidecar of the build just written (AREA_CELLS, in the file's sector and area order): per area its sector id,
+    pitch and cell count; the cells' global indices and ground heights; the build's SHA-256, so a reader can tell it
+    belongs to this file. Nothing is written when a sector's areas were not recorded (a caller that builds graphs
+    itself)."""
+    import hashlib
+    sids, pitch, count, ii, jj, yy = [], [], [], [], [], []
+    for sid, _b, mesh, _p, _q, _o in graphs:
+        rec = AREA_CELLS.get(sid)
+        if rec is None or len(rec) != len(mesh.areas):
+            log(f'cells: sector {sid:04x} not recorded; no {os.path.basename(cells_path(out_path))} written')
+            return
+        for i_, j_, y_, p_ in rec:
+            sids.append(sid)
+            pitch.append(p_)
+            count.append(len(i_))
+            ii.append(i_)
+            jj.append(j_)
+            yy.append(y_)
+    cat = lambda v, t: np.concatenate(v).astype(t) if v else np.zeros(0, t)
+    np.savez_compressed(cells_path(out_path), sector=np.array(sids, np.int32), pitch=np.array(pitch, np.float32),
+                        count=np.array(count, np.int64), i=cat(ii, np.int32), j=cat(jj, np.int32), y=cat(yy, np.float32),
+                        hpd_sha256=np.array(hashlib.sha256(data).hexdigest()))
+    log(f'cells: {len(count)} areas, {sum(count)} cells -> {cells_path(out_path)}')
+
+
+def read_cells(hpd_path):
+    """The sidecar of a build, or None when it is missing or belongs to another file: [(sector id, pitch, i, j, y)] per
+    area in the file's order."""
+    import hashlib
+    p = cells_path(hpd_path)
+    if not os.path.isfile(p):
+        return None
+    z = np.load(p)
+    h = hashlib.sha256(open(hpd_path, 'rb').read()).hexdigest()
+    if str(z['hpd_sha256']) != h:
+        return None
+    count = z['count']
+    ends = np.cumsum(count)
+    starts = ends - count
+    ci, cj, cy = z['i'], z['j'], z['y']                 # read once (each z[...] reads the array from the file again)
+    return [(int(s_), float(p_), ci[a:b], cj[a:b], cy[a:b])
+            for s_, p_, a, b in zip(z['sector'], z['pitch'], starts, ends)]
 
 
 def line_walkable(level, k0, a, b, gi0, gj0, k1):

@@ -47,7 +47,9 @@ if __name__ == '__main__':
                                                                           'node_area', 'hght', 'glst', 'anod'))
         check(same and w.areas == b.areas and w.bmap == b.bmap, 'big- and little-endian exports read back identical')
         check(int((w.node_area == 0xFFFF).sum()) == 0, 'every node lies in an area')
-        check(int((w.edge_kind == rsnv.EDGE_JUMP).sum()) == 8, 'the 4 carrier AA jump links are jump edges both ways')
+        nj = int((w.edge_kind == rsnv.EDGE_JUMP).sum())
+        check(nj >= 8 and nj % 2 == 0, f'the 4 carrier AA jump links and the ship ledge links are jump edges both ways '
+                                       f'({nj} jump edges)')
         tight = [k for k in range(len(w.edge_target)) if int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT]
         sample = random.Random(5).sample(tight, min(40, len(tight)))
         walk = int((w.edge_kind == rsnv.EDGE_WALK).sum())

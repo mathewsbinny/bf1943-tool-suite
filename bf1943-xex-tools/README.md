@@ -36,6 +36,7 @@ Run from the workspace, in this order (`<suite>` is this suite's folder):
 ```powershell
 powershell -File <suite>\bf1943-xex-tools\decode.ps1                       # XEX -> checked memory image (DecodeXex.java over XEXLoaderWV)
 python -B <suite>\bf1943-xex-tools\inspect_decoded.py                      # image provenance, PE layout, ASCII leads
+python -B <suite>\bf1943-xex-tools\verify_xex_image.py                     # all 219 page digests of the XEX against the image; the .reloc extent
 python -B <suite>\bf1943-xex-tools\map_functions.py                        # PE sections and .pdata runtime functions -> functions.tsv
 python -B <suite>\bf1943-xex-tools\map_imports.py                          # XEX import records
 python -B <suite>\bf1943-xex-tools\resolve_helpers.py                      # register save/restore helper bodies, verified whole
@@ -45,8 +46,14 @@ python -B <suite>\bf1943-xex-tools\classify_vmx.py                         # cla
 powershell -ExecutionPolicy Bypass -File <suite>\bf1943-xex-tools\run_vmx.ps1            # compile the language, run every test suite
 python -B <suite>\bf1943-xex-tools\record_vmx_validation.py                # evidence, only when every suite passed
 powershell -ExecutionPolicy Bypass -File <suite>\bf1943-xex-tools\run_batch_decompile.ps1  # decompile every function (read-only project)
-python -B <suite>\bf1943-xex-tools\record_batch_decompile.py               # evidence of the batch run
+python -B <suite>\bf1943-xex-tools\record_batch_decompile.py               # evidence of the batch run (with the before/after comparison when a baseline run exists)
+python -B <suite>\bf1943-xex-tools\export_callgraph_strings.py --ghidra-call-refs work\xex-analysis\ghidra-call-refs.tsv  # call graph, strings
 ```
+
+`run_batch_decompile.ps1 -Out <folder> -Module <language module>` runs the batch with another (saved) language into
+`work\xex-analysis\<folder>`; a folder named `batch-baseline-<date>` is what `record_batch_decompile.py` compares
+against. The batch also writes `fpvmx-mnemonics.tsv` (floating-point and vector instructions, modelled or opaque) and
+`ghidra-call-refs.tsv` (the listing's call references, a cross-check for the call graph).
 
 Every step refuses to overwrite source evidence; the recorders write evidence only after a complete pass. Output is
 pseudocode, not original source.
@@ -60,8 +67,11 @@ pseudocode, not original source.
 | `map_functions.py`, `map_imports.py`, `resolve_helpers.py` | functions (`.pdata`), imports, register helpers |
 | `xenonrecomp_reference.py` | hash-checked access to the XenonRecomp reference (archive or extracted folder) |
 | `map_project.ps1`, `MapXex.java`, `ValidateXex.java`, `ApplyHelpers.java`, `InspectHelpers.java` | apply and check the tables in the Ghidra project |
+| `verify_xex_image.py` | the XEX page-digest chain over the decoded image (each digest covers the next page and its descriptor), the `.reloc` extent; `research\evidence\xex-image-integrity.json` |
 | `build_vmx_language.py`, `classify_vmx.py`, `inventory_vmx.py` | the Xenon language and the image's VX128 words |
-| `run_vmx.ps1`, `TestVmx.java`, `TestLogical.java`, `TestPermutation.java`, `TestRlimi.java`, `TestUnaligned.java`, `TestDecodeCoverage.java`, `InspectVmxCaller.java`, `record_vmx_validation.py` | the language's test suites and their evidence |
+| `xenon_vector_semantics.py`, `xenon_splice.py` | our own p-code for AltiVec, VMX128 and the scalar FP conversions, spliced into the language by `build_vmx_language.py` |
+| `run_vmx.ps1`, `TestVmx.java`, `TestLogical.java`, `TestPermutation.java`, `TestRlimi.java`, `TestUnaligned.java`, `TestDecodeCoverage.java`, `TestVectorSemantics.java`, `TestScalarFp.java`, `InspectVmxCaller.java`, `record_vmx_validation.py` | the language's test suites and their evidence (`run_vmx.ps1 -Only @('TestVectorSemantics.java')` runs a subset) |
+| `export_callgraph_strings.py` | call graph (direct, tail, import and indirect calls, resolved or classified unresolved; leaf functions without `.pdata` inferred), address references, strings with encodings and referencing functions; `work\xex-analysis\callgraph\` |
 | `run_batch_decompile.ps1`, `export_all_decompiled.java`, `record_batch_decompile.py` | decompile all functions; evidence |
 | `DumpCode.java`, `EntryPilot.java`, `InspectMainFunctions.java`, `ExperimentDecompile.java` | Ghidra inspection scripts (run through `map_project.ps1 -Script <name>`) |
 | `xexrefs.py` | static reference scanning over the image (no Ghidra): words, strings, `lis` pairs; used by operation-rising-sun's investigations |
@@ -73,7 +83,10 @@ pseudocode, not original source.
 ## Tests
 
 `python -B tests\test_workspace.py` (the `quick` tier of `run_tests.py`; no game data): `workspace.py` and
-`workspace.ps1` accept a folder with `work\` and `research\` and refuse one without. The `bf1943` tier also runs
+`workspace.ps1` accept a folder with `work\` and `research\` and refuse one without. `python -B tests\test_vector_semantics.py`
+(also `quick`): the p-code generator gives every modelled mnemonic a body with unique sized locals that writes its
+destination (CR6 for record forms), keeps the documented opaque set opaque, and splices without touching decoding.
+The emulated semantics tests are Ghidra scripts run by `run_vmx.ps1`. The `bf1943` tier also runs
 `ppcdis.py` from the research workspace (`BF1943_RESEARCH`, else operation-rising-sun next to the suite) on the
 decoded image; it is skipped without one.
 
@@ -83,3 +96,8 @@ Moved and run from operation-rising-sun on 2026-10-23: `map_functions.py` and `i
 results as before the move (only their own tool hashes in the evidence differ), and the investigations
 `trace_player_pipeline.py`, `trace_ai_soldier_control.py` and `trace_string_leads.py` reproduce their evidence byte for
 byte through `xexrefs.py`, `ppcdis.py` and `bfbc2dis.py` from here. The Ghidra steps were not re-run.
+
+Run on 2026-10-26 from operation-rising-sun: `verify_xex_image.py` (all 219 page digests verify), `run_vmx.ps1` (all ten
+suites pass), the batch before and after the new semantics (33,232 of 33,232 functions decompile in both), and
+`export_callgraph_strings.py` (it includes all 144,917 of Ghidra's direct-call references). See operation-rising-sun's
+`research/XENON_FP_VMX_SEMANTICS.md`, `XEX_IMAGE_INTEGRITY.md` and `XEX_CALLGRAPH_STRINGS.md`.

@@ -12,7 +12,8 @@ adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests
   bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), about 5 minutes: the kit's
           full build, every BF1943 bundle and DBX partition, terrain and water on every level, the menu movies, the
           spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit; the level loader on every map, DbxEdit
-          and LevelDiff on BF1943 partitions, the bundle tool's command line, NavKit's prepare step, the hub, and the
+          and LevelDiff on BF1943 partitions, DbxEdit's BF1943 level check (shipped levels pass, broken copies fail),
+          the bundle tool's command line, NavKit's prepare step, the hub, and the
           3D tools (the Navigation Studio when a Wake Island build exists), the enclosure probe on Wake Island's
           samples, the executable tools from a research workspace (skipped without one)
 
@@ -43,6 +44,7 @@ def tests():
         ('STFS reader, built packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
         ('Xenia run reader, a written log', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_xeniarun.py')]),
         ('executable tools: research workspace lookup', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_workspace.py')]),
+        ('executable tools: Xenon vector p-code generator', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_vector_semantics.py')]),
         ('Xenia kit: patch file, port edit, Xenia fix', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py')]),
         ('Xenia kit: PowerPC assembler against capstone', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_ppcasm.py')]),
         ('Xenia kit: bots experiment layout', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py')]),
@@ -60,6 +62,7 @@ def tests():
         ('NavKit big-endian: collision index', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_havok_index.py')]),
         ('NavKit big-endian: narrow lips and sills', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_lips.py')]),
         ('NavKit big-endian: roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_roof_prune.py')]),
+        ('NavKit big-endian: vehicle navigation (ground grid, sea grid, trips)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_vehicles_nav1943.py')]),
         ('NavKit little-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_water_rule.py')]),
         ('NavKit little-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navedits.py')]),
         ('NavKit little-endian: area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_area_link.py')]),
@@ -82,6 +85,7 @@ def tests():
         ('NavKit little-endian: Havok 4.6.1 meshes', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_havok461.py')]),
         ('Level loader: every multiplayer map', 'bf1943', [PY, tools, 'level']),
         ('DbxEdit and LevelDiff on BF1943 partitions', 'bf1943', [PY, tools, 'dbxedit']),
+        ('DbxEdit level check: BF1943 rules', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-dbx-tools', 'tests', 'test_levelcheck1943.py')]),
         ('Bundle tool command line', 'bf1943', [PY, tools, 'fbrb']),
         ('NavKit big-endian: navkit.py prepare', 'bf1943', [PY, tools, 'navkit']),
         ('the suite window (hub)', 'bf1943', [PY, tools, 'hub']),
