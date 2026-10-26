@@ -55,7 +55,8 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   the runtime's own format (core `rsnv.py`): the route graph with integer costs (1/16 m) and edge kinds (walk, ladder
   up and down, jump), each area's walkable cells and their heights (a height grid of 1 m blocks at 0.2 m pitch, one
   block per cell at 0.8 m; exporter 1.1, 2026-10-25), a grid to find the areas near a point, the islands, and the
-  build's hash. `--check` reads the file back and compares it with the build. On 2026-10-25 all four MP maps export
+  build's hash. Exporter 1.2 flags tight walk edges, those with no line of sight either way over the cells
+  (`rsnv.World.los`, the runtime's rule): 1.6-4 % of the walk edges per map. `--check` reads the file back and compares it with the build. On 2026-10-25 all four MP maps export
   (2.6-3.6 MB) and check with no problems; 0 nodes outside an area on Wake Island, 4-10 on the others.
 
 **Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,

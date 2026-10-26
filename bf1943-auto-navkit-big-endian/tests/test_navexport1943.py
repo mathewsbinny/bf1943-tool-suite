@@ -1,7 +1,7 @@
 """NavKit's RSNV exporter (navexport1943.py) on your BF1943 builds (bf1943 tier; skipped without a Wake Island build):
 Wake Island exported to a temporary folder in both byte orders - the two read back identical, the file validates, its
-graph equals the build's (nodes, edges, integer costs), every node lies in an area, 2,000 random walkable cells locate
-to their own area, and the 10 flag-pair routes of the build's check are found by the reference search. Other levels
+graph equals the build's (nodes, edges, integer costs), every node lies in an area, tight walk edges are flagged
+(none with line of sight), 2,000 random walkable cells locate to their own area, and the 10 flag-pair routes of the build's check are found by the reference search. Other levels
 with an export in their navkit folder: graph parity and validation.
 
   python -B test_navexport1943.py
@@ -48,6 +48,13 @@ if __name__ == '__main__':
         check(same and w.areas == b.areas and w.bmap == b.bmap, 'big- and little-endian exports read back identical')
         check(int((w.node_area == 0xFFFF).sum()) == 0, 'every node lies in an area')
         check(int((w.edge_kind == rsnv.EDGE_JUMP).sum()) == 8, 'the 4 carrier AA jump links are jump edges both ways')
+        tight = [k for k in range(len(w.edge_target)) if int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT]
+        sample = random.Random(5).sample(tight, min(40, len(tight)))
+        walk = int((w.edge_kind == rsnv.EDGE_WALK).sum())
+        ok = all(int(w.edge_kind[k]) == rsnv.EDGE_WALK and not w.los(tuple(w.node_pos[int(np.searchsorted(
+            w.node_first_edge, k, 'right') - 1)]), tuple(w.node_pos[int(w.edge_target[k])])) for k in sample)
+        check(0 < len(tight) < walk // 10 and ok, f'tight walk edges flagged: {len(tight)} of {walk} (under 10 %), '
+                                                  f'a sample of {len(sample)} has no line of sight')
         rng = random.Random(1943)
         bad = 0
         for _ in range(2000):

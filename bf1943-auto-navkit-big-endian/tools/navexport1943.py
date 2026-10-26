@@ -35,7 +35,7 @@ sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-a
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, navdata, rsnv, terrain, vehicles1943  # noqa: E402
 
-EXPORTER_VERSION = '1.1 (2026-10-25: height grid of 1 m blocks at 0.2 m pitch, per cell at 0.8 m)'
+EXPORTER_VERSION = '1.2 (2026-10-25: height grid of 1 m blocks at 0.2 m pitch, per cell at 0.8 m; tight walk edges flagged)'
 HEIGHT_CELLS = {0.2: 5, 0.4: 2, 0.8: 1}   # cells per height-grid block, by pitch
 COARSE_PITCH = 0.8        # m: the bitmap pitch of the build's 0.8 m areas (0.4 was tried 2026-10-25: no better)
 END_MATCH = 1.0           # m: a ladder's / jump link's end and its route node lie at most this far apart
@@ -367,8 +367,25 @@ def export(lv, out=None, big_endian=False, log=print):
     header = {'level': lv, 'sea_level': sea, 'radius': soldier1943.RADIUS, 'height': soldier1943.HEIGHT,
               'step': soldier1943.STEP, 'water_depth': soldier1943.WATER_DEPTH, 'hpd_sha256': meta['sources']['hpd']['sha256']}
     size = rsnv.write(out, sections, header, big_endian)
+    # tight edges: walk edges with no line of sight either way over the cells just written (rsnv.World.los, the
+    # runtime's rule): the graph links them, the cells leave no room (a slit, an obstacle's corner). Flagged so a
+    # soldier's search can price them (EDGEF_TIGHT); the file is written again with the flags.
+    w = rsnv.load(out)
+    tight = set()
+    for k, (a_, b_) in enumerate(E):
+        if int(kind[k]) != rsnv.EDGE_WALK or k in tight:
+            continue
+        pa, pb = tuple(float(v) for v in w.node_pos[a_]), tuple(float(v) for v in w.node_pos[b_])
+        if not w.los(pa, pb) and not w.los(pb, pa):
+            tight.add(k)
+            tight.update(j for j in range(int(first_edge[b_]), int(first_edge[b_ + 1])) if int(E[j][1]) == int(a_))
+    sections['EDGE'] = [(t, c, rsnv.EDGEF_TIGHT if k in tight else 0) for k, (t, c, _f) in enumerate(edge_rows)]
+    meta['counts']['tight walk edges'] = len(tight)
+    sections['META'] = json.dumps(meta, indent=1).encode('utf-8')
+    size = rsnv.write(out, sections, header, big_endian)
+    walk = sum(1 for k in range(len(E)) if int(kind[k]) == rsnv.EDGE_WALK)
     log(f'{lv}: wrote {out} ({size / 1e6:.2f} MB; {len(port)} portals, {len(ladr)} ladders and jump links, '
-        f'{len(offm)} vehicle entries, {len(island_rows)} islands)')
+        f'{len(offm)} vehicle entries, {len(island_rows)} islands; {len(tight)} of {walk} walk edges tight)')
     return out, nav
 
 

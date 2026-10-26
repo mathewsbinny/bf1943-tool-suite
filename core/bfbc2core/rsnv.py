@@ -18,7 +18,7 @@ in place by the stride schema (SCHEMA) and then read native types.
            bucket (25 x 25 buckets of 4 m from (minX, minZ), row-major in z), u16 first area, u16 area count, u32 0
   NODE 16  f32 x, y (ground), z, u32 first edge; nodes + 1 (the sentinel's first edge is the edge count)
   NAUX 8   u16 area (0xFFFF none), u16 sector, u16 island, u16 flags (NAUX_*)
-  EDGE 8   u32 target (bits 0-23) | kind (bits 24-31, EDGE_*), u16 cost (1/16 m), u16 flags
+  EDGE 8   u32 target (bits 0-23) | kind (bits 24-31, EDGE_*), u16 cost (1/16 m), u16 flags (EDGEF_*)
   AREA 64  f32 x0, z0 (first bitmap cell centre), x1, z1 (last), minY, maxY; u32 BMAP byte offset; u16 bitmap width,
            height; u32 first PORT, u16 portal count, u16 sector; u16 island, u16 flags; u32 first node (in AREA order,
            ANOD), u16 node count, u16 pitch in mm; u32 HGHT offset (entries), u16 height grid width, height; u32
@@ -58,9 +58,17 @@ EDGE_WALK, EDGE_LADDER_UP, EDGE_LADDER_DOWN, EDGE_DROP, EDGE_JUMP, EDGE_BOARD, E
 EDGE_NAMES = ['walk', 'ladder up', 'ladder down', 'drop', 'jump', 'board', 'alight']
 NAUX_SHALLOW, NAUX_WADE, NAUX_BORDER, NAUX_LADDER_END, NAUX_JUMP_END = 1, 2, 4, 8, 16
 EDGEF_COND = 1
+EDGEF_TIGHT = 2        # a walk edge with no line of sight either way (exporter 1.2): the cells leave no room
 OFFM_BOARD_VEHICLE, OFFM_MOUNT_STATIC = 1, 5
 ISLD_MAIN, ISLD_CARRIER, ISLD_LADDER_GROUND = 1, 2, 4
 PITCHES = {0: 0.2, 1: 0.8}
+# line of sight (rsnav's rsnav_los.c): the soldier's step, the ground change allowed, coarse zones' allowances
+LOS_STEP = 0.37
+LOS_DY = 0.6
+LOS_COARSE_DY = LOS_STEP + 0.8
+COARSE_GAP = 1.0
+LOS_GRACE = 0.25
+COARSE_MM = 400
 BUCKET = 4.0
 BUCKETS = 25
 
@@ -157,6 +165,10 @@ class Area:
     hw: int
     hh: int
     hstep_mm: int = 0
+
+    @property
+    def pitch_mm_(self):
+        return int(round(self.pitch * 1000))
 
     def cell(self, x, z):
         """(i, j) of the bitmap cell at (x, z), or None outside the bitmap."""
@@ -286,6 +298,115 @@ class World:
                 best = (nd, d)
         return best[0] if best else None
 
+    # -- line of sight (rsnav's rsn_los, the same rule and order of operations)
+    def _cell_of(self, a, x, z):
+        i, j = math.floor((x - a.x0) / a.pitch + 0.5), math.floor((z - a.z0) / a.pitch + 0.5)
+        return i, j, 0 <= i < a.width and 0 <= j < a.height
+
+    def _raw_ok(self, a, x, z):
+        i, j, inside = self._cell_of(a, x, z)
+        return inside and self.walkable(a, i, j)
+
+    def _allowed(self, k1, k2):
+        return LOS_COARSE_DY if self.areas[k1].pitch_mm_ >= COARSE_MM or self.areas[k2].pitch_mm_ >= COARSE_MM \
+            else LOS_DY
+
+    def _other_ok(self, skip, x, z, y):
+        for k in self.areas_near(x, z):
+            b = self.areas[k]
+            if k == skip or not self._raw_ok(b, x, z):
+                continue
+            if abs(self.ground(b, x, z) - y) <= self._allowed(skip, k):
+                return True
+        return False
+
+    def _cell_ok(self, k, x, z):
+        a = self.areas[k]
+        i, j, inside = self._cell_of(a, x, z)
+        if not inside or not self.walkable(a, i, j):
+            return False
+        if a.pitch_mm_ < COARSE_MM:
+            return True
+        y = self.ground(a, x, z)
+        for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ii, jj = i + di, j + dj
+            if ii < 0 or jj < 0 or ii >= a.width or jj >= a.height or self.walkable(a, ii, jj):
+                continue
+            if not self._other_ok(k, a.x0 + ii * a.pitch, a.z0 + jj * a.pitch, y):
+                return False
+        return True
+
+    def _compatible(self, f, t, x, z):
+        d = self.ground(self.areas[t], x, z) - self.ground(self.areas[f], x, z)
+        return abs(d) <= self._allowed(f, t) and self._cell_ok(t, x, z)
+
+    def _neighbour(self, cur, x, z):
+        a = self.areas[cur]
+        for p in self.ports[a.first_portal:a.first_portal + a.portals]:
+            if p[6] != cur and self._compatible(cur, p[6], x, z):
+                return p[6]
+        for k in self.areas_near(x, z):
+            if k != cur and self._compatible(cur, k, x, z):
+                return k
+        return None
+
+    def los(self, a, b):
+        """Whether a soldier walks straight from a to b (x, y, z; pass float32 values for parity with rsnav): every
+        sample, a quarter of the finest pitch apart, on a walkable cell; between areas through portals or the
+        buckets, to ground within LOS_DY (LOS_COARSE_DY where either area is coarse); the ground changing by at most
+        that between samples; coarse cells needing their four neighbours; gaps up to COARSE_GAP crossed in coarse
+        zones; the first LOS_GRACE not tested. See rsnav's rsnav_los.c for the reasons."""
+        loc = self.locate(a[0], a[1], a[2], max_dist=1.0)
+        if loc is None:
+            return False
+        cur = loc[0]
+        gy = self.ground(self.areas[cur], a[0], a[2])
+        dx, dz = b[0] - a[0], b[2] - a[2]
+        ln = math.sqrt(dx * dx + dz * dz)
+        step = self.min_pitch / 4.0
+        n = math.ceil(ln / step)
+        if n > 200000:
+            return False
+        k = 0
+        while k < n:
+            k += 1
+            t = k / n
+            if ln * t < LOS_GRACE:
+                continue
+            x, z = a[0] + dx * t, a[2] + dz * t
+            prev = cur
+            if not self._cell_ok(cur, x, z):
+                nb = self._neighbour(cur, x, z)
+                if nb is None and self.areas[cur].pitch_mm_ >= COARSE_MM:
+                    k2 = k + 1
+                    while k2 <= n and ln * ((k2 - k) / n) <= COARSE_GAP:
+                        t2 = k2 / n
+                        x2, z2 = a[0] + dx * t2, a[2] + dz * t2
+                        gap = ln * (t2 - t) + step
+                        for c in self.areas_near(x2, z2):
+                            d2 = self.ground(self.areas[c], x2, z2) - gy
+                            if self._raw_ok(self.areas[c], x2, z2) and abs(d2) <= LOS_STEP + gap:
+                                nb = c
+                                break
+                        if nb is not None:
+                            k, t, x, z = k2, t2, x2, z2
+                            break
+                        k2 += 1
+                    if nb is not None:
+                        cur = nb
+                        gy = self.ground(self.areas[cur], x, z)
+                        continue
+                if nb is None:
+                    return False
+                cur = nb
+            ny = self.ground(self.areas[cur], x, z)
+            lim = LOS_DY if cur == prev else self._allowed(prev, cur)
+            if ln * t >= LOS_GRACE + step and abs(ny - gy) > lim:
+                return False
+            gy = ny
+        d = self.ground(self.areas[cur], b[0], b[2]) - b[1]
+        return abs(d) <= (LOS_COARSE_DY if self.areas[cur].pitch_mm_ >= COARSE_MM else LOS_DY)
+
     def validate(self):
         """Problems with the file's internal consistency ([] when none)."""
         out = []
@@ -375,6 +496,9 @@ def load(src):
     w.ladders = _array(raw, e, *sec('LADR')[:2], SCHEMA['LADR']) if 'LADR' in w.sections else []
     w.offmesh = _array(raw, e, *sec('OFFM')[:2], SCHEMA['OFFM']) if 'OFFM' in w.sections else []
     w.islands = _array(raw, e, *sec('ISLD')[:2], SCHEMA['ISLD']) if 'ISLD' in w.sections else []
+    w.ports = _array(raw, e, *sec('PORT')[:2], SCHEMA['PORT']) if 'PORT' in w.sections else []
+    pm = min((a.pitch_mm_ for a in w.areas), default=200)
+    w.min_pitch = float(np.float32(np.float32(pm) / np.float32(1000.0)))      # as rsnav computes it, in float
     w.objects = _array(raw, e, *sec('OBJT')[:2], SCHEMA['OBJT']) if 'OBJT' in w.sections else []
     w.cond = {}                                     # edge -> [object indices]
     if 'CEDG' in w.sections:
@@ -391,9 +515,10 @@ def load(src):
 DONE, PARTIAL = 'done', 'partial'
 
 
-def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=None, destroyed=None):
+def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=None, destroyed=None, tight_extra=0):
     """The filter's cost of edge k from node n (rsnav's rsn_edge_cost), or None when it is closed: floor(cost x
-    water_scale[class] / 256) + kind_extra[kind] + penalty, class the deeper end's (0 dry, 1 shallow, 2 wading); a
+    water_scale[class] / 256) + kind_extra[kind] + tight_extra (a tight edge) + penalty, class the deeper end's (0 dry,
+    1 shallow, 2 wading); a
     conditional edge is closed unless all its objects are in `destroyed`."""
     if int(w.edge_flags[k]) & EDGEF_COND and not (destroyed is not None and all(o in destroyed for o in w.cond.get(k, [None]))):
         return None
@@ -404,13 +529,15 @@ def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=Non
     c = int(w.edge_cost[k]) * water_scale[max(cls(n), cls(int(w.edge_target[k])))] >> 8
     if kind_extra:
         c += kind_extra[int(w.edge_kind[k])]
+    if tight_extra and int(w.edge_flags[k]) & EDGEF_TIGHT:
+        c += tight_extra
     if penalty:
         c += penalty.get(k, 0)
     return c
 
 
 def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(256, 256, 256), kind_extra=None,
-           penalty=None, destroyed=None):
+           penalty=None, destroyed=None, tight_extra=0):
     """The reference search (design sections 2.6 and 6.3), which the C runtime (rsnav) must match exactly: integer
     costs in 1/16 m; heuristic floor(16 x Euclidean x 0.999) in double precision, summed x, y, then z; the open list
     ordered by (f, node); a closed node is never reopened; an equal-cost parent is replaced by a lower-indexed one.
@@ -459,7 +586,7 @@ def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(
             m = int(tgt[k])
             if m in closed:
                 continue
-            c = edge_cost(w, n, k, water_scale, kind_extra, penalty, destroyed)
+            c = edge_cost(w, n, k, water_scale, kind_extra, penalty, destroyed, tight_extra)
             if c is None:
                 continue
             ng = g[n] + c
