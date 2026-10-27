@@ -1,4 +1,6 @@
-"""NavKit generator: in-game collision samples -> Kynapse-format pathdata.hpd (infantry, pitch 0.8).
+"""NavKit generator: collision samples -> Kynapse-format pathdata.hpd (infantry). For BF1943 the samples are computed
+offline from the level's data (navsample1943.py) and navkit.py builds the normal sectors at 0.8 m and the detailed
+ones at 0.2 m (build(..., detailed=...), merge_detailed); for BFBC2 they came from OPFOR's in-game sampler.
 
 Pipeline (research/KYNAPSE_SPEC.md sections 3 and 4):
   1. walkable surfaces: navwalk.walkable (slope, capsule, ForbidPathfinding objects, StepMax, perimeter seeds)
@@ -18,12 +20,15 @@ Pipeline (research/KYNAPSE_SPEC.md sections 3 and 4):
   6. graph: one node per area (sample nearest the area centre) and per portal run; border nodes on the
      overlap lines, shared by both sectors (same id and position); edges between nodes up to DistEdgeMax
      apart whose straight line stays on connected walkable samples; cost = 0x80000000 | floor(d * 16)
-  7. write with kymesh.write_mesh / hpdtool.write
+  7. write with kymesh.write_mesh / hpdtool.write, and beside the build <name>.cells.npz (write_cells): every area's
+     own cells and ground heights and the build's SHA-256 - the RSNV exporter's cells and heights
 
-Detail features D and F are not generated (counts 0, allowed by the format); detailed zones (pitch 0.2)
-are generated at the normal pitch.
+Detail features D and F are not generated (counts 0, allowed by the format). Detailed zones are built at pitch 0.2 in a
+second pass from their own sampling run and merged with the normal build. BF1943's settings (soldier1943.configure)
+turn on AREA_CLIFF, BORDER_SEAM_LINE, JOIN_MARGIN, SEAM_FINE_LINKS and MIXED_OVERLAP (2026-10-26).
 
-Usage: navbuild.py <samples.bin> <forbid_tris.npy> <XOffset> <ZOffset> <out.hpd> [--step 0.28]
+Usage: navbuild.py <samples.bin> <forbid_tris.npy> <XOffset> <ZOffset> <out.hpd> [--step 0.28 (BFBC2's default;
+                   navkit.py passes BF1943's soldier1943.STEP, 0.37)]
                    [--dynamic dynamic_tris.npy] [--high samples_high_capsule.bin] [--narrow samples_narrow.bin]
                    [--stairs stair_tris.npy] [--exclude exclude_tris.npy] [--exclude-foot exclude_footprint_tris.npy]
 """
@@ -131,6 +136,8 @@ LADDER_ALL_GROUND = False       # link a ladder to each piece of ground within r
 BORDER_NODE_SPACING = 10.0
 JOIN_MARGIN = None              # m: join_groups floods this far past the sector's window (2026-10-26; soldier1943.configure
                                 # sets 2.0 for BF1943); None = the window only
+ALL_SECTORS = set()             # the normal pass's sectors (stage): sector_window grows only toward a sector that exists
+MIXED_OVERLAP = None            # m: windows grow this far past a mixed seam (sector_window; 2026-10-26, soldier1943.configure)
 JOIN_CONTEXT = []               # [(X, Y), the stage's sectors] of the sector whose graph is being built (join_groups)
 JOIN_DETAILED = set()           # the sectors built at DETAILED_PITCH (build()): join_groups stays out of the other grid's
 AREA_CLIFF = None               # m: no two plan-neighbouring cells of one area further apart in height than this and than
@@ -206,6 +213,8 @@ DETAILED_PITCH = 0.2            # DICE's detailed zones: whole sectors at pitch 
                                 # (header rect -0.2 .. 100.22; KYNAPSE_SPEC.md 4.5). Built in a second pass (build(...,
                                 # detailed=...)) from a pitch-0.2 sampling run, merged with the normal build.
 CARRY_RADIUS = 1.0              # a shared node carried across a mixed-pitch seam is attached to ground within this (m)
+SEAM_FINE_LINKS = False         # walk edges in a normal sector beside a mixed seam where the 0.2 m samples join ground the
+                                # 0.8 m step rule does not (seam_fine_links; 2026-10-26, soldier1943.configure sets it)
 SEAM_GAP_NODES = True           # mixed-pitch seams: a shared node wherever kept ground meets the seam on both grids
                                 # and no carried node joins it (seam_gap_nodes)
 DETAILED_LINK_STEP = 0.3        # LINK_STEP in detailed zones: DICE's one-cell height steps inside its pitch-0.2 areas
@@ -292,12 +301,31 @@ def tiling(sid):
     return (25, 6) if TILE_20M_SECTORS and sid in TILE_20M_SECTORS else (TILE, TILES)
 
 
-def build_areas(level, gi0, gj0, start=(-1, -1), tile=TILE, tiles=TILES):
+def sector_window(X, Y, have):
+    """MIXED_OVERLAP: a sector's window, grown by MIXED_OVERLAP (m) on each side whose neighbour is built on the other
+    grid (a 0.2 m sector beside a 0.8 m one, and the other way): the two grids' cells then overlap where a seam's edges
+    cross, and each grid shows the ground the other leaves out there (2026-10-26: on Coral Sea's mixed seams, line of
+    sight found neither grid's cells for a stretch of 0.2-0.6 m). (WINDOW, WINDOW) when off."""
+    if not MIXED_OVERLAP:
+        return (WINDOW, WINDOW)
+    fine = abs(PITCH - DETAILED_PITCH) < 1e-6
+    e = int(math.ceil(MIXED_OVERLAP / PITCH - 1e-9))
+
+    def side(n):
+        return e if n in ALL_SECTORS and (n in JOIN_DETAILED) != fine and ((X, Y) in JOIN_DETAILED) == fine else 0
+    lo_x, hi_x = side((X - 1, Y)), side((X + 1, Y))
+    lo_z, hi_z = side((X, Y - 1)), side((X, Y + 1))
+    return (range(WINDOW[0] - lo_x, WINDOW[-1] + 1 + hi_x), range(WINDOW[0] - lo_z, WINDOW[-1] + 1 + hi_z))
+
+
+def build_areas(level, gi0, gj0, start=(-1, -1), tile=TILE, tiles=TILES, win=None):
     """Areas of one sector: list of dicts {tile: (tx, tz), cells: [(i, j, k)]} (local i, j). start: the local sample
-    index where the tiles begin on x and z (-1, or 0 on a side with no neighbouring sector - EDGE_SECTOR_TILES)."""
+    index where the tiles begin on x and z (-1, or 0 on a side with no neighbouring sector - EDGE_SECTOR_TILES).
+    win: the sector's window (x range, z range of local samples), WINDOW on both axes by default."""
+    wi, wj = win or (WINDOW, WINDOW)
     cells_by_tile = defaultdict(list)
-    for j in WINDOW:
-        for i in WINDOW:
+    for j in wj:
+        for i in wi:
             for k in level.surfaces(gi0 + i, gj0 + j):
                 tx = min(max(i - start[0], 0) // tile, tiles - 1)
                 tz = min(max(j - start[1], 0) // tile, tiles - 1)
@@ -478,7 +506,7 @@ def trace(level, sector, areas, area_of, gi0, gj0, ox, oz):
     return trace_emit(level, areas, per_area, gi0, gj0, ox, oz)
 
 
-def trace_edges(level, areas, area_of, gi0, gj0):
+def trace_edges(level, areas, area_of, gi0, gj0, win=None):
     """Boundary edges of every area: (per area {(kind, target, axis, line, dir): [(along, y)]}, one-way candidates).
     Portals are symmetric (SYMMETRIC_PORTALS): every portal edge A -> B also stands as B -> A, replacing an outline
     edge B had there - neighbour() picks the nearest surface in height, so with two surfaces in a column the two
@@ -501,7 +529,7 @@ def trace_edges(level, areas, area_of, gi0, gj0):
                 # surfaces in one column - stair edge, split-off layer - must not leave a stray portal inside)
                 n = level.neighbour(k, gi0 + i, gj0 + j, di, dj, prefer=own)
                 ni, nj = i + di, j + dj
-                if n is not None and ni in WINDOW and nj in WINDOW:
+                if n is not None and ni in (win or (WINDOW, WINDOW))[0] and nj in (win or (WINDOW, WINDOW))[1]:
                     t = area_of.get(n)
                     if t == ai:
                         sides[side] = ('I', None)
@@ -775,7 +803,10 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         c = level.col_of[k]
         x, z = s.min_x + (c % s.nx) * PITCH, s.min_z + (c // s.nx) * PITCH
         sectors.add((int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff))
-    if sector_filter is not None:
+    if sector_filter is None:
+        ALL_SECTORS.clear()
+        ALL_SECTORS.update(sectors)
+    else:
         sectors &= set(sector_filter)
     sectors = sorted(sectors)
     log(f'{len(sectors)} sectors (pitch {PITCH:g})')
@@ -791,7 +822,8 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         else:
             edge = ((X - 1, Y) not in have, (X, Y - 1) not in have)
         start = tuple(0 if EDGE_SECTOR_TILES and e else -1 for e in edge)
-        areas = build_areas(level, gi0, gj0, start, *tiling(((X & 0xFF) << 8) | (Y & 0xFF)))
+        win = sector_window(X, Y, have)
+        areas = build_areas(level, gi0, gj0, start, *tiling(((X & 0xFF) << 8) | (Y & 0xFF)), win=win)
         # order: tiles column-major, then layer = index within tile
         areas.sort(key=lambda a: (a['tile'][0], a['tile'][1], min(level.y[c[2]] for c in a['cells'])))
         per_tile = defaultdict(int)
@@ -799,7 +831,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             a['layer'] = per_tile[a['tile']]
             per_tile[a['tile']] += 1
         area_of = {c[2]: ai for ai, a in enumerate(areas) for c in a['cells']}
-        info[(X, Y)] = {'areas': areas, 'area_of': area_of, 'origin': (gi0, gj0, ox, oz), 'start': start}
+        info[(X, Y)] = {'areas': areas, 'area_of': area_of, 'origin': (gi0, gj0, ox, oz), 'start': start, 'win': win}
     log(f'{sum(len(v["areas"]) for v in info.values())} areas ({time.time() - t0:.0f} s)')
 
     # Graph: border nodes shared between sector pairs (global ids), then inner nodes.
@@ -902,7 +934,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
     edge_sets = {}
     for (X, Y), inf in sorted(info.items()):
         gi0, gj0, ox, oz = inf['origin']
-        edge_sets[(X, Y)] = trace_edges(level, inf['areas'], inf['area_of'], gi0, gj0)
+        edge_sets[(X, Y)] = trace_edges(level, inf['areas'], inf['area_of'], gi0, gj0, inf['win'])
     n_cand = sum(len(v[1]) for v in edge_sets.values())
     if ONE_WAY_PORTALS == 'restore':
         owners = defaultdict(list)
@@ -948,7 +980,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         lads = [(f_, t_) for f_, t_ in ladder_pairs if f_ in area_of and t_ in area_of]
         LADDER_STATS['linked'] = LADDER_STATS.get('linked', 0) + len(lads)
         LADDER_STATS['split'] = LADDER_STATS.get('split', 0) + sum(1 for f_, t_ in ladder_pairs if (f_ in area_of) != (t_ in area_of))
-        JOIN_CONTEXT[:] = [(X, Y), set(info)]
+        JOIN_CONTEXT[:] = [(X, Y), set(info), inf['win']]
         pts, pairs = build_graph(level, areas, area_of, traced, border_nodes[(X, Y)], gi0, gj0, ox, oz, new_id, orders,
                                  lads)
         ys = [a.min_y for a in mesh_areas] + [a.max_y for a in mesh_areas]
@@ -1107,8 +1139,137 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
         added, runs, one_side = seam_gap_nodes(a, b, by_sec, set(b_det), xoff, zoff)
         log(f'detailed pass: {added} seam gap nodes on mixed seams ({runs} stretches of shared ground with no linked '
             f'shared node; {one_side} joined on one side only)')
+    if SEAM_FINE_LINKS:
+        by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
+        n_links = seam_fine_links(a, b, by_sec, set(b_det), xoff, zoff)
+        log(f'detailed pass: {n_links} fine-resolved link(s) in normal sectors beside mixed seams')
     log(f'merged: {len(a_norm)} normal + {len(b_det)} detailed sectors')
     return merged
+
+
+SEAM_FINE_BAND = 2.0            # m: seam_fine_links looks this far into the normal sector from a mixed seam
+
+
+def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff):
+    """SEAM_FINE_LINKS: in a normal (0.8 m) sector beside a detailed one, ground the 0.2 m samples join but the 0.8 m
+    step rule does not - a lip the coarse grid cannot resolve (Coral Sea 0b0b: a strip at 138.11 and the ground at
+    137.58, 0.53 m apart at 0.8 m, joined at 0.2 m by a slope 0.6-1.4 m past the seam; the strip's 0.2 m side was
+    closed, the last seam break, 2026-10-26). Within SEAM_FINE_BAND of the seam, the 0.8 m kept surfaces fall into
+    pieces under the 0.8 m step rule and the 0.2 m kept surfaces into pieces under the 0.2 m one; where one 0.2 m piece
+    stands on two 0.8 m pieces in side-by-side columns, the two 0.8 m surfaces get a node each and a walk edge between
+    them in the normal sector's graph (once per pair of pieces). by_sec: {sector: merged graph tuple}, changed in place.
+    Returns the links made."""
+    la, lb = a['level'], b['level']
+    sa, sb = la.s, lb.s
+    pa, pb = a['pitch'], DETAILED_PITCH
+    made = 0
+    next_id = [b['next_id'] + 500000]
+
+    def new_id():
+        next_id[0] += 1
+        return next_id[0]
+    try:
+        for S in sorted(b_secs):
+            for dX, dY in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                T = (S[0] + dX, S[1] + dY)
+                if T not in by_sec or T in b_secs or T not in a['info']:
+                    continue
+                info = a['info'][T]
+                own = info['area_of']
+                gi0, gj0, ox, oz = info['origin']
+                x0, z0 = (S[0] + xoff) * 100.0, (S[1] + zoff) * 100.0
+                seam = (x0 + (100.0 if dX > 0 else 0.0)) if dX else (z0 + (100.0 if dY > 0 else 0.0))
+                # the 0.8 m surfaces of T in the band, in pieces under the 0.8 m step rule
+                set_pitch(pa)
+                cols = set()
+                for t in range(int(100 / pa) + 1):
+                    for q in range(int(SEAM_FINE_BAND / pa) + 1):
+                        x = (seam + dX * q * pa) if dX else (x0 + t * pa)
+                        z = (z0 + t * pa) if dX else (seam + dY * q * pa)
+                        cols.add((int(round((x - sa.min_x) / pa)), int(round((z - sa.min_z) / pa))))
+                coarse = {k: (gi, gj) for gi, gj in cols for k in la.surfaces(gi, gj) if k in own}
+                piece = {}
+                for k0 in coarse:
+                    if k0 in piece:
+                        continue
+                    piece[k0] = k0
+                    q_ = deque([k0])
+                    while q_:
+                        k = q_.popleft()
+                        gi, gj = coarse[k]
+                        for di in (-1, 0, 1):
+                            for dj in (-1, 0, 1):
+                                if di or dj:
+                                    n = la.neighbour(k, gi, gj, di, dj)
+                                    if n in coarse and n not in piece:
+                                        piece[n] = k0
+                                        q_.append(n)
+                if len(set(piece.values())) < 2:
+                    continue
+                # the 0.2 m surfaces under them, in pieces under the 0.2 m step rule; each mapped to the 0.8 m surface
+                # of its column within 0.4 m of its height
+                set_pitch(pb)
+                fine = {}
+                for k, (gi, gj) in coarse.items():
+                    cx, cz = sa.min_x + gi * pa, sa.min_z + gj * pa
+                    for u in range(-2, 2):
+                        for v in range(-2, 2):
+                            fx, fz = cx + (u + 0.5) * pb, cz + (v + 0.5) * pb
+                            fi, fj = int(round((fx - sb.min_x) / pb)), int(round((fz - sb.min_z) / pb))
+                            for f in lb.surfaces(fi, fj):
+                                if abs(float(lb.y[f]) - float(la.y[k])) <= 0.4:
+                                    fine.setdefault(f, (fi, fj, k))
+                seen = {}
+                for f0 in fine:
+                    if f0 in seen:
+                        continue
+                    seen[f0] = f0
+                    q_ = deque([f0])
+                    while q_:
+                        f = q_.popleft()
+                        fi, fj, _k = fine[f]
+                        for di in (-1, 0, 1):
+                            for dj in (-1, 0, 1):
+                                if di or dj:
+                                    n = lb.neighbour(f, fi, fj, di, dj)
+                                    if n in fine and n not in seen:
+                                        seen[n] = f0
+                                        q_.append(n)
+                # a fine piece on two coarse pieces: link a side-by-side pair of their surfaces, once per pair
+                touched = defaultdict(set)
+                for f, root in seen.items():
+                    touched[root].add(fine[f][2])
+                done = set()
+                set_pitch(pa)
+                pts, pairs = by_sec[T][3], by_sec[T][4]
+                for _root, ks in sorted(touched.items()):
+                    for k1 in sorted(ks):
+                        for k2 in sorted(ks):
+                            p1, p2 = piece[k1], piece[k2]
+                            if p1 >= p2 or (p1, p2) in done:
+                                continue
+                            (g1, h1), (g2, h2) = coarse[k1], coarse[k2]
+                            if max(abs(g1 - g2), abs(h1 - h2)) != 1:
+                                continue
+                            done.add((p1, p2))
+                            ends = []
+                            for k, (gi, gj) in ((k1, coarse[k1]), (k2, coarse[k2])):
+                                idx = next((q for q, p in enumerate(pts) if p[2] == k), None)
+                                if idx is None:
+                                    i, j = gi - gi0, gj - gj0
+                                    pos = (ox + i * pa, float(la.y[k]) + Y_OFFSET, oz + j * pa)
+                                    pts.append((new_id(), pos, k, i, j))
+                                    idx = len(pts) - 1
+                                    for q, p in enumerate(pts[:-1]):
+                                        d = math.dist(pos, p[1])
+                                        if d <= DIST_EDGE_MAX and line_walkable(la, k, (i, j), (p[3], p[4]), gi0, gj0, p[2]):
+                                            pairs.append((idx, q, d))
+                                ends.append(idx)
+                            pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
+                            made += 1
+    finally:
+        set_pitch(DETAILED_PITCH)
+    return made
 
 
 SEAM_REACH = 1.0                # seam_gap_nodes: each grid's ground for a gap node lies within this of the seam (m)
@@ -1165,7 +1326,7 @@ def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff):
             if d <= DIST_EDGE_MAX and line_walkable(level, k, (i, j), (p[3], p[4]), gi0, gj0, p[2]):
                 pairs.append((me, q, d))
         if not any(me in (u, v) for u, v, _d in pairs):
-            JOIN_CONTEXT[:] = [sec, set(info)]
+            JOIN_CONTEXT[:] = [sec, set(info), info[sec].get('win')]
             join_groups(level, info[sec]['areas'], pts, pairs, gi0, gj0, ox, oz, new_id)
         return any(me in (u, v) for u, v, _d in pairs)
 
@@ -1400,7 +1561,8 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id):
     # neighbour sector - Coral Sea's strip beside the South Base bunker, closed inside 0b0a's window and joined 1 m past
     # it, 2026-10-26)
     m_ = int(math.ceil((JOIN_MARGIN or 0.0) / PITCH - 1e-9))
-    lo, hi = WINDOW[0] - m_, WINDOW[-1] + m_
+    wi, wj = (JOIN_CONTEXT[2] if len(JOIN_CONTEXT) > 2 and JOIN_CONTEXT[2] else (WINDOW, WINDOW))
+    lo_i, hi_i, lo_j, hi_j = wi[0] - m_, wi[-1] + m_, wj[0] - m_, wj[-1] + m_
 
     def beyond_ok(i, j):
         # past the window only into a sector of this stage (this grid's pitch): a 0.2 m flood into a 0.8 m sector
@@ -1429,9 +1591,9 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id):
                 i, j = cell_ij[k]
                 for di in (-1, 0, 1):
                     for dj in (-1, 0, 1):
-                        if not (di or dj) or not (lo <= i + di <= hi and lo <= j + dj <= hi):
+                        if not (di or dj) or not (lo_i <= i + di <= hi_i and lo_j <= j + dj <= hi_j):
                             continue
-                        if not (i + di in WINDOW and j + dj in WINDOW) and not beyond_ok(i + di, j + dj):
+                        if not (i + di in wi and j + dj in wj) and not beyond_ok(i + di, j + dj):
                             continue
                         n = level.neighbour(k, gi0 + i, gj0 + j, di, dj)
                         if n is None or n in prev:
@@ -1486,6 +1648,11 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
     taken = {k for _nid, _pos, k in borders} if DEDUP_GRAPH_NODES else set()
 
     def add(i, j, k):
+        if i not in WINDOW or j not in WINDOW:
+            # a cell of a window grown past a mixed seam (MIXED_OVERLAP): there for the cells the runtime reads, not
+            # for nodes - ground joined to the sector only through the other grid's side made islands of 2-5 nodes
+            # (Guadalcanal 1, Iwo Jima 3 seam breaks, 2026-10-26)
+            return
         if DEDUP_GRAPH_NODES:
             if k in taken:
                 return

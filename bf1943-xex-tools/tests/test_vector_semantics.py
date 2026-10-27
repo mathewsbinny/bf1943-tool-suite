@@ -65,8 +65,12 @@ if __name__ == '__main__':
             if n.endswith('.') and not any(l.startswith('cr6 =') for l in body):
                 bad.append(f'{n}: record form does not write cr6')
     check(not bad, f'{len(ALTIVEC)} AltiVec and {len(VMX128)} VMX128 bodies: unique sized locals, destination written, CR6 for record forms ({"; ".join(bad[:5])})')
-    check(all(vsem.body(n, vmx_ops) is None for n in ('vexptefp128', 'vlogefp128', 'vpkd3d128', 'vupkd3d128', 'vexptefp', 'vlogefp')),
-          'estimate (2^x, log2) and D3D pack/unpack instructions stay opaque')
+    check(all(vsem.body(n, vmx_ops) is None for n in ('vpkd3d128', 'vupkd3d128')), 'D3D pack/unpack have no single body (vpkd3d128 opaque)')
+    est = {n: '\n'.join(vsem.body(n, vmx_ops if n.endswith('128') else altivec_ops)) for n in ('vexptefp', 'vlogefp', 'vexptefp128', 'vlogefp128')}
+    check(all(t.count('exp2_estimate(' if 'expte' in n else 'log2_estimate(') == 4 for n, t in est.items()), 'vexptefp/vlogefp (+128): one named estimate op per lane')
+    split = vsem.variants('vupkd3d128', vmx_ops)
+    check([e for e, _ in split] == [' & xmuimm=20', ' & xmuimm=4', ''] and split[2][1] is None and 'vupkd3d128_xy_unknown' in '\n'.join(split[1][1])
+          and 'CALLOTHER' not in '\n'.join(split[0][1]), 'vupkd3d128: UIMM 20 half-to-float modelled, UIMM 4 z/w modelled (x/y unknown op), others opaque')
     fp = {n: xenon_splice.fp_convert_body(n) for n in xenon_splice.FP_CONVERT}
     check(len(fp) == 8 and all(any(l.startswith('fD = ') for l in b) for b in fp.values()) and all(('cr1flags();' in b) == n.endswith('.') for n, b in fp.items()),
           'fctiw/fctiwz/fctid/fctidz bodies: all eight forms write fD; record forms update CR1')

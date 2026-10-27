@@ -44,7 +44,7 @@ powershell -File <suite>\bf1943-xex-tools\map_project.ps1                  # app
 python -B <suite>\bf1943-xex-tools\build_vmx_language.py                   # the isolated Xenon language: every VX128 encoding decodes
 python -B <suite>\bf1943-xex-tools\classify_vmx.py                         # classify the image's VX128 words
 powershell -ExecutionPolicy Bypass -File <suite>\bf1943-xex-tools\run_vmx.ps1            # compile the language, run every test suite
-python -B <suite>\bf1943-xex-tools\record_vmx_validation.py                # evidence, only when every suite passed
+python -B <suite>\bf1943-xex-tools\record_vmx_validation.py                # evidence, only when every suite passed on the current inputs
 powershell -ExecutionPolicy Bypass -File <suite>\bf1943-xex-tools\run_batch_decompile.ps1  # decompile every function (read-only project)
 python -B <suite>\bf1943-xex-tools\record_batch_decompile.py               # evidence of the batch run (with the before/after comparison when a baseline run exists)
 python -B <suite>\bf1943-xex-tools\export_callgraph_strings.py --ghidra-call-refs work\xex-analysis\ghidra-call-refs.tsv  # call graph, strings
@@ -74,7 +74,8 @@ pseudocode, not original source.
 | `verify_xex_image.py` | the XEX page-digest chain over the decoded image (each digest covers the next page and its descriptor), the `.reloc` extent; `research\evidence\xex-image-integrity.json` |
 | `build_vmx_language.py`, `classify_vmx.py`, `inventory_vmx.py` | the Xenon language and the image's VX128 words |
 | `xenon_vector_semantics.py`, `xenon_splice.py` | our own p-code for AltiVec, VMX128 and the scalar FP conversions, spliced into the language by `build_vmx_language.py` |
-| `run_vmx.ps1`, `TestVmx.java`, `TestLogical.java`, `TestPermutation.java`, `TestRlimi.java`, `TestUnaligned.java`, `TestDecodeCoverage.java`, `TestVectorSemantics.java`, `TestScalarFp.java`, `InspectVmxCaller.java`, `record_vmx_validation.py` | the language's test suites and their evidence (`run_vmx.ps1 -Only @('TestVectorSemantics.java')` runs a subset) |
+| `run_vmx.ps1`, `TestVmx.java`, `TestLogical.java`, `TestPermutation.java`, `TestRlimi.java`, `TestUnaligned.java`, `TestDecodeCoverage.java`, `TestVectorSemantics.java`, `TestScalarFp.java`, `InspectVmxCaller.java`, `record_vmx_validation.py` | the language's test suites and their evidence (`run_vmx.ps1 -Only @('TestVectorSemantics.java')` runs a subset; `-CallerOnly` runs only the two caller probes) |
+| `vmx_inputs.py` | the fingerprint of everything a VMX128 run tests (tools, test scripts, the compiled language, its tables, the image): `run_vmx.ps1` stamps it into each result it produces, and `record_vmx_validation.py` refuses results from other inputs or from a partial (`-Only`) run |
 | `export_callgraph_strings.py` | call graph (direct, tail, import and indirect calls, resolved or classified unresolved; leaf functions without `.pdata` inferred), address references, strings with encodings and referencing functions; `work\xex-analysis\callgraph\` |
 | `run_batch_decompile.ps1`, `export_all_decompiled.java`, `record_batch_decompile.py` | decompile all functions; evidence |
 | `DumpCode.java`, `EntryPilot.java`, `InspectMainFunctions.java`, `ExperimentDecompile.java` | Ghidra inspection scripts (run through `map_project.ps1 -Script <name>`) |
@@ -89,7 +90,9 @@ pseudocode, not original source.
 `python -B tests\test_workspace.py` (the `quick` tier of `run_tests.py`; no game data): `workspace.py` and
 `workspace.ps1` accept a folder with `work\` and `research\` and refuse one without. `python -B tests\test_vector_semantics.py`
 (also `quick`): the p-code generator gives every modelled mnemonic a body with unique sized locals that writes its
-destination (CR6 for record forms), keeps the documented opaque set opaque, and splices without touching decoding.
+destination (CR6 for record forms); vexptefp/vlogefp (+128) use one named estimate op per lane; vupkd3d128 is
+modelled for UIMM 20 and 4 only and vpkd3d128 stays opaque; the fctiw/fctiwz/fctid/fctidz bodies write fD (CR1 for
+record forms; fctiw rounds, fctiwz truncates); and it splices without touching decoding.
 The emulated semantics tests are Ghidra scripts run by `run_vmx.ps1`. The `bf1943` tier also runs
 `ppcdis.py` from the research workspace (`BF1943_RESEARCH`, else operation-rising-sun next to the suite) on the
 decoded image; it is skipped without one.

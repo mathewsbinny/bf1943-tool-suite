@@ -52,8 +52,9 @@ A partition compared with itself reports `changed: 0` with `--summary`.
 ## Errors and logs
 
 LevelDiff keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools (`ToolLog`, shared
-with DbxEdit). When it cannot do something it prints the cause, what to do and the log's path, and exits with
-code 1. Tests: `tests\test_bf1943_tools.py dbxedit` in the suite (the `bf1943` tier); its BFBC2 tests were removed.
+with DbxEdit). A file it cannot read, or one that is not binary `.dbx`, is bad input: it prints the cause (and, for
+a read failure, what to do and the log's path) and exits with code 2. An unexpected error is explained the same way
+and exits with code 1 (the code for "differences" too). Tests: `tests\test_bf1943_tools.py dbxedit` in the suite (the `bf1943` tier); its BFBC2 tests were removed.
 
 ## Credits
 

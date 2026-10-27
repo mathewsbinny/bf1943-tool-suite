@@ -1,18 +1,23 @@
-r"""NavKit (big-endian): jump links for the AA gun platforms of BF1943's ships - a soldier drops from the deck onto a
-gun platform below it and jumps back up. No step joins them (the platforms on the ships of Wake Island, Iwo Jima and
-Coral Sea lie 0.58-0.84 m under the deck, over the 0.37 m step), so without a link the guns were out of the network.
-Builds of 2026-10-24: Wake Island 4 links, Iwo Jima 4, Coral Sea 8, Guadalcanal none.
+r"""NavKit (big-endian): jump links on BF1943's ships - a soldier drops from a deck onto a floor a ledge below it and
+jumps back up. No step joins such floors (they lie more than the 0.37 m step and at most JUMP_HEIGHT 0.95 m apart), so
+without a link they were out of the network. Two rules make links, on ships only, found from the level's own data
+(no blueprint names):
 
-The rule applies only to them (a second rule, jump links onto wide raised floors, is kept but off: RAISED_FLOORS
-below): AA gun spawns (the spawn map's vehicle aa_bofors) whose floor is collision, not terrain, over water deeper
-than the soldier's WATER_DEPTH - a ship's or carrier's gun, found from the level's own data (no blueprint names). For each, the platform is the clear, flat floor joined to the spawn's floor by the step rule;
-the link joins the platform surface and the deck surface nearest each other horizontally, the deck between STEP and
-JUMP_HEIGHT above the platform and at most JUMP_GAP away. Each link is written in the ladders.json format (ladder_ends
-and ladder_end_options find its ends) with kind 'jump' and tight height bands, so navbuild seeds the platform from
-the deck and links them both ways; the runtime reads kind to jump instead of climbing.
+- AA gun platforms (platform_links): AA gun spawns (the spawn map's vehicle aa_bofors) whose floor is collision, not
+  terrain, over water deeper than the soldier's WATER_DEPTH. The platform is the clear, flat floor joined to the spawn's
+  floor by the step rule; the link joins the platform surface and the deck surface nearest each other horizontally, the
+  deck between STEP and JUMP_HEIGHT above the platform and at most JUMP_GAP away (0.58-0.84 m under the deck: Wake
+  Island 4 links, Iwo Jima 4, Coral Sea 8, Guadalcanal none).
+- Ship ledges (ship_ledge_links, SHIP_LEDGES, on since 2026-10-26): on each ship (an object box of 5,000 m2 or more
+  over deep water), the floor pieces a ledge apart from the deck or from a piece already reached - the deck-edge
+  galleries 0.58 m and the gun tubs 0.84 m under the decks: Wake Island 21 links, Iwo Jima 21, Coral Sea 41.
 
-  jumplinks1943.py <level> [--json out.json]     (needs navkit.py prepare and sample; writes navkit/jump_links.json;
-                                                  navkit.py build runs it)
+Each link is written in the ladders.json format (ladder_ends and ladder_end_options find its ends) with kind 'jump'
+and tight height bands, so navbuild seeds the far floor and links them both ways; the runtime reads kind to jump
+instead of climbing. A third rule, jump links onto wide raised floors on land (RAISED_FLOORS), is kept but off.
+
+  jumplinks1943.py <level> [--json out.json] [--game <dist\xenon folder>]
+      (needs navkit.py prepare and sample; writes navkit/jump_links.json; navkit.py build runs it with its --game)
 """
 import argparse
 import json
@@ -426,16 +431,17 @@ def ship_ledge_links(s, ships, terrain, usable=lambda x, z: True, taken=(), log=
     return out, report
 
 
-def level_links(lv, log=print):
+def level_links(lv, log=print, game=None):
     """The jump links of a prepared and sampled level: from its 0.2 m samples where the gun's sector is detailed,
-    else its 0.8 m samples."""
+    else its 0.8 m samples. game: the game folder (navkit.py's --game); None = game1943.find_game's default
+    (2026-10-26: it was always the default, so a build for another copy took that copy's spawns and terrain)."""
     import navaudit1943
     import navbuild
     import spawnmap
     from bfbc2core import game1943, terrain, water
     p = navaudit1943.level_paths(lv)
     st = json.load(open(p['settings'], encoding='utf-8'))
-    game = game1943.find_game(None)
+    game = game1943.find_game(game)
     g = game1943.Game(game, lv)
     hf = terrain.read(g.data(f'terrains/{lv}/{lv}.heightfield-000.res'))
     m = spawnmap.spawn_map(game, lv)
@@ -492,9 +498,10 @@ def main(argv):
     ap = argparse.ArgumentParser(prog='jumplinks1943.py', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('level')
     ap.add_argument('--json')
+    ap.add_argument('--game', help='the game folder (default: BF1943_GAME, else the output of bf1943-xenia-kit)')
     a = ap.parse_args(argv[1:])
     import navaudit1943
-    links = level_links(a.level)
+    links = level_links(a.level, game=a.game)
     path = a.json or os.path.join(navaudit1943.level_paths(a.level)['navkit'], 'jump_links.json')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(links, f, indent=1)

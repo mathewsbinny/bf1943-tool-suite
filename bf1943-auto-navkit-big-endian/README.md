@@ -24,8 +24,10 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   `research/evidence/navigation-runtime-options.json`).
 - **Files** go under the suite's work folder (`BF1943_WORK` overrides `<suite>\work`):
   `work\levels\<level>\objects\` (`levelobjects1943.py`'s files, `heightfield.res`, `water_mesh.res`),
-  `samples\` (`samples*.bin` and their logs), `navkit\` (`navkit.json` settings, `<level>.hpd`, `build.log`,
-  `check.txt` / `check.json`, `jump_links.json`), `audit\` (the audit's masks, `audit.json` and `audit.md`).
+  `samples\` (`samples*.bin` and their logs), `navkit\` (`navkit.json` settings, `<level>.hpd`, `<level>.cells.npz`,
+  `build.log`, `check.txt` / `check.json`, `jump_links.json`; the exports `<level>.rsnv` and the vehicle worlds),
+  `vehicles\` (the ground vehicles' collision, samples and logs), `audit\` (the audit's masks, `audit.json` and
+  `audit.md`).
 - **Steps.** *prepare* reads the level's objects and collision (`tools\levelobjects1943.py`), its height field and
   water, and sets the sea level and sector offsets. *sample* computes the collision samples offline
   (`tools\navsample1943.py`): two runs at 0.8 m (BF1943's soldier, and a 0.6 m step for stairs), the detailed
@@ -49,7 +51,9 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   PlayerEntryComponentData; `VEHICLE_REACH`, 4 m from the spawn, only where a blueprint gives none), routes from every infantry spawn to every capture area and back, islands classified (main,
   vehicle-only zone, separate landmass, raised surface, gap candidate), file consistency and crossings (touching
   ground on two islands, tested on the samples), 0.8 m against 0.2 m, the wading band, where each rule fired and its
-  near-misses, and the playable area. Reports: `work\levels\<level>\audit\audit.{json,md}`.
+  near-misses, and the playable area. Where it lists a column's surfaces, a terrain surface carries its ground
+  material (core `materialmap1943.py`, the level's terrain material map). The checks are in
+  `tools\navaudit1943_checks.py`. Reports: `work\levels\<level>\audit\audit.{json,md}`.
 - **The export for our navigation runtime** (`tools\navexport1943.py`, new 2026-10-24): `navexport1943.py <level>
   [--big-endian] [--check]` writes `work\levels\<level>\navkit\<level>.rsnv` (`.be.rsnv` big-endian), the build in
   the runtime's own format (core `rsnv.py`): the route graph with integer costs (1/16 m) and edge kinds (walk, ladder
@@ -89,7 +93,7 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   1.06 [O] + 0.45 [E]), height 2.0, step 0.3 [E], ford 0.8 [E]. Tank: radius 1.8, height 2.9, step 0.6 [E], ford 1.2
   [E]. LCVP: radius 2.5, draft 0.9 [E], bow ramp 5.5 m ahead [O]. Plane: clearance 25 m, cruise 60 m above the floor
   [E]. Not in the data: steering angle, step height, the entries' AIData (dangling references) [U].
-- **Ground** (`tools\groundnav1943.py sample|build <level> <class>`): the collision without ExcludeFromPathfinding
+- **Ground** (`tools\groundnav1943.py prepare|sample|build|all <level> [jeep|tank]`): the collision without ExcludeFromPathfinding
   objects and dynamic props (fences, palms, wire, sandbags, crates - pushed through [H]), sampled by
   `navsample1943.py` with the class's disc, step and height on the soldier's 0.8 m grid (about 11-13 min per class
   and map); drivable = not blocked, slope, ford depth, not on ForbidPathfinding objects, continuous ground under the
@@ -105,7 +109,7 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   grown by 25 m), a cruise surface 60 m above it that climbs at most 7 deg, nodes every 64 m; take-off lanes along the
   spawn headings (decks, airfields) with a JUMP edge (climb-out) and a DROP edge (landing approach); parachute DROP
   transfers over every base, flag and non-carrier soldier island (Coral Sea's islets).
-- **Take-off lanes checked (2026-10-27):** every lane is tested against the collision on rsnav's flight-test obstacle
+- **Take-off lanes checked (2026-10-26):** every lane is tested against the collision on rsnav's flight-test obstacle
   grid (4 m cells, all objects): the centre line +-2 m clear from its start to 40 m past its end, the deck or field
   under the roll to lift-off (85 m). A blocked spawn heading is turned (up to 20 deg; then any heading: a turn on the
   ground), started up to 16 m ahead (out of a hangar) or shortened (to 75 m), in that order; each lane's meta records
@@ -116,10 +120,10 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   node), launch (3: the deck end). `core\bfbc2core\rsnvtrip.py` resolves them again against the soldier world in use
   and plans walk -> ride -> walk (rsnav's `rsn_trip_plan` gives the same answer).
 - **Writer:** `tools\rsnvgrid1943.py` (areas per 100 m sector by flood fill, one cell per column; bitmaps, per-cell
-  heights, buckets, portals, islands, tight edges by `rsnv.World.los`). Writer 1.1 (2026-10-27): a cell on a 100 m
+  heights, buckets, portals, islands, tight edges by `rsnv.World.los`). Writer 1.1 (2026-10-26): a cell on a 100 m
   sector edge goes to the sector it starts (before, i x 0.8 m rounding lost a one-cell column on every sector edge to the
   bucket lookup).
-- **Heading-aware planning** (`core\bfbc2core\rsnvhybrid.py`, 2026-10-27): the reference of rsnav's `rsn_hybrid_plan`, a
+- **Heading-aware planning** (`core\bfbc2core\rsnvhybrid.py`, 2026-10-26): the reference of rsnav's `rsn_hybrid_plan`, a
   lattice hybrid A* over (cell, 16 headings, direction) with motion primitives per kind (car 4.5 m, boat 8 m turning
   radius [E], reversing at a cost; tanks pivot); rsnav's C tables are generated from it. Used locally by the drivers:
   jeeps 120 / 120, tanks 120 / 120, landing craft 96 / 96 routes in the kinematic simulation (rsnav README).
@@ -132,8 +136,8 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   carrier deck reaches every flag by the craft (Wake 10/10, Iwo Jima 20/20 trips). The soldier export changes under
   these files without harm: transfers carry positions and are resolved again.
 
-**Looking inside an export** (`tools\rsnvtool.py`, new 2026-10-26; read-only; `--class jeep|tank|lcvp|plane` reads a
-vehicle world):
+**Looking inside an export** (`tools\rsnvtool.py`, new 2026-10-26; read-only; `<level>` is a level name or an
+`.rsnv` path; `--class jeep|tank|lcvp|plane` reads a vehicle world; tested by `tests\test_rsnvtool.py`):
 
 | Command | What it gives |
 |---|---|
@@ -156,15 +160,17 @@ writes `ladders.json` from the placed objects whose blueprint has a `LadderEntit
 
 **BF1943's soldier.** `tools\soldier1943.py` holds the soldier's physics (`DefaultSoldierPhysics`: radius 0.35 m,
 step 0.3 m plus a 0.07 m tolerance, height 1.8 m, 45 deg, water depth 1.4 m), and its `configure()` sets the NavKit
-settings that follow from it over the BFBC2 defaults: slope limit, the detailed zones' link step (0.37 m), node
-height (0.9 m), and the headroom band (0.5-1.8 m). NavKit's other values were fitted to DICE's BFBC2 path data and
+settings that follow from it over the BFBC2 defaults: slope limit, water depth, the detailed zones' link step
+(0.37 m), node height (0.9 m), and the headroom band (0.5-1.8 m). It also switches on BF1943's build rules
+(`LADDER_ALL_GROUND`, and the seam and area rules of the 2026-10-26 entries above). NavKit's other values were fitted to DICE's BFBC2 path data and
 are not checked on BF1943.
 
 **Tools in this variant:** `detailed.py`, `detailed1943.py`, `havok461.py`, `hkpack.py`, `hpdcheck.py`,
 `hpdtool.py`, `hpdview.py`, `kymesh.py`, `levelobjects.py`, `levelobjects1943.py`, `navbuild.py`, `navedits.py`,
 `navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `jumplinks1943.py`,
-`navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `enclosure_probe1943.py`, `vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`, `airnav1943.py`,
-`rsnvgrid1943.py`, `navexport_vehicles1943.py`
+`navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `rsnvtool.py`, `enclosure_probe1943.py`,
+`vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`, `airnav1943.py`, `rsnvgrid1943.py`,
+`navexport_vehicles1943.py`
 (`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a spot is cut off from the network). Removed from this variant:
 `graphstats`, `sample_all`, `navwater`, `navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navdiff`,
 `navparity`, `navregress`, `ordercheck` and `ladders.py`. They remain in `bf1943-auto-navkit-little-endian`, which
@@ -194,15 +200,23 @@ tools\               NavKit tools (Python 3 + numpy)
   kymesh.py            per-sector mesh: parse_mesh / write_mesh (byte-exact)
   hpdcheck.py          structure checks (closed boundaries, edges, node order, zero-length edges)
   routecheck1943.py    BF1943: spawns and flags on the route graph, routes between every pair of flags
-  jumplinks1943.py     BF1943: jump links from ships' decks to their AA gun platforms (ladder records of kind 'jump');
-                       a raised-floor rule (RAISED_FLOORS) is kept but off - see operation-rising-sun NAVMESH_AUDIT.md
-  navaudit1943.py      BF1943: the audit - the build's walkable masks, then the checks (navaudit1943_checks.py)
+  jumplinks1943.py     BF1943: jump links from ships' decks to their AA gun platforms, and between a carrier's floors
+                       a ledge apart (SHIP_LEDGES) (ladder records of kind 'jump'); a raised-floor rule
+                       (RAISED_FLOORS) is kept but off - see operation-rising-sun NAVMESH_AUDIT.md
+  navaudit1943.py      BF1943: the audit - the build's walkable masks, then the checks
+  navaudit1943_checks.py  BF1943: the audit's checks (required positions, reachability, consistency, layers, rules)
   navexport1943.py     BF1943: the build exported for our navigation runtime (<level>.rsnv, core rsnv.py)
   rsnvtool.py          BF1943: look inside an RSNV export - info, validate, locate, los, route, pockets, picture, diff
+  vehicleclasses1943.py  BF1943: the vehicle classes (jeep, tank, lcvp, plane) from the blueprints and collision
+  groundnav1943.py     BF1943: jeep and tank worlds (<level>.jeep.rsnv, <level>.tank.rsnv)
+  seanav1943.py        BF1943: the landing craft's world (<level>.lcvp.rsnv)
+  airnav1943.py        BF1943: the planes' world (<level>.plane.rsnv), a first version
+  rsnvgrid1943.py      BF1943: the vehicle worlds' RSNV writer (cells on a grid -> an RSNV world)
+  navexport_vehicles1943.py  BF1943: builds and checks every vehicle world of a level, and its transfers
   enclosure_probe1943.py  BF1943: why a spot is cut off (flood fill over the 0.2 m samples, the blocking objects, a map)
   hpdview.py           render one sector to PNG
-tests\               the rule tests (made-up data), the sampler, jump links, mixed-pitch seams, Havok 4.6.1, Wake
-                     Island's objects and the RSNV export
+tests\               the rule tests (made-up data), the sampler, rsnvtool, jump links, mixed-pitch seams, vehicle
+                     navigation, Havok 4.6.1, Wake Island's objects and the RSNV export
 ```
 
 What follows is OPFOR's NavKit description, which this variant shares. Its commands, steps and tools are the

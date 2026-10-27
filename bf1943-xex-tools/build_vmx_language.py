@@ -1,4 +1,5 @@
-"""Build an isolated Xenon language: all VX128-table encodings decode; unvalidated semantics stay opaque."""
+"""Build an isolated Xenon language: all VX128-table encodings decode; semantics come from xenon_vector_semantics.py
+and xenon_splice.py where modelled (vx128-table.tsv: validated, modelled, partial:<immediates>), else they stay opaque."""
 from pathlib import Path
 import hashlib,json,shutil
 import sys
@@ -22,7 +23,7 @@ for p in SOURCE.iterdir():
 common=dest/'ppc_common.sinc'
 import re
 text=common.read_text()
-text,n=re.subn(r'(define token\s+\w+\(32\))',r'\1\n xmhi=(2,3) xmop=(0,1) xmmid=(4,10) xma5=(5,5) xma6=(10,10) xmlogic=(6,9) xmbit4=(4,4) xmphi=(6,8) xmfixed=(9,10) xmc=(6,8) xmshb=(6,9) xm3d0=(18,20) xm3d1=(16,17) xm3d2=(6,7) xm20=(20,20) xmimm4=(16,19) '+' '.join(f'xk{i}=({i},{i})' for i in range(11)),text,count=1)
+text,n=re.subn(r'(define token\s+\w+\(32\))',r'\1\n xmhi=(2,3) xmop=(0,1) xmmid=(4,10) xma5=(5,5) xma6=(10,10) xmlogic=(6,9) xmbit4=(4,4) xmphi=(6,8) xmfixed=(9,10) xmc=(6,8) xmshb=(6,9) xm3d0=(18,20) xm3d1=(16,17) xm3d2=(6,7) xm20=(20,20) xmimm4=(16,19) xmuimm=(16,20) '+' '.join(f'xk{i}=({i},{i})' for i in range(11)),text,count=1)
 assert n==1
 common.write_text(text)
 altivec=dest/'altivec.sinc'
@@ -108,7 +109,7 @@ immediates={'A_BITS','A_BITSS','xmshb','xm3d0','xm3d1','xm3d2'}
 # vpkd3d128 writes only part of VD in both references, so its old value is an input.
 merges={'vpkd3d128'}
 validated={'lvx128','stvx128','vand128','vandc128','vor128','vxor128','vpermwi128'}
-opaque=[];pcodeops=[];modelled=[]
+opaque=[];pcodeops=[];modelled=[];partial={}
 # Roles for the generated VMX128 bodies: VS128 is the VD field (stores; the VD-as-operand forms).
 def ops128(operands):
     imm=next((display[o] for o in operands if o in ('UIMM','SIMM','SHB')),None)
@@ -167,6 +168,14 @@ for name,form,op,value,operands in table:
         # Neither reference interprets UIMM bit 4; such words decode but stay opaque.
         generated+=opaque_constructor(name,form,op,value,operands,' & xm20=1',pcodeop='VMX128_unresolved_vrlimi128_imm4')
         continue
+    split=vsem.variants(name,ops128(operands))
+    if split:
+        fields=[display[o] for o in operands];shown=list(dict.fromkeys(fields))
+        for extra,lines in split:
+            if lines is None:generated+=opaque_constructor(name,form,op,value,operands,extra);continue
+            generated+=f':{name} {",".join(shown)} is {pattern(op,form,value)} & {" & ".join(dict.fromkeys(fields))}{extra} {{\n    '+'\n    '.join(lines)+'\n}\n'
+        partial[name]=[e.strip(' &') for e,l in split if l is not None]
+        continue
     lines=vsem.body(name,ops128(operands))
     if lines is None:
         generated+=opaque_constructor(name,form,op,value,operands)
@@ -190,15 +199,15 @@ spec+=''.join(f'define pcodeop {p};\n' for p in dict.fromkeys(pcodeops))+generat
 with (ROOT/'work/vmx128/vx128-table.tsv').open('w') as out:
     out.write('mnemonic\tform\tmask\tvalue\tsemantics\n')
     for name,form,op,value,operands in table:
-        semantics='validated' if name in validated or unaligned(name) else 'vrlimi128_imm4_clear_validated' if name=='vrlimi128' else 'modelled' if name in modelled else 'opaque'
+        semantics='validated' if name in validated or unaligned(name) else 'vrlimi128_imm4_clear_validated' if name=='vrlimi128' else 'modelled' if name in modelled else ('partial:'+'|'.join(partial[name])) if name in partial else 'opaque'
         out.write(f'{name}\t{form}\t{0xfc000000|masks[form]:08x}\t{(op<<26)|value:08x}\t{semantics}\n')
     for name,xop in xform:out.write(f'{name}\tX\tfc0007ff\t{(31<<26)|(xop<<1):08x}\tvalidated\n')
-(ROOT/'research/evidence/vmx128-language-inputs.json').write_text(json.dumps(dict(base_sources=hashes,spec_sha256=hashlib.sha256(spec.encode()).hexdigest(),
+(ROOT/'research/evidence/vmx128-language-inputs.json').write_text(newline='',data=json.dumps(dict(base_sources=hashes,spec_sha256=hashlib.sha256(spec.encode()).hexdigest(),
     reference_archive_sha256=xenonrecomp_reference.ARCHIVE_SHA256,reference_source=xenonrecomp_reference.source(),reference_member=member,reference_member_sha256=hashlib.sha256(reference).hexdigest(),
     table_entries=len(table),xform_entries=[n for n,_ in xform],validated=sorted(validated|{'vrlimi128'}|{n for n,*_ in table if unaligned(n)}|{n for n,_ in xform}),opaque=opaque,
     modelled_vmx128=modelled,modelled_altivec=altivec_modelled,scalar_fp_overrides=fp_overrides,semantics_version=vsem.SEMANTICS_VERSION,
     semantics_sources={f:hashlib.sha256((Path(__file__).resolve().parent/f).read_bytes()).hexdigest() for f in ('xenon_vector_semantics.py','xenon_splice.py')},
-    still_opaque_reasons=vsem.OPAQUE,
+    still_opaque_reasons=vsem.OPAQUE,known_semantics_ops=vsem.KNOWN_OPS,partial_ops=vsem.PARTIAL_OPS,modelled_by_immediate=partial,
     removed_inherited=['altivec.sinc ISA 2.07 and 3.0 sections (everything from the "2.07 additions" marker)','PowerPC 4xx integer multiply-accumulate family via NoLegacyIntegerMultiplyAccumulate'],
     unaligned_semantics=['lvlx/lvrx/stvlx/stvrx (+l, +128): byte shifts within the aligned 16-byte block at ea&~15 (XenonRecomp recompiler.cpp 1148-1163, 1610-1631; Xenia ppc_emit_altivec.cc 205-335)',
         'lvrx/stvrx access no memory when ea&15==0; stores are modeled as read-modify-write of the block'],

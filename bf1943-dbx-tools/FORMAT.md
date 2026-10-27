@@ -1,7 +1,8 @@
 # Binary DBX format and DbxEdit's behaviour
 
 This is the specification DbxEdit is written from. It describes Battlefield: Bad Company 2's binary `.dbx`
-files and exactly what DbxEdit outputs. The format knowledge comes from the BC2 modding community, first
+files, which BF1943 uses unchanged, and exactly what DbxEdit outputs. Counts of "game files" (section 6) are
+BFBC2's; section 7 gives BF1943's level rules. The format knowledge comes from the BC2 modding community, first
 of all **Frankelstner**'s research; the description and DbxEdit's code are this project's own.
 
 All multi-byte header numbers are big-endian. A *varint* is an unsigned number in 7-bit groups, least
@@ -235,8 +236,8 @@ evidence). *Where* is `<type> <guid> [<field path>]`, as above.
   `EnumOffset` + L + 1 (a blueprint partition not in the folders skips this, with a warning); an object whose
   `Transform` position is more than 1.55 x W / 4 + 0.1 m from its leaf's centre (X, Y, Z / 16); a two-leaf object
   whose leaves differ (any key or `Max`). For each tree: not one pre-order tree from node 0 followed by exactly 256
-  all-zero nodes is an **error**; an inner node whose `Max` is not the larger of its children's, and a leaf with
-  W / 4 < `Max` + 0.125, are **warnings**.
+  all-zero nodes is an **error**; an inner node whose `Max` is not the larger of its children's, and a leaf whose
+  W is neither max(5, ceil(4 x (`Max` + 0.125))) nor one more, are **warnings**.
 
 **Static cull trees** (`World.StaticCullTreeData`, one instance per partition; BF1943, and BFBC2 PC's `mp_005`
 alike). Fields: `Nodes` (array of complex) and `EnumOffset` (4-byte integer). Each node: `Right` (4 bytes), `Max` (4-byte
@@ -261,8 +262,22 @@ decimal), `SphereKeyX`, `SphereKeyY`, `SphereKeyZ`, `SphereKeyW` (2 bytes each, 
 - 0x825c2f20 tests `Max` against (a camera factor x distance - radius) for subtrees inside the frustum [O pseudocode].
   That reads as a size-at-distance cull [H]: a subtree whose largest object is too small for its distance is skipped.
 - A physics object's two exclusive leaves are identical (sphere and `Max`; 4,470 of 4,470).
-- At run time each renderable carries its slot. 0x825ca390 finds a slot's tree as the one with
-  `EnumOffset` < slot <= `EnumOffset` + L.
+- At run time each renderable carries its slot (renderable + 0x10) [O]:
+  - It joins through 0x825ca640 -> 0x825c9c50 and leaves through 0x825cb928 -> 0x825ca390.
+  - 0x825ca390 finds a slot's tree as the one with `EnumOffset` < slot <= `EnumOffset` + L, and the slot's
+    12-byte record in it.
+  - Renderable slots are set from a record's + 0x18 (GameObjectData `Enumeration`): 0x8227abc0 on the client,
+    0x82397e70 on the server.
+- Physics parts look up slot records too [O]:
+  - 0x82227e80 and 0x82228768 take each part's slot from 0x82519cb8 and fetch it through 0x825c54c0.
+  - The table index runs through the Havok shape's sub-part records (+0x58, 0x40 bytes each).
+  - This is most likely a model group's combined asset mapping parts to group-instance slots [H].
+- The consumer of a physics object's second exclusive slot is not identified [U].
+- The client level load (0x82276048) builds the exclusive, client and client-tree trees with per-leaf records. The
+  server level load (0x82391098) builds the exclusive tree only, without per-leaf records [O].
+- W = max(5, ceil(4 x (`Max` + 1/8))) in 19,429 of 23,989 leaves, and one more in the other 4,560 [O]. That is, the
+  radius is `Max` + 1/8 m rounded up to 1/4 m, with a minimum of 1.25 m; the extra one presumably comes from the
+  centre's rounding [H].
 
 `fixslots <in> <out> --from <level>` gives every object the slot of the same object in `<level>`:
 

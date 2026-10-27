@@ -56,6 +56,127 @@ def tiny():
     return sections, header
 
 
+# 2026-10-26: a chain of short edges, each cost rounded down, beside one long edge; with the 0.999 heuristic the
+# search came back with the long edge (83) although the chain costs 82 (found by a random search over such graphs)
+ADMISSIBLE_CASE = [(0.0, 0.0, 0.0), (5.2374, 0.0, 0.0), (0.418, 0.0, 0.2017), (0.8804, 0.0, 0.2182),
+                   (1.2934, 0.0, 0.1968), (1.7043, 0.0, 0.0716), (2.1912, 0.0, -0.0472), (2.6205, 0.0, 0.21),
+                   (3.0516, 0.0, 0.0805), (3.4706, 0.0, 0.041), (3.8816, 0.0, -0.052), (4.3344, 0.0, -0.0136),
+                   (4.8342, 0.0, 0.0736)]
+
+
+def chain_file(path, h_scale_q):
+    """ADMISSIBLE_CASE as an RSNV file: node 0 to 1 by a direct edge and by the chain 0-2-3-...-12-1, costs
+    floor(16 x length) from the float32 positions."""
+    import math
+    import numpy as np
+    pos = [tuple(float(np.float32(v)) for v in p) for p in ADMISSIBLE_CASE]
+    links = [(0, 1)] + list(zip([0] + list(range(2, 13)), list(range(2, 13)) + [1]))
+    adj = {n: [] for n in range(len(pos))}
+    for a_, b_ in links:
+        c = math.floor(16 * math.dist(pos[a_], pos[b_]))
+        adj[a_].append((b_, c))
+        adj[b_].append((a_, c))
+    sections, header = tiny()
+    node_rows, edge_rows = [], []
+    for n, p in enumerate(pos):
+        node_rows.append((*p, len(edge_rows)))
+        edge_rows += [(t, c, 0) for t, c in sorted(adj[n])]
+    node_rows.append((0.0, 0.0, 0.0, len(edge_rows)))
+    sections.update(NODE=node_rows, EDGE=edge_rows, NAUX=[(0, 0, 0, 0)] * len(pos),
+                    ANOD=[(n,) for n in range(len(pos))], ISLD=[(len(pos), 0, rsnv.ISLD_MAIN, 0, 0)])
+    sections['AREA'] = [tuple(list(sections['AREA'][0][:15]) + [len(pos)] + list(sections['AREA'][0][16:]))]
+    rsnv.write(path, sections, dict(header, h_scale_q=h_scale_q))
+    src = [n for n in range(len(pos)) for _ in adj[n]]
+    dst = [t for n in range(len(pos)) for t, _c in sorted(adj[n])]
+    cost = [c for n in range(len(pos)) for _t, c in sorted(adj[n])]
+    return pos, src, dst, cost
+
+
+def dijkstra(w, s, g):
+    import heapq
+    d, q = {s: 0}, [(0, s)]
+    while q:
+        c, n = heapq.heappop(q)
+        if n == g:
+            return c
+        if c > d[n]:
+            continue
+        for k in range(int(w.node_first_edge[n]), int(w.node_first_edge[n + 1])):
+            m, nc = int(w.edge_target[k]), c + int(w.edge_cost[k])
+            if nc < d.get(m, 1 << 60):
+                d[m] = nc
+                heapq.heappush(q, (nc, m))
+
+
+def corrupt_cases():
+    """{what: change to the sections} - each table's index fields set out of range, one at a time."""
+    def area(s, at, vals):
+        r = list(s['AREA'][0])
+        r[at:at + len(vals)] = vals
+        s['AREA'] = [tuple(r)]
+
+    def sect(s, at, v):
+        r = list(s['SECT'][0])
+        r[at] = v
+        s['SECT'] = [tuple(r)]
+    cases = {
+        'ANOD node': lambda s: s.update(ANOD=[(99,)] + s['ANOD'][1:]),
+        'AREA first node + nodes': lambda s: area(s, 14, [3, 4]),
+        'AREA bitmap': lambda s: area(s, 6, [99]),
+        'AREA height grid': lambda s: area(s, 17, [9]),
+        'AREA portals': lambda s: area(s, 9, [0, 2]),
+        'AREA sector': lambda s: area(s, 11, [5]),
+        'NAUX area': lambda s: s.update(NAUX=[(7, 0, 0, 0)] + s['NAUX'][1:]),
+        'NAUX sector': lambda s: s.update(NAUX=[(0, 3, 0, 0)] + s['NAUX'][1:]),
+        'EDGE target': lambda s: s.update(EDGE=[(99, 38, 0)] + s['EDGE'][1:]),
+        'LADR node': lambda s: s.update(LADR=[(0.0, 10.0, 0.0, 0.0, 12.0, 0.0, 0.0, 0, 99, 0)]),
+        'OFFM node': lambda s: s.update(OFFM=[(1, 3, 0, 99, 0.0, 10.0, 0.0, 0.0, 1.0, 0)]),
+        'ISLD node': lambda s: s.update(ISLD=[(4, 99, 0, 0, 0)]),
+        'PORT area': lambda s: (s.update(PORT=[(0.0, 0.0, 1.0, 0.0, 10.0, 0, 5)]), area(s, 9, [0, 1])),
+        'GLST area': lambda s: s.update(GLST=[(0xFFFF,)]),
+        'GBKT range': lambda s: s.update(GBKT=[(0, 9)] + s['GBKT'][1:]),
+        'SECT buckets': lambda s: sect(s, 7, 5),
+        'SECT areas': lambda s: sect(s, 9, 3),
+        'NODE sentinel': lambda s: s.update(NODE=s['NODE'][:-1] + [(0.0, 0.0, 0.0, 3)]),
+        'NODE coordinate': lambda s: s.update(NODE=[(1e7, 10.0, 0.0, 0)] + s['NODE'][1:]),
+        'CEDG not flagged': lambda s: s.update(CEDG=[(0, 0, 1, 0)], OREF=[(0,)], OBJT=[(1, 2, 0.0, 0.0, 0.0, 0)]),
+        'OREF object': lambda s: s.update(CEDG=[(0, 0, 1, 0)], OREF=[(5,)], OBJT=[(1, 2, 0.0, 0.0, 0.0, 0)],
+                                          EDGE=[(s['EDGE'][0][0], s['EDGE'][0][1], rsnv.EDGEF_COND)] + s['EDGE'][1:]),
+    }
+    return cases
+
+
+def corruptions(sections, header, tmp):
+    """Each table's index fields set out of range, one at a time: load must raise ValueError (rsnav's rsn_load
+    refuses each), never crash."""
+    cases = corrupt_cases()
+    out = []
+    for what, data in corrupt_blobs(sections, header, tmp, cases):
+        try:
+            rsnv.load(data)
+            out.append((what, None))
+        except ValueError as e:
+            out.append((what, str(e)))
+        except Exception as e:                   # a crash, not a refusal
+            out.append((what, f'CRASH {type(e).__name__}: {e}'))
+    return out
+
+
+def corrupt_blobs(sections, header, tmp, cases=None):
+    """[(what, file bytes)] of corruptions(): each table's index fields out of range (rsnav's test_rsnav.py loads
+    them in the C runtime too)."""
+    import copy
+    cases = corrupt_cases() if cases is None else cases
+    out = []
+    for what, f in cases.items():
+        s2 = copy.deepcopy(sections)
+        f(s2)
+        path = os.path.join(tmp, 'bad.rsnv')
+        rsnv.write(path, s2, header)
+        out.append((what, open(path, 'rb').read()))
+    return out
+
+
 if __name__ == '__main__':
     tmp = tempfile.mkdtemp(prefix='rsnv_')
     sections, header = tiny()
@@ -125,5 +246,40 @@ if __name__ == '__main__':
             check(False, f'{what}: rejected')
         except ValueError as e:
             check(True, f'{what}: rejected ({e})')
+    # every index a reader follows is checked on load (rsn_load's checks); corrupt tables are refused, never a crash
+    for what, why in corruptions(*tiny(), tmp):
+        check(why is not None and not why.startswith('CRASH'), f'corrupt {what}: refused ({why})')
+    import random
+    rng = random.Random(26)
+    crashes, refused = [], 0
+    for _ in range(3000):
+        data = bytearray(raw)
+        for _k in range(rng.randint(1, 4)):
+            data[rng.randrange(len(data))] = rng.randrange(256)
+        try:
+            w = rsnv.load(bytes(data))
+            for n in range(min(len(w.node_pos), 4)):               # what readers do with it must not crash either
+                rsnv.search(w, n, 0)
+            w.locate(1.0, 10.0, 1.0)
+            for k in range(len(w.areas)):
+                w.nearest_node(k, 1.0, 1.0)
+        except ValueError:
+            refused += 1
+        except Exception as e:
+            crashes.append(f'{type(e).__name__}: {e}')
+    check(not crashes, f'3,000 random byte corruptions: {refused} refused, the rest loaded and searched, '
+                       f'{len(crashes)} crashes {crashes[:2]}')
+    # the heuristic (2026-10-26): admissible with the file's own scale; 0.999 overestimates on this graph
+    legacy, scaled = os.path.join(tmp, 'chain0.rsnv'), os.path.join(tmp, 'chain.rsnv')
+    pos, src, dst, cost = chain_file(legacy, 0)
+    q = rsnv.heuristic_scale(pos, src, dst, cost)
+    chain_file(scaled, q)
+    w0, w1 = rsnv.load(legacy), rsnv.load(scaled)
+    best = dijkstra(w1, 0, 1)
+    c0 = rsnv.search(w0, 0, 1)[1]
+    c1 = rsnv.search(w1, 0, 1)[1]
+    check(c0 > best, f'with the legacy 0.999 the search returns {c0} where {best} exists (the bug reproduced)')
+    check(c1 == best, f"with the file's scale {q / rsnv.H_SCALE_ONE:.6f} the search returns the cheapest, {c1}")
+    check(w1.h_scale_q == q and w0.h_scale == rsnv.H_SCALE_LEGACY, 'the scale round-trips; 0 reads as 0.999')
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

@@ -2,7 +2,7 @@
 
 Usage: python hpdview.py <pathdata.hpd> <sector index | 0xID> <out.png>
 
-Optional 4th/5th arguments: minX maxX minZ maxZ zoom window.
+Optional 4th to 7th arguments: minX maxX minZ maxZ zoom window (all four or none).
 
 Colours: grey = tile grid, black = E lines, purple = D lines, cyan = F cells (arrow = row direction),
 green = B segments, red = C segments with a horizontal direction (arrow), magenta = C segments with

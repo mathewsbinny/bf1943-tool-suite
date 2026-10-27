@@ -3,6 +3,7 @@
 Usage: python stfs.py info <package>
        python stfs.py list <package> [filter]
        python stfs.py extract <package> <outdir> [filter]      (filter = case-insensitive substring)
+       extract refuses (nothing written) a package whose names would leave <outdir> ('..', a drive, ...).
 
 Format (public STFS documentation, Free60): header with display name (UTF-16BE at 0x411), header size
 (u32 BE at 0x340) and the volume descriptor at 0x379 (block separation u8 at 0x37B, file-table block
@@ -103,11 +104,28 @@ class Package:
         return bytes(out[:e['size']])
 
 
+def safe_target(dest, path):
+    """Where an archive path is extracted under dest; ValueError for a path that would leave it (a '..', '.' or
+    empty part, a drive or root, a backslash or colon in a name - package names are untrusted input)."""
+    parts = path.split('/')
+    for p in parts:
+        if p in ('', '.', '..') or '\\' in p or ':' in p or p != p.strip():
+            raise ValueError(f'unsafe path in the package: {path!r} (part {p!r}); nothing was extracted')
+    root = os.path.realpath(dest)
+    target = os.path.realpath(os.path.join(root, *parts))
+    if os.path.commonpath([root, target]) != root or target == root:
+        raise ValueError(f'unsafe path in the package: {path!r} leaves {dest}; nothing was extracted')
+    return target
+
+
 def main(argv):
     if len(argv) < 3:
         print(__doc__)
         return 1
     pkg = Package(argv[2])
+    if argv[1] == 'extract':
+        for e in pkg.entries:                       # every path checked before anything is written
+            safe_target(argv[3], e['path'])
     if argv[1] == 'info':
         print(f'{pkg.magic!r} "{pkg.name}" header {pkg.header_size:#x} separation {pkg.separation} '
               f'file table {pkg.ft_blocks} blocks at {pkg.ft_start}; {len(pkg.entries)} entries')
@@ -119,7 +137,7 @@ def main(argv):
         if argv[1] == 'list':
             print(f'{e["size"]:>12}  {e["path"]}')
         elif argv[1] == 'extract':
-            dst = os.path.join(argv[3], *e['path'].split('/'))
+            dst = safe_target(argv[3], e['path'])
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             open(dst, 'wb').write(pkg.read(e))
             print(f'{e["size"]:>12}  {dst}')

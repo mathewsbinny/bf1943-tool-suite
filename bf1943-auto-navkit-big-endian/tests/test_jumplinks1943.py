@@ -12,6 +12,7 @@ import numpy as np
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'tools'))
+sys.path.insert(0, os.path.dirname(HERE))
 import jumplinks1943 as J  # noqa: E402
 import navsample  # noqa: E402
 import navwalk  # noqa: E402
@@ -106,8 +107,48 @@ def ship_checks():
     check(none == [], 'no link where the grid does not build (usable)')
 
 
+def game_checks():
+    """navkit.py's --game reaches jump-link generation (2026-10-26: level_links always took the default copy)."""
+    import navkit
+    from bfbc2core import game1943
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    def find_game(g=None):
+        seen.append(g)
+        raise Stop()
+    saved = game1943.find_game
+    game1943.find_game = find_game
+    try:
+        try:
+            J.level_links('wake_island_s', log=lambda *a: None, game='X:/custom/dist/xenon')
+        except (Stop, FileNotFoundError, OSError):
+            pass
+        check(seen[:1] == ['X:/custom/dist/xenon'], f'level_links uses the game folder it is given ({seen[:1]})')
+        calls = []
+        saved_links = J.level_links
+
+        def level_links(lv, log=print, game=None):
+            calls.append(game)
+            raise Stop()
+        J.level_links = level_links
+        try:
+            try:
+                navkit.build('X:/custom/dist/xenon', 'wake_island_s', log=lambda *a: None)
+            except (Stop, Exception):
+                pass
+        finally:
+            J.level_links = saved_links
+        check(calls[:1] == ['X:/custom/dist/xenon'], f"navkit.py build passes its --game to level_links ({calls[:1]})")
+    finally:
+        game1943.find_game = saved
+
+
 if __name__ == '__main__':
     ship_checks()
+    game_checks()
     s = side()
     sea = lambda c: 0.0                     # water at 0, the sea bed at -20: deep
     bed = lambda x, z: -20.0

@@ -3,9 +3,11 @@ navigation (groundnav1943.py, seanav1943.py, airnav1943.py; classes in vehiclecl
 
   navexport_vehicles1943.py <level> [--classes jeep,tank,lcvp,plane] [--sample] [--check-only]
 
+--classes chooses the worlds to build; the checks always cover every world written. --check-only builds nothing.
+
 Writes, beside the soldier world (work\levels\<level>\navkit\<level>.rsnv, which it reads and never writes):
   <level>.jeep.rsnv, <level>.tank.rsnv    ground vehicles (when the level has spawns of the class; --sample samples
-                                          first, otherwise the samples must exist: groundnav1943.py sample)
+                                          again first, otherwise only when the samples are missing)
   <level>.lcvp.rsnv                       the landing craft (when the level has any)
   <level>.plane.rsnv                      planes
   <level>.transfers.json                  every transfer of every world: kind, team, vehicle node, the soldier node it

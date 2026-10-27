@@ -1,6 +1,6 @@
 # BF1943 DBX tools (DbxEdit)
 
-Part of the BF1943 Tool Suite. **BF1943 status: yes** (2026-10-26) - DbxEdit and DbxEditGUI read, write and
+Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-26) - DbxEdit and DbxEditGUI read, write and
 edit BF1943's binary DBX partitions. The level check uses BF1943's own rules (see [Check a level](#check-a-level)),
 and the slot fixer repairs BF1943's cull slots.
 
@@ -11,8 +11,9 @@ the suite's `tests\test_bf1943_tools.py dbxedit` repeats it on 1,133 of them):
 - the level check with BF1943's rules reports nothing (0 errors, 0 warnings) on all five shipped level partitions,
   and with `--bundle` on each of them every reference into its bundles holds its declared class and the static cull
   trees match the level (`check --bundle`);
-- broken copies of Wake Island fail with their rule's message, one per rule; `fixslots` repairs swapped cull slots
-  byte for byte (2026-10-26, `tests\test_levelcheck1943.py`).
+- broken copies of Wake Island (25 of the level partition, 5 of its exclusive cull tree) fail with their rule's
+  message, one rule each; `fixslots` repairs swapped cull slots byte for byte (2026-10-26,
+  `tests\test_levelcheck1943.py`).
 
 **What a clean check means:** the level breaks none of the rules that every shipped BF1943 level keeps. The rules
 come from the game's data, not from crashes. No broken level has been run in the game, so what the game does with a
@@ -74,7 +75,8 @@ data-only fields below are now covered.
 
 ## The window
 
-Start `DbxEditGUI.exe` and open a `.dbx` file (File > Open, or drop it on the window).
+Start `DbxEditGUI.exe` and open a `.dbx` file (File > Open, drop it on the window, or name it:
+`DbxEditGUI.exe <file.dbx>`).
 
 - **The tree** shows the file: instances (bold) with their fields, lists and values. Lists open when you
   expand them.
@@ -86,7 +88,9 @@ Start `DbxEditGUI.exe` and open a `.dbx` file (File > Open, or drop it on the wi
 - **Edit menu:** undo (Ctrl+Z), find (Ctrl+F, then F3), replace strings, remove a field everywhere, set a
   bool everywhere, change the file's own GUID.
 - **Level menu:** check the level (F5), check its cull slots against another level, fix cull slots. The
-  results appear in the bottom pane; double-click a line to go to its instance.
+  results appear in the bottom pane; double-click a line to go to its instance. The window's check has no
+  `--bundle` folders: the checks of references into other files and of the cull trees need the command line.
+- **Help menu:** FORMAT.md (F1) and this README.
 - **File menu:** save (the first save keeps the original as `<name>.dbx.bak`), export or import XML, and
   **Save edit script**, which writes your edits as DbxEdit commands to replay on another file.
 
@@ -173,9 +177,9 @@ not crashes: what the game does with a broken one has not been tried.
 | LevelData `Name` is `Levels/<its id>` | 5 of 5 |
 | every field (of an instance, of a by-value struct, of an array element) is a member of its class or struct - except 20 fields the shipped data carries that BF1943's classes do not have (below) | 160,109 fields |
 | with `--bundle`: in slot order, the slotted placed objects cover the exclusive tree's leaves exactly - two leaves when the blueprint's partition has a `PhysicsEntityData`, else one | 4,470 objects with two, 125 with one |
-| with `--bundle`: an object's origin lies within 1.55 radii of its leaf's centre - centre `SphereKeyX/Y/Z` / 16, radius `SphereKeyW` / 4, as the game reads them; the 1.55 is fitted (largest 1.540) | 4,595 objects; with the slots shuffled 2-5 per level pass |
+| with `--bundle`: an object's origin lies within 1.55 radii (+ 0.1 m) of its leaf's centre - centre `SphereKeyX/Y/Z` / 16, radius `SphereKeyW` / 4, as the game reads them; the 1.55 is fitted (largest 1.540) | 4,595 objects; with the slots shuffled 2-5 per level pass |
 | with `--bundle`: an inner tree node's `Max` is the larger of its children's | 23,979 inner nodes in 10 trees |
-| with `--bundle`: a leaf's radius `SphereKeyW` / 4 is at least `Max` + 1/8 m | 23,989 leaves (least 0.127 m) |
+| with `--bundle`: a leaf's `SphereKeyW` is max(5, ceil(4 x (`Max` + 1/8))) or one more - radius `Max` + 1/8 m rounded up to 1/4 m, at least 1.25 m | 23,989 leaves (19,429 exact, 4,560 one more) |
 | with `--bundle`: an object with physics has two identical leaves (sphere and `Max`) | 4,470 of 4,470 |
 
 **Not rules** (a shipped level breaks them): capture points' `Index` unique (the tutorial repeats 1, 5 and 10);
@@ -205,8 +209,28 @@ cull trees, the partitions `levels/<level>/staticculltree_client` and `staticcul
   - the game tests `Max` against distance, which reads as a size-at-distance cull [H].
 - **The second leaf** of a physics object is an exact copy of the first. It exists exactly when the object's
   `StaticModelEntityData` has `PhysicsData` [O]. At run time each renderable carries its own slot [O], so it is a
-  second cull client of the same object, probably the physics or destructible-part side [H]. That consumer was not
-  found in the code [U].
+  second cull client of the same object, probably the physics or destructible-part side [H].
+  - Both the client and the server build the exclusive tree; the server builds only that one [O].
+  - Client code (0x82227e80, 0x82228768) walks an object's physics parts, takes each part's slot from a table, and
+    fetches that slot's record [O]. The table is reached through the Havok shape's sub-part records. That fits a
+    model group's combined Havok asset, mapping parts to group-instance slots, better than the second slot [H].
+  - A placed object's physics is its blueprint's, shared by every instance, so a per-instance second slot can only
+    be assigned at run time [O]. No physics class in the schema has a slot field, and `CompositeHavokAsset.Enums`
+    is empty in every level [O].
+  - **What consumes the second slot is still not found [U].**
+- **Radius rounding [O]:** W = max(5, ceil(4 x (`Max` + 1/8))) in 19,429 of 23,989 leaves, and one more in the other
+  4,560. So the radius is `Max` + 1/8 m, rounded up to 1/4 m, and at least 1.25 m.
+  - The 1,145 leaves that looked 2-4 too big are all at that 1.25 m minimum: oil drums, buoys, house fire/fog/smoke
+    effects, LCVP shells, sandcastles, bomb lamps, a speaker horn.
+  - The one-more cases fit the centre's 1/16 m rounding [H].
+- **The camera factor in the `Max` test** is per view. The cull job copies 0x180-byte view blocks that the render
+  view fills (0x825f9430, view + 0x3380). No static value was found [U].
+  - The data's candidate inputs are `DefaultMeshLodSettings.MinScreenArea` 0.005, `LevelData.DefaultFOV` 55 and
+    `GameRenderSettings.ViewDistance`.
+  - If the test is projected radius < K x distance with the area a fraction of the screen height squared, then
+    K = sqrt(0.005 / pi) x tan(27.5 deg) = 0.021 [H].
+  - Only the game can settle it: read the view block's value at run time, or find the distance at which an object
+    of known `Max` stops being drawn.
 
 **Data-only fields.** The shipped levels carry 20 fields (6,060 times) that BF1943's classes and structs do not have:
 - `ReferenceObjectData.IsInObjectSet` (5,855 times);
@@ -308,7 +332,7 @@ itself. BF1943's `.dbx` partitions are also checked by the Python reader (the su
 
 `python -B tests\test_levelcheck1943.py` (also in the `bf1943` tier; it runs `build.bat` if `DbxEdit.exe` is missing
 or older than the code): the level check on all five shipped level partitions (BF1943's rules from the file, nothing
-reported), each with `--bundle`, and 25 broken copies of Wake Island (plus one of its exclusive cull tree) - made with `xml`, a text change and
+reported), each with `--bundle`, and 25 broken copies of Wake Island (plus 5 of its exclusive cull tree) - made with `xml`, a text change and
 `import` in a temporary folder - each failing with its rule's message (errors exit 1, warnings 0); `--rules bfbc2` and
 a LevelData with BFBC2's fields choosing BFBC2's rules; `--slots-from` and `fixslots` on swapped cull slots.
 DbxEdit's own tests were BFBC2's (its unit tests, the PC game's files and their fingerprints) and were removed with

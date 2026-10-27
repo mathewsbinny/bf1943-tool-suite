@@ -29,10 +29,10 @@ class Checks:
 
 # ------------------------------------------------------------------------------------------------ STFS
 
-def build_stfs(path, read_only):
+def build_stfs(path, read_only, top_name='top.txt'):
     """Data blocks: 0 file table; 1-2 Content/a.bin (consecutive); 5 -> 3 -> 4 Content/b.bin (fragmented);
-    6 top.txt."""
-    files = {'Content/a.bin': os.urandom(6000), 'Content/b.bin': os.urandom(9000), 'top.txt': b'top level'}
+    6 top.txt (or top_name, for the path-safety cases)."""
+    files = {'Content/a.bin': os.urandom(6000), 'Content/b.bin': os.urandom(9000), top_name: b'top level'}
     h = bytearray(0x1000)
     h[0:4] = b'LIVE'
     header_size = 0x971A
@@ -57,10 +57,10 @@ def build_stfs(path, read_only):
         return bytes(e)
 
     table = (entry('Content', 0x80, 0, 0, 0xFFFF, 0) + entry('a.bin', 0x40, 1, 2, 0, 6000) +
-             entry('b.bin', 0x00, 5, 3, 0, 9000) + entry('top.txt', 0x40, 6, 1, 0xFFFF, 9))
+             entry('b.bin', 0x00, 5, 3, 0, 9000) + entry(top_name, 0x40, 6, 1, 0xFFFF, 9))
     blocks = {0: table, 1: files['Content/a.bin'][:0x1000], 2: files['Content/a.bin'][0x1000:],
               5: files['Content/b.bin'][:0x1000], 3: files['Content/b.bin'][0x1000:0x2000], 4: files['Content/b.bin'][0x2000:],
-              6: files['top.txt']}
+              6: files[top_name]}
     hashes = bytearray(0x1000)
     for b, nxt in ((0, 0xFFFFFF), (5, 3), (3, 4), (4, 0xFFFFFF)):
         hashes[b * 0x18 + 0x15:b * 0x18 + 0x18] = nxt.to_bytes(3, 'big')
@@ -104,6 +104,19 @@ def main(argv):
             c.check(all(open(os.path.join(dest, *k.split('/')), 'rb').read() == v for k, v in files.items()), f'stfs: extract ({label})')
             code, out = stfs_cli('info', path)
             c.check(code == 0 and '4 entries' in out, f'stfs: info ({label})')
+        # crafted names must not leave the destination: refused before anything is written
+        for bad in ('../outside.bin', '..', '.', 'a\\..\\..\\x.bin', 'C:x.bin', ' top.txt'):
+            path = os.path.join(work, 'evil')
+            build_stfs(path, True, top_name=bad)
+            dest = os.path.join(work, 'evil_out')
+            shutil.rmtree(dest, ignore_errors=True)
+            try:
+                stfs_cli('extract', path, dest)
+                refused = False
+            except ValueError as e:
+                refused = 'unsafe path' in str(e)
+            outside = os.path.exists(os.path.join(work, 'outside.bin')) or os.path.exists(os.path.join(work, 'x.bin'))
+            c.check(refused and not outside and not os.path.exists(dest), f'stfs: a package name {bad!r} is refused, nothing written')
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print('all passed' if not c.failed else f'{c.failed} check(s) failed')

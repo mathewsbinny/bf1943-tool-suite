@@ -7,7 +7,8 @@ Observed in this build:
 - Movie/Sprite characters carry signature 0x09876543; frame items are Action (1), FrameLabel (2),
   PlaceObject (3), RemoveObject (4), Background (5) and InitAction (8).
 - Bytecode is AS2 plus EA push/call opcodes. Operand sizes and alignment are those of the game's own
-  pointer fixup, `829748f8`, whose jump table is checked against OPS by tests/test_apt.py.
+  pointer fixup, `829748f8`, whose jump table (8297498c) was checked against OPS during the research
+  (operation-rising-sun research/AGENT_PROGRESS.md; that test is not kept here).
 - That fixup walks each action block linearly to its first End byte, adding the movie base to pointer
   operands, and converts PushData and ConstantPool lists in place from .const indices to runtime values.
   So a rewritten block must be reachable from a frame item (not only by a branch), must not contain an End

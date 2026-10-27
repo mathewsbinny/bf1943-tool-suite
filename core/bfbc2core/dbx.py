@@ -75,6 +75,10 @@ def is_binary(data):
 def _varint(data, pos):
     value, shift = 0, 0
     while True:
+        if pos >= len(data):
+            raise ValueError(f'truncated .dbx: a number runs past the end of the file ({len(data)} bytes)')
+        if shift > 63:
+            raise ValueError(f'damaged .dbx: a number longer than 64 bits at {pos:#x}')
         b = data[pos]
         pos += 1
         value |= (b & 0x7F) << shift
@@ -83,8 +87,24 @@ def _varint(data, pos):
         shift += 7
 
 
+def _need(data, pos, size, what):
+    if pos + size > len(data):
+        raise ValueError(f'truncated .dbx: {what} at {pos:#x} needs {size} bytes, the file ends at {len(data):#x}')
+
+
+def _string(strings, index, pos):
+    if index >= len(strings):
+        raise ValueError(f'damaged .dbx: string {index} at {pos:#x}, the table has {len(strings)}')
+    return strings[index]
+
+
 def _strings(data, tolerant):
+    if len(data) < 24:
+        raise ValueError('truncated .dbx: no string table header')
     area, count = struct.unpack_from('>II', data, 16)
+    _need(data, 24, 4 * count, f'a table of {count} string offsets')
+    if 24 + area > len(data) and not tolerant:
+        raise ValueError(f'truncated .dbx: the string area ends at {24 + area:#x}, past the file ({len(data):#x})')
     offsets = struct.unpack_from(f'>{count}I', data, 24)
     base = 24 + 4 * count
     out = []
@@ -120,14 +140,16 @@ def parse(data):
                 break
             stack.pop()
             continue
+        _need(data, pos, 1, 'an element header')
         head = data[pos]
         pos += 1
-        e = Element(strings[tag], head >> 4)
+        e = Element(_string(strings, tag, pos), head >> 4)
         for _ in range(head & 0xF):
             k, pos = _varint(data, pos)
             v, pos = _varint(data, pos)
-            e.attributes.append((strings[k], strings[v]))
+            e.attributes.append((_string(strings, k, pos), _string(strings, v, pos)))
         if e.kind == CONTAINER:
+            _need(data, pos, 1, 'a container')
             pos += 1
             e.children = []
             (stack[-1].children if stack else roots).append(e)
@@ -135,17 +157,24 @@ def parse(data):
             continue
         if e.kind == TEXT:
             idx, pos = _varint(data, pos)
-            e.text = strings[idx]
+            e.text = _string(strings, idx, pos)
         elif e.kind == NUMBERS:
             start = pos
             count, pos = _varint(data, pos)
             size, pos = _varint(data, pos)
+            _need(data, pos, count * size, f'{count} numbers of {size} bytes')
             pos += count * size
             e.raw = data[start:pos]
         else:
+            _need(data, pos, 2, 'a value')
             e.raw = data[pos:pos + 2]
             pos += 2
         (stack[-1].children if stack else roots).append(e)
+    if not roots:
+        raise ValueError('damaged .dbx: no element after the string table (a partition has at least its root)')
+    if stack:
+        raise ValueError(f'truncated .dbx: {len(stack)} container(s) not closed at the end of the file '
+                         f'(innermost {stack[-1].tag!r})')
     return DbxFile(strings, roots)
 
 

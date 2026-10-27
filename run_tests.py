@@ -1,23 +1,32 @@
 r"""Runs the suite's tests: one line per test, the failures' output at the end, exit code 1 if any failed.
 
-  python run_tests.py [quick | bf1943] [--only <name>] [--list]
+  python run_tests.py [quick | bf1943] [--only <name>] [--list] [--strict]
+
+A test that skips (its data is missing: a line starting "skip") is shown as SKIP, one that skipped some of its
+checks as "ok, partly skipped", and both are counted in the summary: a passing run is not full coverage unless the
+summary says nothing was skipped. --strict fails the run when anything was skipped (use it before a push). An
+--only that matches no test is an error, not "0 of 0 passed".
 
 Every test is about BF1943 or the tools that work on it; tests for BFBC2 data and for the copied tools not yet
 adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
-  quick   no game data, about a minute: repository rules, error handling, the STFS reader on packages it builds,
-          the Xenia kit's patch file, assembler and bot code, NavKit's builder rules (both variants), the offline
-          sampler on a made-up level, jump links to a made-up ship's gun platform, a full build of a made-up level
-          with a 0.8 m / 0.2 m seam, the navigation reader's heights, the Xenia run reader on a log it writes, the
-          executable tools' workspace lookup
+  quick   no game data, one to two minutes: repository rules, error handling and every command-line tool's errors,
+          the DBX reader on damaged files, the RSNV file (both byte orders, search, locate, damaged files), the STFS
+          reader on packages it builds, the Xenia kit's patch file, assembler and bot code, NavKit's builder rules
+          (both variants), the offline sampler on a made-up level, rsnvtool on a made-up file, jump links to a
+          made-up ship's gun platform, a full build of a made-up level with a 0.8 m / 0.2 m seam, vehicle navigation
+          (ground and sea grids, trips, heading-aware planning, take-off lanes), the navigation reader's heights,
+          the Xenia run reader on a log it writes, the executable tools' workspace lookup and vector p-code generator
   bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), about 5 minutes: the kit's
           full build, every BF1943 bundle and DBX partition, terrain and water on every level, the menu movies, the
           spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit; the level loader on every map, DbxEdit
           and LevelDiff on BF1943 partitions, DbxEdit's BF1943 level check (shipped levels pass, broken copies fail),
           the bundle tool's command line, NavKit's prepare step, the hub, and the
           3D tools (the Navigation Studio when a Wake Island build exists), the enclosure probe on Wake Island's
-          samples, the executable tools from a research workspace (skipped without one)
+          samples, the RSNV export of your builds (skipped without a Wake Island build), the executable tools from a
+          research workspace (skipped without one)
 
-Run `quick` before every commit and `bf1943` before every push.
+--only <part of a name> runs the matching tests; --list lists them without running.
+Run `quick` before every commit and `bf1943 --strict` before every push.
 """
 import os
 import subprocess
@@ -39,6 +48,7 @@ def tests():
         ('repository rules', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_repo.py')]),
         ('error handling and logs', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_errors.py')]),
         ('navigation reader: cell heights use the node offset', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navdata_offset.py')]),
+        ('DBX reader: truncated and damaged files refused', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx_malformed.py')]),
         ('RSNV navigation file: both byte orders, search, locate, damaged files', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_rsnv.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
         ('STFS reader, built packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
@@ -101,27 +111,49 @@ def main(argv):
     tier = next((a for a in argv[1:] if a in SELECT), 'quick')
     only = argv[argv.index('--only') + 1].lower() if '--only' in argv else None
     chosen = [x for x in tests() if x[1] in SELECT[tier] and (only is None or only in x[0].lower())]
+    if only is not None and not chosen:
+        print(f'error: --only {only!r} matches no {tier} test (see --list)')
+        return 1
     if '--list' in argv:
         for name, t, _ in chosen:
             print(f'{t:6s} {name}')
         return 0
-    print(f'BF1943 Tool Suite tests: {tier}, {len(chosen)} test(s)')
-    failures, start = [], time.time()
+    strict = '--strict' in argv
+    print(f'BF1943 Tool Suite tests: {tier}, {len(chosen)} test(s)' + (' (strict: a skip fails)' if strict else ''))
+    failures, skipped, partly, start = [], [], [], time.time()
     for name, t, args in chosen:
         t0 = time.time()
         r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE)
         out = (r.stdout + r.stderr).strip()
         main_out = r.stdout.strip() or out            # the summary line is the test's own last line, not a warning it printed
-        last = main_out.splitlines()[-1] if main_out else ''
-        ok = r.returncode == 0
-        print(f'{"ok  " if ok else "FAIL"} {name:42s} {time.time() - t0:6.1f} s   {last[:90]}', flush=True)
-        if not ok:
+        lines = main_out.splitlines()
+        last = lines[-1] if lines else ''
+        skips = [ln for ln in lines if ln.lower().startswith('skip')]
+        if r.returncode != 0:
+            status = 'FAIL'
             failures.append((name, out))
+        elif skips and last.lower().startswith('skip'):
+            status = 'SKIP'                                # the whole test: its data is missing
+            skipped.append((name, last))
+        elif skips:
+            status = 'ok* '                                # passed, but some checks were skipped
+            partly.append((name, skips))
+        else:
+            status = 'ok  '
+        print(f'{status} {name:42s} {time.time() - t0:6.1f} s   {last[:90]}', flush=True)
     for name, out in failures:
         print(f'\n--- {name} (last 25 lines) ---')
         print('\n'.join(out.splitlines()[-25:]))
-    print(f'\n{len(chosen) - len(failures)} of {len(chosen)} passed in {time.time() - start:.0f} s')
-    return 1 if failures else 0
+    if skipped or partly:
+        print('\nnot fully run:')
+        for name, why in skipped:
+            print(f'  SKIP {name}: {why}')
+        for name, why in partly:
+            print(f'  ok*  {name}: ' + '; '.join(why))
+    passed = len(chosen) - len(failures) - len(skipped)
+    print(f'\n{passed} of {len(chosen)} passed' + (f', {len(skipped)} skipped' if skipped else '')
+          + (f', {len(partly)} partly skipped' if partly else '') + f' in {time.time() - start:.0f} s')
+    return 1 if failures or (strict and (skipped or partly)) else 0
 
 
 if __name__ == '__main__':

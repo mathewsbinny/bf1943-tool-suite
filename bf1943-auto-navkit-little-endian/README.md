@@ -14,7 +14,8 @@ Standalone tooling to create AI navigation data (`pathdata.hpd`) for Battlefield
 levels – including multiplayer maps that never shipped with any – so the game's own AI can move on
 them. Developed for Project OPFOR and published for other modders as `bfbc2-auto-navkit`, the automated
 navigation-data generator of the BFBC2 suite. It measures levels through Project OPFOR's in-game sampler,
-so it needs an OPFOR install, plus the suite's FbrbTool and DbxEdit.
+so it needs an OPFOR install, plus FbrbTool and DbxEdit (FbrbTool from OPFOR's `tools\` folder: this suite's
+`bf1943-fbrb-tool` no longer has it; DbxEdit from this suite's `bf1943-dbx-tools` or OPFOR's `tools\`).
 
 **To use it, start with [QUICKSTART.md](QUICKSTART.md).** Double-click `navkitGUI.pyw` for the window, or
 run `python navkit.py` from a command prompt.
@@ -48,7 +49,8 @@ licence error. NavKit replaces it with independent code.
 ```
 QUICKSTART.md        how to build path data for a level, step by step
 navkitGUI.pyw        the NavKit window (Tkinter): the steps below as buttons
-navkit.py            driver: levels / prepare / sample / build / check / install / restore / status / all
+navkit.py            driver: levels / prepare / sample / build / check / apply / install / restore / status / all /
+                     compare
 research\            specification (KYNAPSE_SPEC.md) and images (img\)
 tools\               NavKit tools (Python 3.13 + numpy / matplotlib)
   hpdtool.py         pathdata.hpd: info / sector / roundtrip / coverage / meshtrip
@@ -73,7 +75,13 @@ tools\               NavKit tools (Python 3.13 + numpy / matplotlib)
   navedits.py        the walkability edits of a navigation side file as generator inputs (navkit.py apply)
   navlinks.py        a side file's links and route edges written into a path-data file's route graph
   navtraversal.py    a side file's traversal annotations (ladders, jumps ...) as <level>.traversal.json
-src\, tests\         (reserved for the generator proper and its tests)
+  detailed.py        which sectors to build as detailed zones (pitch 0.2), from the level alone
+  ladders.py         the level's ladders (ladders.json) for ladder links
+  sample_all.py      sample several levels in one unattended run
+  graphstats.py      route-graph statistics of .hpd files (no docstring; imports hpdtool from OPFOR's navkit\tools)
+src\                 (reserved for the generator proper)
+tests\               the rule tests on made-up data (water, edits, area links, portals, soldiers, headroom, bridges,
+                     dynamic props, collision index, lips, roof pruning) and Havok 4.6.1 on BF1943's Wake Island
 ```
 
 ## Detailed zones, ladders and walkability rules (2026-10-21 / 22)

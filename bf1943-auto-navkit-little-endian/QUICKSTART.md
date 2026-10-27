@@ -26,8 +26,9 @@ You need:
 1. **Project OPFOR, set up and built.** NavKit measures levels in OPFOR's copy of the game, through
    OPFOR's in-game sampler. In the OPFOR folder, run `setup_game.bat` (the game copy), then `build.bat`
    (OPFOR's core). `OPFOR.exe` must be able to start the game.
-2. **FbrbTool and DbxEdit** from the suite: run `build.bat` in its `bf1943-fbrb-tool` and `bf1943-dbx-tools` folders.
-   NavKit also accepts the copies OPFOR's `build_menus.bat` puts in OPFOR's `tools\` folder.
+2. **FbrbTool and DbxEdit.** OPFOR's `build_menus.bat` puts both in OPFOR's `tools\` folder, and NavKit uses
+   them there. This suite's `bf1943-fbrb-tool` no longer has FbrbTool (it reads BFBC2's bundles, not BF1943's).
+   DbxEdit can also be built here: run `build.bat` in the suite's `bf1943-dbx-tools` folder.
 3. **Where OPFOR is.** NavKit looks for a `Project OPFOR` folder next to one of the folders it sits in (for example
    `C:\Games\Project OPFOR` next to `C:\Games\Project OPFOR Toolkit`). If yours is elsewhere, set the
    environment variable `OPFOR_ROOT` to it, or add `--opfor <folder>` to every command.
@@ -201,7 +202,7 @@ bottom and top height. Make the top higher than the tallest roof. A larger area 
 | "...has no AI path data, so its AI (and the sampler) may not start" | The level is a stock multiplayer map, which is not supported yet. See [What works today](#what-works-today). |
 | A run was cancelled or the PC crashed during sampling | NavKit edits `game\opfor.ini` while sampling and puts it back afterwards. If that was interrupted, the next Sample puts it back, and **Cancel** in the window does too. The saved copy is `work\navkit\opfor.ini.backup`. |
 | The AI acts oddly with NavKit's file installed | Click **Restore original** (or `navkit.py restore <level>`). The level is back to its original data. |
-| "FbrbTool.exe not found" / "DbxEdit.exe not found" | Run `build.bat` in the suite's `bf1943-fbrb-tool` and `bf1943-dbx-tools` folders (see [Before you start](#before-you-start)). |
+| "FbrbTool.exe not found" / "DbxEdit.exe not found" | Run OPFOR's `build_menus.bat`, which puts both in OPFOR's `tools\` folder; DbxEdit can also be built with `build.bat` in the suite's `bf1943-dbx-tools` folder (see [Before you start](#before-you-start)). |
 | "Project OPFOR not found" / "no game copy" | Tell NavKit where OPFOR is (`OPFOR_ROOT` or `--opfor`), and run OPFOR's `setup_game.bat` if it has no `game\` folder yet. |
 
 ## How NavKit stays clean

@@ -54,7 +54,8 @@ public class TestDecodeCoverage extends GhidraScript {
                     at+=4;synthetic++;continue;
                 }
                 boolean opaque=userOps(ins).stream().anyMatch(o->o.startsWith("VMX128_"));
-                boolean expectOpaque=c[4].equals("opaque")||(c[4].startsWith("vrlimi128")&&((word>>20)&1)==1);
+                boolean expectOpaque=c[4].equals("opaque")||(c[4].startsWith("vrlimi128")&&((word>>20)&1)==1)
+                    ||(c[4].startsWith("partial:")&&!java.util.Arrays.asList(c[4].substring(8).split("\\|")).contains("xmuimm="+((word>>16)&31)));
                 check(opaque==expectOpaque,"Semantics class "+c[0]+" word "+Integer.toHexString(word)+" ops "+userOps(ins));
                 if(c[0].matches("(lv|stv)[lr]xl?(128)?")){
                     // Unaligned forms: memory confined to one aligned 16-byte access; the opaque op never receives a pointer.

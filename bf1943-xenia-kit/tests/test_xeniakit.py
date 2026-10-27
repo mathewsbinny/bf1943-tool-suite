@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -109,22 +110,43 @@ def full_build():
     if not (os.path.isfile(package) and os.path.isdir(xenia)):
         print(f'skip full build: no package at {package} or no Xenia at {xenia}')
         return
-    with tempfile.TemporaryDirectory() as tmp:
+    before = install_state(xenia)
+    with tempfile.TemporaryDirectory() as work:
+        # the builder writes into the Xenia folder (the patch files, the fixed exe) and a normal build removes a
+        # bots patch: build against a scratch folder holding only a copy of the exe, never the real install
+        scratch = os.path.join(work, 'xenia')
+        os.makedirs(scratch)
+        shutil.copyfile(os.path.join(xenia, netfix.EXE), os.path.join(scratch, netfix.EXE))
+        tmp = os.path.join(work, 'out')
         py = [sys.executable, '-B', os.path.join(KIT, 'xeniakit.py')]
-        r = subprocess.run(py + ['build', package, xenia, '--out', tmp], capture_output=True, text=True)
+        r = subprocess.run(py + ['build', package, scratch, '--out', tmp], capture_output=True, text=True)
         check(r.returncode == 0, 'a full build from the package succeeds' + ('' if r.returncode == 0 else ': ' + r.stdout[-400:] + r.stderr[-400:]))
-        if r.returncode:
-            return
-        r = subprocess.run(py + ['verify', '--out', tmp], capture_output=True, text=True)
-        check(r.returncode == 0, 'verify accepts the fresh build')
-        m = json.load(open(os.path.join(tmp, 'title', 'title-manifest.json'), encoding='utf-8'))
-        check(sorted(f['path'] for f in m['files'] if f['replaced']) == ['dist/xenon/config.zz', 'dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb',
-                                                                         'dist/xenon/menu/main/mainmenu-00.fbrb'],
-              'exactly the main menu, in-game menu and config.zz are edited')
-        with open(os.path.join(tmp, 'title', 'default.xex'), 'ab') as f:
-            f.write(b'x')
-        r = subprocess.run(py + ['verify', '--out', tmp], capture_output=True, text=True)
-        check(r.returncode == 1, 'verify notices a changed title file')
+        if r.returncode == 0:
+            r = subprocess.run(py + ['verify', '--out', tmp], capture_output=True, text=True)
+            check(r.returncode == 0, 'verify accepts the fresh build')
+            m = json.load(open(os.path.join(tmp, 'title', 'title-manifest.json'), encoding='utf-8'))
+            check(sorted(f['path'] for f in m['files'] if f['replaced']) == ['dist/xenon/config.zz', 'dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb',
+                                                                             'dist/xenon/menu/main/mainmenu-00.fbrb'],
+                  'exactly the main menu, in-game menu and config.zz are edited')
+            check(os.path.isfile(os.path.join(scratch, 'patches', json.load(open(os.path.join(KIT, 'known.json'), encoding='utf-8'))['patch']['file'])), 'the patch went to the scratch Xenia')
+            with open(os.path.join(tmp, 'title', 'default.xex'), 'ab') as f:
+                f.write(b'x')
+            r = subprocess.run(py + ['verify', '--out', tmp], capture_output=True, text=True)
+            check(r.returncode == 1, 'verify notices a changed title file')
+    check(install_state(xenia) == before, f'the real Xenia install is untouched ({xenia}: patches and fixed exe unchanged)')
+
+
+def install_state(d):
+    """Every file the builder may write in a Xenia folder (patches/, the fixed exe), by SHA-256."""
+    out = {}
+    for root, _dirs, files in os.walk(os.path.join(d, 'patches')):
+        for f in files:
+            p = os.path.join(root, f)
+            out[os.path.relpath(p, d)] = hashlib.sha256(open(p, 'rb').read()).hexdigest()
+    fixed = os.path.join(d, netfix.FIXED)
+    if os.path.isfile(fixed):
+        out[netfix.FIXED] = hashlib.sha256(open(fixed, 'rb').read()).hexdigest()
+    return out
 
 
 if __name__ == '__main__':

@@ -49,3 +49,8 @@ def configure():
     # join_groups floods 2 m past a sector's window: ground joined to the rest of its sector only round a corner of
     # the neighbour sector (Coral Sea's last seam break, 2026-10-26)
     navbuild.JOIN_MARGIN = 2.0
+    # beside a mixed seam, the 0.8 m graph is told where the 0.2 m samples join ground its step rule cannot (a lip the
+    # coarse grid does not resolve: Coral Sea's last seam break, 2026-10-26)
+    navbuild.SEAM_FINE_LINKS = True
+    # a sector's window grows 1 m past a mixed seam, so both grids' cells overlap there (2026-10-26)
+    navbuild.MIXED_OVERLAP = 1.0

@@ -2,6 +2,7 @@ r"""NavKit (big-endian): navigation for BF1943's ground vehicles - a build per c
 clearance, exported to RSNV as its own world (<level>.jeep.rsnv, <level>.tank.rsnv) for the navigation runtime
 (project-opfor-bf1943 rsnav).
 
+  groundnav1943.py prepare <level>            the vehicles' collision (sample runs it when it is missing)
   groundnav1943.py sample <level> <class>     the collision samples with the class's clearance (navsample1943.py)
   groundnav1943.py build  <level> <class>     the drivable grid, its route graph, the RSNV world
   groundnav1943.py all    <level> [class]     both (classes: jeep, tank; default both)

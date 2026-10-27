@@ -12,7 +12,8 @@ in place by the stride schema (SCHEMA) and then read native types.
 
   header (64 B): 'RSNV', u32 0x01020304 in the writer's order, u16 version, u16 flags (bit 0 big-endian), u32 file
     size, u32 section count, u32 level id (FNV-1a of the level name), f32 sea level, f32 agent radius, f32 height,
-    f32 step, f32 max water depth, u32 first 4 bytes of the source .hpd's SHA-256, 16 reserved bytes
+    f32 step, f32 max water depth, u32 first 4 bytes of the source .hpd's SHA-256, u32 at 48 the search heuristic's
+    scale in 1/2^24 (H_SCALE_AT; 0 in files before 2026-10-26: 0.999), 12 reserved bytes
   directory: n x {u32 tag, u32 offset, u32 count, u32 stride} from 0x40
   SECT 32  u16 id 0xXXYY, u8 layer, u8 pitch code (0: 0.2 m, 1: 0.8 m), f32 minX, minZ, maxX, maxZ, u32 first GBKT
            bucket (25 x 25 buckets of 4 m from (minX, minZ), row-major in z), u16 first area, u16 area count, u32 0
@@ -54,6 +55,9 @@ import numpy as np
 MAGIC = b'RSNV'
 VERSION = 1
 HEADER = 64
+H_SCALE_AT = 48         # header: u32 the search heuristic's scale in 1/2^24 (2026-10-26; 0 = files before: 0.999)
+H_SCALE_ONE = 1 << 24
+H_SCALE_LEGACY = 0.999
 EDGE_WALK, EDGE_LADDER_UP, EDGE_LADDER_DOWN, EDGE_DROP, EDGE_JUMP, EDGE_BOARD, EDGE_ALIGHT = range(7)
 EDGE_NAMES = ['walk', 'ladder up', 'ladder down', 'drop', 'jump', 'board', 'alight']
 NAUX_SHALLOW, NAUX_WADE, NAUX_BORDER, NAUX_LADDER_END, NAUX_JUMP_END = 1, 2, 4, 8, 16
@@ -65,7 +69,8 @@ PITCHES = {0: 0.2, 1: 0.8}
 # line of sight (rsnav's rsnav_los.c): the soldier's step, the ground change allowed, coarse zones' allowances
 LOS_STEP = 0.37
 LOS_DY = 0.6
-LOS_COARSE_DY = LOS_STEP + 0.8
+LOS_COARSE_DY = LOS_STEP + 0.8 * math.sqrt(2.0)   # the step plus a diagonal 0.8 m cell at 45 degrees (2026-10-26; was
+                                                   # one straight cell, 1.17 m: NavKit's step rule allows the diagonal)
 COARSE_GAP = 1.0
 LOS_GRACE = 0.25
 LOS_SEAM = 1.0          # m: line of sight looks for a sector's areas this far past its rectangle (2026-10-26): the
@@ -104,6 +109,24 @@ for _t, _f in SCHEMA.items():
                                          'CEDG': 16, 'OREF': 4}[_t], _t
 
 
+def heuristic_scale(node_pos, src, dst, cost):
+    """The heuristic's scale for a graph (u32, 1/2^24 units, for the header): the least cost / (16 x length) over the
+    edges of nonzero length (lengths between the float32 node positions, as the search measures them), at most
+    H_SCALE_LEGACY, rounded down; 1 (about 0) when such an edge costs 0. Every path then costs at least 16 x scale x its
+    length, and so at least 16 x scale x the straight distance: the heuristic is admissible."""
+    p = np.asarray(node_pos, np.float32).astype(np.float64)
+    d = p[np.asarray(dst)] - p[np.asarray(src)]
+    ln = np.sqrt((d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1]) + d[:, 2] * d[:, 2])
+    c = np.asarray(cost, np.float64)
+    m = ln > 0
+    if not m.any():
+        return int(H_SCALE_LEGACY * H_SCALE_ONE)
+    if (c[m] == 0).any():
+        return 1
+    s = min(float((c[m] / (16.0 * ln[m])).min()), H_SCALE_LEGACY)
+    return max(int(math.floor(s * H_SCALE_ONE)) - 1, 1)          # one unit down: safe against the division's rounding
+
+
 def fnv1a(text):
     h = 0x811C9DC5
     for b in text.encode('utf-8'):
@@ -138,7 +161,7 @@ def write(path, sections: Dict[str, object], header: dict, big_endian=False):
                                fnv1a(header['level']))
     out += struct.pack(e + '5f', header['sea_level'], header['radius'], header['height'], header['step'],
                        header['water_depth'])
-    out += bytes.fromhex(header['hpd_sha256'][:8]) + bytes(16)
+    out += bytes.fromhex(header['hpd_sha256'][:8]) + struct.pack(e + 'I', int(header.get('h_scale_q', 0))) + bytes(12)
     assert len(out) == HEADER
     for t, o, count, stride in directory:
         out += t.encode('ascii') + struct.pack(e + 'III', o, count, stride)
@@ -194,6 +217,14 @@ class World:
     step: float
     water_depth: float
     sections: Dict[str, tuple] = field(default_factory=dict)       # tag -> (offset, count, stride)
+    h_scale_q: int = 0              # the heuristic's scale in 1/2^24 (header); 0: H_SCALE_LEGACY
+
+    @property
+    def h_scale(self):
+        """The search heuristic's scale: h = floor(16 x distance x h_scale). The exporter writes the least cost per
+        1/16 m of length over the file's edges (heuristic_scale), so h never exceeds the cost of any path: admissible
+        (with 0.999, many short edges each rounded down could sum below h, and a costlier path came back)."""
+        return self.h_scale_q / H_SCALE_ONE if self.h_scale_q else H_SCALE_LEGACY
     raw: bytes = b''
     sectors: list = field(default_factory=list)
     areas: List[Area] = field(default_factory=list)
@@ -316,14 +347,12 @@ class World:
         return 0 if abs(f) < 0.5 - LOS_GRAZE else (1 if f > 0 else -1)
 
     def on_cell(self, a, x, z):
-        """Whether (x, z) lies on area a's walkable ground: its nearest cell is walkable or, in a fine (0.2 m) area,
-        it lies within LOS_GRAZE of the square of a walkable cell beside it (rsnav's raw_ok)."""
+        """Whether (x, z) lies on area a's walkable ground: its nearest cell is walkable or it lies within LOS_GRAZE
+        of the square of a walkable cell beside it (rsnav's raw_ok; in 0.8 m areas too from 2026-10-26)."""
         u, v = (x - a.x0) / a.pitch, (z - a.z0) / a.pitch
         i, j = math.floor(u + 0.5), math.floor(v + 0.5)
         if self.walkable(a, i, j):
             return True
-        if a.pitch_mm_ >= COARSE_MM:
-            return False
         si, sj = self._lean(u - i), self._lean(v - j)
         return bool((si and self.walkable(a, i + si, j)) or (sj and self.walkable(a, i, j + sj))
                     or (si and sj and self.walkable(a, i + si, j + sj)))
@@ -367,7 +396,7 @@ class World:
         u, v = (x - a.x0) / a.pitch, (z - a.z0) / a.pitch
         i, j = math.floor(u + 0.5), math.floor(v + 0.5)
         if not self.walkable(a, i, j):
-            return False
+            return self.on_cell(a, x, z)       # a sample leaning on a cell of the area beside its own (LOS_GRAZE)
         y = self.ground(a, x, z)
         si, sj = self._lean(u - i), self._lean(v - j)
         for di, dj in ((si, 0), (0, sj)):
@@ -453,40 +482,86 @@ class World:
         return abs(d) <= (LOS_COARSE_DY if self.areas[cur].pitch_mm_ >= COARSE_MM else LOS_DY)
 
     def validate(self):
-        """Problems with the file's internal consistency ([] when none)."""
+        """Problems with the file's contents ([] when none): every index and range the readers follow, the checks of
+        rsnav's rsn_load (rsnav_load.c) and with its messages, so a file this accepts the runtime accepts and the other
+        way round (2026-10-26: an ANOD node id past the nodes passed and crashed nearest_node)."""
         out = []
         n = len(self.node_pos)
-        if self.node_first_edge[-1] != len(self.edge_target):
-            out.append('NODE sentinel does not end at the edge count')
+        n_edge, n_area, n_sect = len(self.edge_target), len(self.areas), len(self.sectors)
+        coord = lambda v: -1e6 < v < 1e6                    # rsnav's coordinate(): finite, inside +-1e6 m
+        if n >= 1 << 24:
+            out.append('more nodes than an edge can address')
+        if len(self.node_area) != n:
+            out.append('NAUX count is not the node count')
         if np.any(np.diff(self.node_first_edge) < 0):
             out.append('NODE first edges not ascending')
-        if len(self.edge_target) and (self.edge_target.max() >= n):
+        if not all(coord(float(v)) for v in self.node_pos.ravel()):
+            out.append('NODE position not a number or past 1e6 m')
+        if self.node_first_edge[-1] != n_edge or (n and self.node_first_edge[0] != 0):
+            out.append('NODE edge ranges do not cover EDGE')
+        if n_edge and int(self.edge_target.max()) >= n:
             out.append('EDGE target out of range')
+        if len(self.node_area) == n and n and (np.any((self.node_area != 0xFFFF) & (self.node_area >= n_area))
+                                               or np.any(self.node_sector >= n_sect)):
+            out.append('NAUX area or sector out of range')
+        for sc in self.sectors:
+            _id, _l, _pc, x0, z0, x1, z1, first_bucket, first_area, areas, _r = sc
+            if first_bucket + BUCKETS * BUCKETS > len(self.gbkt):
+                out.append('SECT buckets past GBKT')
+            if first_area + areas > n_area:
+                out.append('SECT areas past AREA')
+            if not (x0 <= x1 and z0 <= z1 and coord(x0) and coord(z0) and coord(x1) and coord(z1)):
+                out.append('SECT bounds inverted, not numbers or past 1e6 m')
+        if len(self.gbkt) and int((self.gbkt[:, 0] + self.gbkt[:, 1]).max()) > len(self.glst):
+            out.append('GBKT list past GLST')
+        if len(self.glst) and int(self.glst.max()) >= n_area:
+            out.append('GLST area out of range')
+        if len(self.anod) and int(self.anod.max()) >= n:
+            out.append('ANOD node out of range')
         for a in self.areas:
             row = (a.width + 7) >> 3
             if a.bmap + row * a.height > len(self.bmap):
-                out.append(f'AREA {a.index}: bitmap past BMAP')
-            if a.hght + a.hw * a.hh > len(self.hght):
-                out.append(f'AREA {a.index}: height grid past HGHT')
+                out.append('AREA bitmap past BMAP')
+            if a.hght + a.hw * a.hh > len(self.hght) or a.hw == 0 or a.hh == 0:
+                out.append('AREA height grid past HGHT or empty (every area has at least one block)')
             if a.first_node + a.nodes > len(self.anod):
-                out.append(f'AREA {a.index}: nodes past ANOD')
-        if len(self.glst) and int(self.glst.max()) >= len(self.areas):
-            out.append('GLST area id out of range')
-        # node indices of the other sections, as rsnav's loader checks them (rsn_load refuses the file otherwise)
-        bad = sum(1 for L in self.ladders if L[7] >= n or L[8] >= n)
-        if bad:
-            out.append(f'LADR node out of range ({bad})')
-        bad = sum(1 for o in self.offmesh if o[3] != 0xFFFFFFFF and o[3] >= n)
-        if bad:
-            out.append(f'OFFM node out of range ({bad})')
-        bad = sum(1 for i in self.islands if i[1] >= n)
-        if bad:
-            out.append(f'ISLD representative out of range ({bad})')
-        for t, f in ((self.node_area, 'NAUX area'),):
-            bad = (t != 0xFFFF) & (t >= len(self.areas))
-            if bad.any():
-                out.append(f'{f} out of range ({int(bad.sum())})')
-        return out
+                out.append('AREA nodes past ANOD')
+            if a.first_portal + a.portals > len(self.ports):
+                out.append('AREA portals past PORT')
+            if a.pitch_mm_ < 50 or a.sector >= n_sect:
+                out.append('AREA pitch or sector invalid')
+            if a.hstep_mm != 0 and (a.hstep_mm < a.pitch_mm_ or a.hstep_mm > 100000):
+                out.append('AREA height grid step under its pitch or over 100 m')
+            if not (a.min_y <= a.max_y and coord(a.x0) and coord(a.z0) and coord(a.min_y) and coord(a.max_y)):
+                out.append('AREA corner or heights inverted, not numbers or past 1e6 m')
+        if any(p[5] >= n_area or p[6] >= n_area for p in self.ports):
+            out.append('PORT area out of range')
+        if any(L[7] >= n or L[8] >= n for L in self.ladders):
+            out.append('LADR node out of range')
+        if any(o[3] != 0xFFFFFFFF and o[3] >= n for o in self.offmesh):
+            out.append('OFFM node out of range')
+        if any(i[1] >= n for i in self.islands):
+            out.append('ISLD representative out of range')
+        oref = getattr(self, 'oref', [o for objs in self.cond.values() for o in objs])
+        if any(o >= len(self.objects) for o in oref):
+            out.append('OREF object out of range')
+        rows = getattr(self, 'cedg_rows', [(k, 0, len(v), 0) for k, v in sorted(self.cond.items())])
+        c = 0
+        for e_ in range(n_edge):                           # rsn_load's walk: flagged edges listed, in order
+            flagged = bool(int(self.edge_flags[e_]) & EDGEF_COND)
+            listed = c < len(rows) and rows[c][0] == e_
+            if flagged != listed:
+                out.append('CEDG does not list exactly the conditional edges, in order')
+                break
+            if listed:
+                if rows[c][1] + rows[c][2] > len(oref) or rows[c][2] == 0:
+                    out.append('CEDG objects past OREF or none')
+                    break
+                c += 1
+        else:
+            if c != len(rows):
+                out.append('CEDG lists an edge out of range or out of order')
+        return list(dict.fromkeys(out))
 
 
 def _array(raw, e, off, count, fmt):
@@ -496,6 +571,8 @@ def _array(raw, e, off, count, fmt):
 
 def load(src):
     raw = src if isinstance(src, (bytes, bytearray)) else open(src, 'rb').read()
+    if len(raw) < HEADER:
+        raise ValueError('RSNV: shorter than its header')
     if raw[:4] != MAGIC:
         raise ValueError('not an RSNV file')
     e = '<' if struct.unpack_from('<I', raw, 4)[0] == 0x01020304 else '>'
@@ -508,6 +585,9 @@ def load(src):
         raise ValueError(f'RSNV: header says {size} bytes, the file has {len(raw)}')
     sea, radius, height, step, water = struct.unpack_from(e + '5f', raw, 0x18)
     w = World(level_id, e == '>', sea, radius, height, step, water, raw=bytes(raw))
+    w.h_scale_q = struct.unpack_from(e + 'I', raw, H_SCALE_AT)[0]
+    if nsec > 4 * len(SCHEMA) + 8 or HEADER + 16 * nsec > size:
+        raise ValueError('RSNV: section directory outside the file')
     for k in range(nsec):
         tag = raw[HEADER + 16 * k:HEADER + 16 * k + 4].decode('ascii')
         off, count, stride = struct.unpack_from(e + 'III', raw, HEADER + 16 * k + 4)
@@ -515,11 +595,15 @@ def load(src):
             raise ValueError(f'RSNV: section {tag} outside the file or misaligned')
         if tag in SCHEMA and stride != struct.calcsize('<' + SCHEMA[tag]):
             raise ValueError(f'RSNV: section {tag} stride {stride}')
+        if tag in w.sections:
+            raise ValueError(f'RSNV: section {tag} appears twice')
         w.sections[tag] = (off, count, stride)
     for need in ('SECT', 'NODE', 'NAUX', 'EDGE', 'AREA', 'BMAP', 'HGHT', 'GBKT', 'GLST', 'ANOD'):
         if need not in w.sections:
             raise ValueError(f'RSNV: no {need} section')
     sec = lambda t: w.sections.get(t, (0, 0, 0))
+    if sec('NODE')[1] < 1:
+        raise ValueError('RSNV: NODE has no sentinel')
     o, c, _ = sec('NODE')
     nodes = np.frombuffer(raw, np.dtype([('p', e + 'f4', 3), ('e', e + 'u4')]), c, o)
     w.node_pos = nodes['p'][:-1].astype(np.float64)
@@ -556,14 +640,20 @@ def load(src):
     w.min_pitch = float(np.float32(np.float32(pm) / np.float32(1000.0)))      # as rsnav computes it, in float
     w.objects = _array(raw, e, *sec('OBJT')[:2], SCHEMA['OBJT']) if 'OBJT' in w.sections else []
     w.cond = {}                                     # edge -> [object indices]
-    if 'CEDG' in w.sections:
-        o, c, _ = sec('OREF')
-        oref = list(np.frombuffer(raw, np.dtype(e + 'u4'), c, o)) if c else []
-        for edge, first, count, _r in _array(raw, e, *sec('CEDG')[:2], SCHEMA['CEDG']):
-            w.cond[int(edge)] = [int(x) for x in oref[first:first + count]]
+    w.cedg_rows = _array(raw, e, *sec('CEDG')[:2], SCHEMA['CEDG']) if 'CEDG' in w.sections else []
+    o, c, _ = sec('OREF')
+    w.oref = [int(x) for x in np.frombuffer(raw, np.dtype(e + 'u4'), c, o)] if c else []
+    for edge, first, count, _r in w.cedg_rows:
+        w.cond[int(edge)] = w.oref[first:first + count]
     if 'META' in w.sections:
         o, c, _ = sec('META')
-        w.meta = json.loads(raw[o:o + c].decode('utf-8'))
+        try:
+            w.meta = json.loads(raw[o:o + c].decode('utf-8'))
+        except ValueError:                          # provenance only: the runtime does not read META
+            w.meta = {'unreadable META': True}
+    problems = w.validate()
+    if problems:
+        raise ValueError('RSNV: ' + problems[0])
     return w
 
 
@@ -594,7 +684,8 @@ def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=Non
 def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(256, 256, 256), kind_extra=None,
            penalty=None, destroyed=None, tight_extra=0):
     """The reference search (design sections 2.6 and 6.3), which the C runtime (rsnav) must match exactly: integer
-    costs in 1/16 m; heuristic floor(16 x Euclidean x 0.999) in double precision, summed x, y, then z; the open list
+    costs in 1/16 m; heuristic floor(16 x Euclidean x w.h_scale) in double precision (admissible: exporter 1.4 rounds
+    each cost up to 16 x its length, and heuristic_scale bounds the scale by the costs), summed x, y, then z; the open list
     ordered by (f, node); a closed node is never reopened; an equal-cost parent is replaced by a lower-indexed one.
     The goal reached when popped is DONE; otherwise, once max_expansions nodes are expanded or the open list runs out,
     PARTIAL: the path to the expanded node with the least heuristic (then cost, then index), or [start] if none.
@@ -605,9 +696,11 @@ def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(
     fe, tgt, cost, kind = w.node_first_edge, w.edge_target, w.edge_cost, w.edge_kind
     gx, gy, gz = (float(v) for v in pos[goal])
 
+    scale = getattr(w, 'h_scale', H_SCALE_LEGACY)
+
     def h(n):
         dx, dy, dz = float(pos[n][0]) - gx, float(pos[n][1]) - gy, float(pos[n][2]) - gz
-        return math.floor(16.0 * math.sqrt((dx * dx + dy * dy) + dz * dz) * 0.999)
+        return math.floor(16.0 * math.sqrt((dx * dx + dy * dy) + dz * dz) * scale)
     g = {start: 0}
     hv = {start: h(start)}
     parent = {start: -1}

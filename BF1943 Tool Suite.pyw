@@ -460,7 +460,7 @@ class Hub:
 
     # --- Tests --------------------------------------------------------------------------------------
     def tab_tests(self):
-        f = self.form('Tests', 'Check that the tools work on this PC: quick (under a minute, no game data) or bf1943 (on '
+        f = self.form('Tests', 'Check that the tools work on this PC: quick (one to two minutes, no game data) or bf1943 (on '
                                'your BF1943 copy as the Xenia kit extracts it, a few minutes). One line per test; a failure '
                                'shows its output at the end.')
         self.t_tier = tk.StringVar(value='quick')

@@ -9,7 +9,9 @@ Scored against DICE's choice on the 14 levels that have both (2026-10-21): it fi
 sectors (93 %; the flag alone 84 %) and adds 243 of about 2,500 that DICE builds at 0.8 m. The misses have neither a
 flagged object nor stacked floors and stay at 0.8 m; the additions cost sampling and build time, not quality.
 
-Usage: detailed.py <level> [--samples <0.8 m samples.bin>] [--offsets X,Z] [--score]   (--score: against DICE's file)
+Usage: detailed.py <level> --offsets X,Z [--samples <0.8 m samples.bin>] [--score]   (--score: against DICE's file)
+  A BFBC2 level of Project OPFOR (OPFOR_ROOT, else C:/Games/Project OPFOR: its work/levels/<level>). For BF1943
+  levels use detailed1943.py, which applies this rule.
 """
 import json
 import math

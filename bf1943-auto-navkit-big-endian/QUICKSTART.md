@@ -36,7 +36,7 @@ top, then the steps, and a log of what NavKit is doing at the bottom.
    at 0.2 m in the detailed sectors (buildings and other places with floors above floors, which NavKit finds by
    itself). This is the long step: about 30 minutes on Wake Island.
 4. Click **3. Build.** NavKit makes `<level>.hpd` with BF1943's soldier, its ladders, and jump links from ships'
-   decks down to their AA gun platforms. About 15 minutes on Wake Island.
+   decks down to their AA gun platforms and between a carrier's floors a ledge apart. About 15 minutes on Wake Island.
 5. Click **4. Check.** NavKit checks the file's structure and its routes (see [Reading the check](#reading-the-check)).
 6. Click **Show in 3D** to open the build in the Navigation Studio.
 
@@ -109,6 +109,28 @@ python tools\navexport1943.py wake_island_s --big-endian   wake_island_s.be.rsnv
 
 `--check` reads the file back and compares it with the build. Export again after every build (under a minute on Wake Island).
 
+To look inside an export (read-only):
+
+```
+python tools\rsnvtool.py info wake_island_s          sections, counts, edge kinds, tight edges, islands
+python tools\rsnvtool.py validate wake_island_s      exit code 1 on a problem
+python tools\rsnvtool.py --help                      the other commands: locate, los, route, pockets, picture, diff
+```
+
+## Vehicle worlds
+
+After the soldier export, one command builds and checks the worlds of the jeeps, tanks, landing craft and planes:
+
+```
+python tools\navexport_vehicles1943.py wake_island_s                 every class; samples the ground vehicles if their samples are missing
+python tools\navexport_vehicles1943.py wake_island_s --sample        sample the ground vehicles again first
+python tools\navexport_vehicles1943.py wake_island_s --check-only    only the checks, on the worlds already written
+```
+
+`--classes jeep,tank` builds only those classes. The ground vehicles' sampling is the long part (about 11-13 minutes
+per class on a map). It reads `<level>.rsnv` and never changes it. The exit code is 1 when a check fails; the checks
+are in `<level>.vehicles.json`.
+
 ## Where the files go
 
 All of these are in the suite's work folder (`<suite>\work`; the environment variable `BF1943_WORK` sets another):
@@ -121,7 +143,12 @@ All of these are in the suite's work folder (`<suite>\work`; the environment var
 | `work\levels\<level>\navkit\<level>.hpd` | **the result** |
 | `work\levels\<level>\navkit\build.log` | the build's log |
 | `work\levels\<level>\navkit\check.txt`, `check.json` | the check report |
-| `work\levels\<level>\navkit\jump_links.json` | the jump links Build made (ships' AA gun platforms) |
+| `work\levels\<level>\navkit\jump_links.json` | the jump links Build made (ships' AA gun platforms and carrier ledges) |
+| `work\levels\<level>\navkit\<level>.cells.npz` | the build's area cells and ground heights, read by the exporter |
+| `work\levels\<level>\navkit\<level>.rsnv` | the export for the navigation runtime (`.be.rsnv`: big-endian) |
+| `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `.lcvp.rsnv`, `.plane.rsnv` | the vehicle worlds |
+| `work\levels\<level>\navkit\<level>.transfers.json`, `<level>.vehicles.json` | the vehicle worlds' transfers and checks |
+| `work\levels\<level>\vehicles\` | the ground vehicles' collision, samples and logs |
 | `work\levels\<level>\audit\` | the audit's masks (`masks\`) and report (`audit.json`, `audit.md`) |
 
 NavKit never changes your game folder.

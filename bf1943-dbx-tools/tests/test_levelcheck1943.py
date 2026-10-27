@@ -5,7 +5,7 @@ r"""DbxEdit's level check with BF1943's rules, on your BF1943 copy (BF1943_GAME 
 - Every shipped level partition (the five levels) passes: BF1943's rules are chosen from the file, 0 errors, 0 warnings.
 - Every level with --bundle (the partitions it refers to, unpacked): every reference into another file resolves and
   holds the class BF1943's schema declares, and the static cull trees match the level.
-- 25 broken copies of Wake Island (DbxEdit xml, the XML changed, DbxEdit import), and one of its exclusive cull tree:
+- 25 broken copies of Wake Island (DbxEdit xml, the XML changed, DbxEdit import), and five of its exclusive cull tree:
   each fails with its rule's message - errors exit 1, warnings exit 0.
 - --rules bfbc2 and a LevelData with BFBC2's fields choose BFBC2's rules; fixslots repairs shuffled cull slots byte for
   byte, and --slots-from finds them.
@@ -281,7 +281,7 @@ def main():
         broken_tree('cull-leaf-pair', node_edit(leaf, r'<field name="SphereKeyW">[^<]*</field>', f'<field name="SphereKeyW">{int(w) + 3}</field>'),
                     'warning', 'objects with physics have two leaves that differ')
         broken_tree('cull-leaf-radius', node_edit(leaf, r'<field name="SphereKeyW">[^<]*</field>', '<field name="SphereKeyW">0</field>'),
-                    'warning', 'have a radius (SphereKeyW / 4) less than 1/8 m above their Max')
+                    'warning', 'have a SphereKeyW that is not max(5, ceil(4 x (Max + 1/8))) or one more')
         broken_tree('cull-tree-shape', node_edit(0, r'<field name="Right">[^<]*</field>', '<field name="Right">3</field>'),
                     'error', 'are not one pre-order tree followed by 256 zero nodes')
         # a reference into another file with the wrong class (--bundle)

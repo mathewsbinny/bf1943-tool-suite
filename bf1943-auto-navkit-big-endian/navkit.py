@@ -21,7 +21,7 @@ Options: --game <dist\\xenon folder> (default: BF1943_GAME, else bf1943-xenia-ki
 The game copy is only read and no game is started: everything is computed from the level's data. Files, under
 the suite's work folder (BF1943_WORK overrides): work\\levels\\<level>\\objects\\ (levelobjects1943.py's files,
 heightfield.res, water_mesh.res), samples\\ (samples*.bin and their logs), navkit\\ (navkit.json settings,
-<level>.hpd, build.log, check.txt / check.json, jump_links.json). A Wake Island run takes about 45 minutes on 8
+<level>.hpd, <level>.cells.npz, build.log, check.txt / check.json, jump_links.json). A Wake Island run takes about 45 minutes on 8
 cores, most of it the 0.2 m sampling. The build is the input of our own navigation runtime; BF1943 has no Kynapse
 runtime, so there is nothing to install in the game.
 """
@@ -214,7 +214,7 @@ def build(game, lv, log=print):
     t0 = time.time()
     # jump links: the AA gun platforms of ships, under their decks (jumplinks1943); built as ladders of kind 'jump'
     import jumplinks1943
-    jumps = jumplinks1943.level_links(lv, blog)
+    jumps = jumplinks1943.level_links(lv, blog, game=game)
     with open(os.path.join(p['navkit'], 'jump_links.json'), 'w', encoding='utf-8') as f:
         json.dump(jumps, f, indent=1)
     ladders = json.load(open(os.path.join(o, 'ladders.json'))) + jumps

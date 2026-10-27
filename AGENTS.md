@@ -12,3 +12,5 @@
   the suite README's layout table repeats it. Update both when a tool is adapted; never claim BF1943 support a
   tool does not have. Keep factual BFBC2 references (formats, OPFOR provenance, results measured on BFBC2 levels).
 - `docs/opfor-bfbc2/` is OPFOR's own documentation, kept unchanged as reference.
+- Run `python -B run_tests.py quick` before a commit and `python -B run_tests.py bf1943 --strict` before a push; a
+  SKIP or `ok*` line means that test's data was missing, so the run is not full coverage.

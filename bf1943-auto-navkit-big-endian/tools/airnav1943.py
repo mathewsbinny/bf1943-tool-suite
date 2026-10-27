@@ -49,7 +49,7 @@ ENTRY_LOCAL = (0.0, 0.239, -0.592)     # [O] corsair.dbx LandingGearEntryCompone
 ENTRY_RADIUS = 7.0                     # [O] its EntryRadius
 OFFM_DROP = 4
 DROP_ISLAND_MIN = 10
-# take-off lanes checked against the collision (2026-10-27): the obstacle grid of rsnav's flight test (flightsim.py:
+# take-off lanes checked against the collision (2026-10-26): the obstacle grid of rsnav's flight test (flightsim.py:
 # the highest terrain or object per 4 m cell from the height field's corner, terrain sampled 5 x 5 a cell, triangles
 # every 2 m), so a lane clear here is clear there
 OBS_CELL = 4.0

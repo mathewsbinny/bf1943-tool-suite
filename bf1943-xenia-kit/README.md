@@ -91,7 +91,7 @@ The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): eac
 ## Tests
 
 - `python -B tests\test_xeniakit.py` checks the patch file, the port edit and the Xenia fix without game data.
-- With `--game` it also runs a full build from your package into a temporary folder: every edited file must match `known.json`, `verify` must accept the build, and `verify` must notice a changed file.
+- With `--game` it also runs a full build from your package into a temporary folder, against a scratch Xenia folder holding only a copy of `xenia_canary.exe` (so your Xenia folder is never written): every edited file must match `known.json`, the patch file must reach the scratch folder, `verify` must accept the build and must notice a changed file. Afterwards it checks that your Xenia folder's patch files and `xenia_canary_netfix.exe` are unchanged. Without your package or Xenia it skips.
 
 - `python -B tests\test_ppcasm.py` checks the PowerPC assembler against capstone (an independent decoder; skipped with a note when capstone is not installed).
 - `python -B tests\test_bots.py` checks that the bots code assembles, fits its code cave, and that the hook branches to it; `--image` also checks it against the decoded BF1943 image.

@@ -6,6 +6,9 @@ import ghidra.app.script.GhidraScript;
 import ghidra.app.emulator.EmulatorHelper;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.pcode.PcodeOp;
+import ghidra.pcode.emulate.BreakCallBack;
+import ghidra.pcode.pcoderaw.PcodeOpRaw;
+import ghidra.pcode.memstate.MemoryState;
 import java.nio.file.*;
 import java.math.BigInteger;
 import java.util.*;
@@ -168,6 +171,14 @@ public class TestVectorSemantics extends GhidraScript {
         Ref upx=(d,a,b,c,i)->null;
         for(int h=0;h<2;h++){final int H=h;s.add(new Spec(h==0?"vupkhpx":"vupklpx",h==0?0x1000034e:0x100003ce,"VB",(d,a,b,c,i)->{long[] o=new long[4];
             for(int k=0;k<4;k++){long x=lane(b,2,k+4*H,false);o[k]=((x>>15)!=0?0xff000000L:0)|(((x>>10)&31)<<16)|(((x>>5)&31)<<8)|(x&31);}return lanes(o,4);},'i',0));}
+        // Named estimate ops: the emulator callbacks below compute exact 2^x / log2(x); the test checks lane plumbing.
+        Ref exp2=f1(x->(float)Math.pow(2,x)),log2=f1(x->(float)(Math.log(x)/Math.log(2)));
+        s.add(new Spec("vexptefp",0x1000018a,"VB",exp2,'f',0));s.add(new Spec("vlogefp",0x100001ca,"VB",log2,'f',0));
+        s.add(new Spec("vexptefp128",0x180006b0,"X128U",exp2,'f',0));s.add(new Spec("vlogefp128",0x180006f0,"X128U",log2,'f',0));
+        // vupkd3d128 UIMM 20 (encoded in the base word): the four halves of bytes 8-15 to floats (Java's IEEE binary16).
+        s.add(new Spec("vupkd3d128",0x180007f0|(20<<16),"X128U",(d,a,b,c,i)->{float[] r=new float[4];for(int k=0;k<4;k++)r[k]=Float.float16ToFloat((short)lane(b,2,4+k,false));return fv(r);},'f',0));
+        // vupkd3d128 UIMM 4: z = 0.0, w = 1.0; x, y come from the unknown op (callback value 0x11223344 0x55667788).
+        s.add(new Spec("vupkd3d128",0x180007f0|(4<<16),"X128U",(d,a,b,c,i)->lanes(new long[]{0x11223344L,0x55667788L,0,0x3f800000L},4),'i',0));
         s.add(new Spec("vpkpx",0x1000030e,"VX",(d,a,b,c,i)->{long[] o=new long[8];for(int k=0;k<8;k++){long x=lane(k<4?a:b,4,k%4,false);
             o[k]=(((x>>24)&1)<<15)|(((x>>19)&31)<<10)|(((x>>11)&31)<<5)|((x>>3)&31);}return lanes(o,2);},'i',0));
         return s;
@@ -226,6 +237,18 @@ public class TestVectorSemantics extends GhidraScript {
     }
     static byte[] bytes(BigInteger v){return fit(v);}
     int subnormalTolerated=0;
+    static final Set<String> KNOWN=Set.of("exp2_estimate","log2_estimate","vupkd3d128_xy_unknown");
+    // Callbacks for the named ops: exact values for the estimates, a fixed marker for the unknown x/y lanes.
+    void registerKnownOps(EmulatorHelper e){
+        e.registerCallOtherCallback("exp2_estimate",new BreakCallBack(){public boolean pcodeCallback(PcodeOpRaw op){
+            MemoryState m=emulate.getMemoryState();float x=Float.intBitsToFloat((int)m.getValue(op.getInput(1)));
+            m.setValue(op.getOutput(),Float.floatToRawIntBits((float)Math.pow(2,x))&0xffffffffL);return true;}});
+        e.registerCallOtherCallback("log2_estimate",new BreakCallBack(){public boolean pcodeCallback(PcodeOpRaw op){
+            MemoryState m=emulate.getMemoryState();float x=Float.intBitsToFloat((int)m.getValue(op.getInput(1)));
+            m.setValue(op.getOutput(),Float.floatToRawIntBits((float)(Math.log(x)/Math.log(2)))&0xffffffffL);return true;}});
+        e.registerCallOtherCallback("vupkd3d128_xy_unknown",new BreakCallBack(){public boolean pcodeCallback(PcodeOpRaw op){
+            emulate.getMemoryState().setValue(op.getOutput(),0x1122334455667788L);return true;}});
+    }
     static boolean floatInputs(Spec s){String n=s.name();return n.contains("fp")||n.startsWith("vct")||n.startsWith("vrfi")||n.startsWith("vref")||n.startsWith("vrsq");}
 
     // Loads, stores, lvsl/lvsr and VSCR moves: every byte offset, RA=0 and RA!=0, guard bytes around the block.
@@ -287,9 +310,12 @@ public class TestVectorSemantics extends GhidraScript {
         StringBuilder report=new StringBuilder();
         int total=0,literal=0,memoryCases=0;long at=codeBase;List<String> failures=new ArrayList<>();
         EmulatorHelper e=new EmulatorHelper(currentProgram);
+        registerKnownOps(e);
         try{
             // Literal vectors, hand-computed (independent of the models above).
             Object[][] lits={
+                // half to float, hand-computed: 0x3c00 = 1.0, 0xc000 = -2.0, 0x7bff = 65504, 0x0001 = 2^-24
+                {"vupkd3d128",null,HexFormat.of().parseHex("ffffffffffffffff3c00c0007bff0001"),null,null,0,fv(1f,-2f,65504f,5.9604645e-8f)},
                 {"vmulfp128",fv(1.5f,-2f,0.25f,3f),fv(2f,2f,8f,-0.5f),null,null,0,fv(3f,-4f,2f,-1.5f)},
                 {"vmsum3fp128",fv(1f,2f,3f,100f),fv(4f,5f,6f,1000f),null,null,0,fv(32f,32f,32f,32f)},
                 {"vmsum4fp128",fv(1f,2f,3f,4f),fv(4f,5f,6f,0.5f),null,null,0,fv(34f,34f,34f,34f)},
@@ -372,7 +398,7 @@ public class TestVectorSemantics extends GhidraScript {
         }finally{e.dispose();}
         if(!failures.isEmpty()){Files.writeString(result,"FAIL "+failures.size()+"\n"+String.join("\n",failures)+"\n");return;}
         Files.writeString(result,"literal_vectors="+literal+"\n"+report.toString().trim()+"\nPASS COMPLETE vector_mnemonics="+specs.size()+" emulated_cases="+total+" literal_vectors="+literal+" memory_cases="+memoryCases+" subnormal_lanes_tolerated="+subnormalTolerated
-            +"; no CALLOTHER in any tested instruction; destination, guard register and CR checked (CR6 for record forms); register banks 0-127 for VMX128\n");
+            +"; no CALLOTHER in any tested instruction other than the named ops exp2_estimate, log2_estimate and vupkd3d128_xy_unknown (emulated by callbacks); destination, guard register and CR checked (CR6 for record forms); register banks 0-127 for VMX128\n");
     }
 
     // Write operands, step one instruction, return the destination; crOut[0] receives CR6 when asked.
@@ -381,7 +407,7 @@ public class TestVectorSemantics extends GhidraScript {
         put(e,at,word);disassemble(toAddr(at));
         Instruction ins=getInstructionAt(toAddr(at));
         check(ins!=null&&ins.getMnemonicString().equals(s.name()),"Decode "+s.name()+" "+Integer.toHexString(word)+" -> "+(ins==null?"none":ins.getMnemonicString()));
-        for(PcodeOp op:ins.getPcode())if(op.getOpcode()==PcodeOp.CALLOTHER)throw new Exception("Opaque op in "+s.name()+": "+currentProgram.getLanguage().getUserDefinedOpName((int)op.getInput(0).getOffset()));
+        for(PcodeOp op:ins.getPcode())if(op.getOpcode()==PcodeOp.CALLOTHER&&!KNOWN.contains(currentProgram.getLanguage().getUserDefinedOpName((int)op.getInput(0).getOffset())))throw new Exception("Opaque op in "+s.name()+": "+currentProgram.getLanguage().getUserDefinedOpName((int)op.getInput(0).getOffset()));
         boolean x128=s.form().startsWith("X128");
         String cr=x128&&s.form().equals("X128C")?reg(c):reg(c);
         // Sources first, destination last only if not aliased with a source (aliases already share a value).

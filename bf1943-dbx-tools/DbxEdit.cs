@@ -3257,8 +3257,9 @@ namespace Bfbc2Dbx
         static bool Numbered(CullTree t) { return t.Duplicates == 0 && t.Leaves.Keys.All(n => n >= 1 && n <= t.Leaves.Count); }
 
         // The tree's own consistency, as in every shipped tree: the pre-order walk from node 0 uses every node but the
-        // 256 zero ones that end the list; an inner node's Max is the larger of its children's; a leaf's radius
-        // SphereKeyW / 4 exceeds its Max by at least 1/8 m.
+        // 256 zero ones that end the list; an inner node's Max is the larger of its children's; a leaf's SphereKeyW is
+        // max(5, ceil(4 x (Max + 1/8))) or one more (the radius is Max plus 1/8 m, rounded up to 1/4 m, at least 1.25 m;
+        // the one more presumably from the centre's 1/16 m rounding).
         static void CheckTree(Ctx c, CullTree t, string which)
         {
             int count = t.Right.Count, used = 0, badMax = 0, badRadius = 0;
@@ -3272,7 +3273,8 @@ namespace Bfbc2Dbx
                 uint r = t.Right[i];
                 if ((r >> 31) != 0)
                 {
-                    if (t.W[i] / 4.0 - t.Max[i] < 0.125 - 1e-4) badRadius++;
+                    double w = Math.Max(5.0, Math.Ceiling(4.0 * ((double)t.Max[i] + 0.125)));
+                    if (t.W[i] != w && t.W[i] != w + 1) badRadius++;
                     return i + 1;
                 }
                 if (r == 0) { broken = true; return count; }
@@ -3289,7 +3291,7 @@ namespace Bfbc2Dbx
             if (badMax > 0)
                 c.Warn(t.Partition, badMax + " inner nodes of the " + which + " cull tree have a Max that is not the larger of their children's (as it is in every shipped tree)");
             if (badRadius > 0)
-                c.Warn(t.Partition, badRadius + " leaves of the " + which + " cull tree have a radius (SphereKeyW / 4) less than 1/8 m above their Max (in every shipped tree it is at least that)");
+                c.Warn(t.Partition, badRadius + " leaves of the " + which + " cull tree have a SphereKeyW that is not max(5, ceil(4 x (Max + 1/8))) or one more, as in all 23,989 shipped leaves");
         }
 
         public static void CheckCullTrees(DbxFile f, Dictionary<string, string> index, List<LevelCheck.Finding> found)
@@ -3446,7 +3448,7 @@ namespace Bfbc2Dbx
             Console.Error.WriteLine("       DbxEdit import <in.xml> <out.dbx> [--like <original.dbx>] [--types <file.dbx|folder>] ...");
             Console.Error.WriteLine("       DbxEdit check <level.dbx> [--rules bf1943|bfbc2] [--slots-from <level.dbx>] [--bundle <folder>] ...");
             Console.Error.WriteLine("       DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>");
-            Console.Error.WriteLine("  replace=<old>|<new>  drop=<guid>  dropfield=<name>  graft=<source.dbx>|<guid>");
+            Console.Error.WriteLine("  edit commands: replace= replaceprefix= drop= dropfield= graft= copyfield= additem= setfield= set= partguid= (README, FORMAT.md section 5)");
             return 2;
         }
 

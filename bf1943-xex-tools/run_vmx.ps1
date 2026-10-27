@@ -8,6 +8,9 @@ foreach($script in @($suites.Keys)+'InspectVmxCaller.java'){Copy-Item -LiteralPa
 $javaArgs=@("-Duser.home=$vmxRoot/home","-Dapplication.settingsdir=$vmxRoot/settings","-Dapplication.cachedir=$vmxRoot/cache","-Djava.io.tmpdir=$vmxRoot/tmp","-Dghidra.external.modules=$vmxRoot/XenonVMX128",'-Djava.system.class.loader=ghidra.GhidraClassLoader','-cp','C:/Tools/ghidra_12.1.4_PUBLIC/Ghidra/Framework/Utility/lib/Utility.jar','ghidra.Ghidra')
 & 'C:/Program Files/Java/jdk-26.0.2/bin/java.exe' @javaArgs ghidra.pcodeCPort.slgh_compile.SleighCompileLauncher "$vmxRoot/XenonVMX128/data/languages/xenon.slaspec" *> "$vmxRoot/compile.log"
 if($LASTEXITCODE -ne 0){throw 'SLEIGH compile failed'}
+# the fingerprint of everything this run tests (vmx_inputs.py), stamped into each result below
+$inputs=(& python -B "$PSScriptRoot/vmx_inputs.py").Trim()
+if($LASTEXITCODE -ne 0 -or $inputs.Length -ne 64){throw 'could not fingerprint the inputs (vmx_inputs.py)'}
 $javaArgs+=@('ghidra.app.util.headless.AnalyzeHeadless',"$vmxRoot/project",'BF1943-VMX128')
 if(Test-Path "$vmxRoot/project/BF1943-VMX128.gpr"){$javaArgs+=@('-process','default.checked.memory.bin')}
 else{$javaArgs+=@('-import',"$root/work/xex-analysis/default.checked.memory.bin",'-loader','BinaryLoader','-loader-baseAddr','0x82000000','-processor','PowerPC:BE:64:XenonVMX128')}
@@ -26,3 +29,7 @@ if(!$CallerOnly){
 }
 if(!(Test-Path "$vmxRoot/caller-validation.txt") -or (Get-Item "$vmxRoot/caller-validation.txt").LastWriteTime -lt $testStarted){throw 'Caller probe did not complete'}
 if(!(Test-Path "$vmxRoot/permutation-caller-validation.txt") -or (Get-Item "$vmxRoot/permutation-caller-validation.txt").LastWriteTime -lt $testStarted){throw 'Permutation caller probe did not complete'}
+# stamp the results this run produced with the inputs they tested (record_vmx_validation.py checks the stamps)
+$produced=@('caller-validation.txt','permutation-caller-validation.txt')
+if(!$CallerOnly){$produced+=@($suites.Values)}
+foreach($result in $produced){Add-Content -LiteralPath "$vmxRoot/$result" -Value "INPUTS $inputs" -Encoding ascii}

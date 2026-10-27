@@ -1,8 +1,9 @@
 """Splice our own p-code bodies into the inherited SLEIGH sources (used by build_vmx_language.py).
 
-- AltiVec (altivec.sinc, original set): every instruction except the stream hints and the estimate instructions
-  without a p-code primitive gets its body from xenon_vector_semantics; its header (decoding) is kept, minus the
-  inherited sub-piece selector operands, and the vector-load forms that named RA as `A` use RA_OR_ZERO as the ISA says.
+- AltiVec (altivec.sinc, original set): every instruction except the stream hints gets its body from
+  xenon_vector_semantics (vexptefp/vlogefp through the named ops exp2_estimate/log2_estimate, defined here as
+  pcodeops); its header (decoding) is kept, minus the inherited sub-piece selector operands, and the vector-load
+  forms that named RA as `A` use RA_OR_ZERO as the ISA says.
 - Scalar FP (ppc_instructions.sinc): fctiw/fctiwz/fctid/fctidz (and their record forms) are replaced: the inherited
   bodies truncate for every form and do not saturate. Ours: fctiw/fctid round to nearest even (FPSCR RN = 0 is
   assumed), z forms truncate; out-of-range values saturate and NaN gives the most negative integer.
@@ -73,7 +74,7 @@ def altivec_replace(name, header):
 def rewrite_altivec(text):
     text, done = splice(text, altivec_replace)
     # VSCR as a register for mfvscr/mtvscr (SAT and NJ effects of other instructions are not modelled).
-    return 'define register offset=0x101000 size=4 [ vscr ];\n' + text, done
+    return 'define register offset=0x101000 size=4 [ vscr ];\n' + vsem.PCODEOP_DEFINES + text, done
 
 
 FP_CONVERT = {'fctiw', 'fctiw.', 'fctiwz', 'fctiwz.', 'fctid', 'fctid.', 'fctidz', 'fctidz.'}

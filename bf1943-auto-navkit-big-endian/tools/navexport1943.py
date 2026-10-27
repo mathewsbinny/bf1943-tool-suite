@@ -39,7 +39,8 @@ import navbuild  # noqa: E402
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, navdata, rsnv, terrain, vehicles1943  # noqa: E402
 
-EXPORTER_VERSION = ('1.3 (2026-10-26: cells and heights from the cells of the build (<level>.cells.npz) where present; '
+EXPORTER_VERSION = ('1.4 (2026-10-26: admissible heuristic scale in the header; finer height grids where needed; '
+                    'cells and heights from the cells of the build (<level>.cells.npz) where present; '
                     'height grid of 1 m blocks at 0.2 m pitch, per cell at 0.8 m; tight walk edges flagged)')
 HEIGHT_CELLS = {0.2: 5, 0.4: 2, 0.8: 1}   # cells per height-grid block, by pitch
 COARSE_PITCH = 0.8        # m: the bitmap pitch of the build's 0.8 m areas (0.4 was tried 2026-10-25: no better)
@@ -107,6 +108,19 @@ def rasterise(area, pitch, y_offset, heightfield):
 HEIGHT_TOL = 0.25         # m: a 0.2 m area whose 1 m height grid is further off than this at one of its own cells gets a
                           # grid of one block per cell instead (2026-10-26: at steep area edges the blocks' means put the
                           # ground 0.3-0.7 m off and made walk edges there tight)
+
+
+def admissible_costs(pos, src, dst, cost):
+    """The edges' costs for the runtime: the build's (floor(16 x length), DICE's rule), raised where that is under 16 x
+    the length between the exported float32 node positions as the search measures it (x, y summed, then z) - to that,
+    rounded up. Every path then costs at least 16 x its length, so the search's heuristic floor(16 x distance x 0.999)
+    never overestimates (2026-10-26: with the build's costs, chains of short edges each rounded down could cost less
+    than the heuristic, and the search returned a costlier path; the least cost per length over a map's edges was 0, so
+    no scale on the heuristic alone could fix it)."""
+    p = np.asarray(pos, np.float32).astype(np.float64)
+    d = p[np.asarray(dst)] - p[np.asarray(src)]
+    ln = np.sqrt((d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1]) + d[:, 2] * d[:, 2])
+    return np.maximum(np.asarray(cost, np.int64), np.ceil(16.0 * ln).astype(np.int64))
 
 
 def height_grid(ii, jj, y, cpb, miny):
@@ -260,7 +274,9 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
     E = nav.edges
     order = np.lexsort((E[:, 1], E[:, 0]))
     E = E[order]
-    cost = np.round(nav.edge_cost[order] * 16).astype(np.int64)
+    build_cost = np.round(nav.edge_cost[order] * 16).astype(np.int64)
+    cost = admissible_costs(gpos, E[:, 0], E[:, 1], build_cost)
+    raised = int((cost != build_cost).sum())
     kind = np.zeros(len(E), np.int64)
     if nav.ladder_edge is not None:
         lad = nav.ladder_edge[order]
@@ -445,8 +461,13 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
                 'GBKT': gbkt, 'GLST': [(v,) for v in glst], 'ANOD': [(v,) for v in anod], 'LADR': ladr, 'OFFM': offm,
                 'ISLD': island_rows, 'META': json.dumps(meta, indent=1).encode('utf-8')}
     out = out or os.path.join(W, 'navkit', f'{lv}{".be" if big_endian else ""}.rsnv')
+    # the search heuristic's scale (rsnv.heuristic_scale, header): admissible for this graph's edge costs
+    h_q = rsnv.heuristic_scale(gpos, E[:, 0], E[:, 1], np.minimum(cost, 0xFFFF))
+    meta['heuristic scale'] = h_q / rsnv.H_SCALE_ONE
+    meta['counts']['edge costs rounded up'] = raised
     header = {'level': lv, 'sea_level': sea, 'radius': soldier1943.RADIUS, 'height': soldier1943.HEIGHT,
-              'step': soldier1943.STEP, 'water_depth': soldier1943.WATER_DEPTH, 'hpd_sha256': meta['sources']['hpd']['sha256']}
+              'step': soldier1943.STEP, 'water_depth': soldier1943.WATER_DEPTH, 'hpd_sha256': meta['sources']['hpd']['sha256'],
+              'h_scale_q': h_q}
     size = rsnv.write(out, sections, header, big_endian)
     # tight edges: walk edges with no line of sight either way over the cells just written (rsnv.World.los, the
     # runtime's rule): the graph links them, the cells leave no room (a slit, an obstacle's corner). Flagged so a
@@ -465,6 +486,7 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
     sections['META'] = json.dumps(meta, indent=1).encode('utf-8')
     size = rsnv.write(out, sections, header, big_endian)
     walk = sum(1 for k in range(len(E)) if int(kind[k]) == rsnv.EDGE_WALK)
+    log(f'{lv}: heuristic scale {h_q / rsnv.H_SCALE_ONE:.6f} (the least edge cost per 1/16 m of length)')
     log(f'{lv}: wrote {out} ({size / 1e6:.2f} MB; {len(port)} portals, {len(ladr)} ladders and jump links, '
         f'{len(offm)} vehicle entries, {len(island_rows)} islands; {len(tight)} of {walk} walk edges tight)')
     return out, nav
@@ -483,8 +505,11 @@ def check(path, nav, log=print):
             problems.append(f'node positions differ by up to {d:.4f} m')
         src = np.repeat(np.arange(n), np.diff(w.node_first_edge))
         got = sorted(zip(src.tolist(), w.edge_target.tolist(), w.edge_cost.tolist()))
+        gp = nav.node_pos.copy()
+        gp[:, 1] -= soldier1943.HEIGHT / 2
         want = sorted(zip(nav.edges[:, 0].tolist(), nav.edges[:, 1].tolist(),
-                          np.round(nav.edge_cost * 16).astype(int).tolist()))
+                          admissible_costs(gp, nav.edges[:, 0], nav.edges[:, 1],
+                                           np.round(nav.edge_cost * 16).astype(np.int64)).tolist()))
         if got != want:
             problems.append('edges or costs differ from the build')
     unplaced = int((w.node_area == 0xFFFF).sum())

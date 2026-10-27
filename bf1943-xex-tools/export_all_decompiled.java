@@ -37,7 +37,8 @@ public class export_all_decompiled extends GhidraScript {
         return 0;
     }
     // Cache/stream hints have no data effect; their CALLOTHERs do not make an instruction opaque.
-    static boolean hint(String name){return name.startsWith("dataStream");}
+    // Stream hints have no data effect; exp2_estimate/log2_estimate are named lane operations with defined semantics.
+    static boolean hint(String name){return name.startsWith("dataStream")||name.equals("exp2_estimate")||name.equals("log2_estimate");}
     // Per-function facts gathered single-threaded from the listing before decompilation.
     static class Facts{int words,instructions,bad,unreached,unreachedDecodable,opaque,otherUserOps,fp,fpOpaque,vec,vecOpaque;boolean terminalCall;
         TreeSet<String> opaqueNames=new TreeSet<>();TreeSet<String> fpvmxOpaqueNames=new TreeSet<>();List<String> badWords=new ArrayList<>();}

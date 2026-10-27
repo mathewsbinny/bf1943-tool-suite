@@ -1,6 +1,7 @@
 r"""BF1943 Xenia kit: turns your own Battlefield 1943 (XBLA) package into a Xenia setup with offline play.
 
-  python -B xeniakit.py build <package> <xenia folder> [--out <folder>] [--replace-patch] [--experiment-bots]
+  python -B xeniakit.py build <package> <xenia folder> [--out <folder>] [--gpu vulkan|d3d12] [--replace-patch]
+                              [--experiment-bots] [--experiment-team 1|2]
   python -B xeniakit.py verify [--out <folder>]
   python -B xeniakit.py launch [--out <folder>] [--gpu vulkan|d3d12]
 
@@ -13,8 +14,9 @@ build:
     and checks each of the 90 files against the known hashes;
  2. edits three files of that copy (each result checked against known.json):
     - menu/main/mainmenu-00.fbrb: the main menu (Local Match opens a browser of locally hosted maps;
-      Leaderboards removed; no EA Online check when the menu opens; no autosave-icon notice at startup);
-    - menu/hud/hud_multiplayer_cq-00.fbrb: the in-game menu (CHOOSE YOUR SIDE before the first deploy);
+      Leaderboards and Return to Game Library removed; no EA Online check when the menu opens; no autosave-icon notice at startup);
+    - menu/hud/hud_multiplayer_cq-00.fbrb: the in-game menu (CHOOSE YOUR SIDE before the first deploy;
+      FRONTLINE REPORT without Leaderboards; no See Gamer Card);
     - config.zz: GameSettings.cfg network ports above 1024;
  3. installs the patch file (signed in to Xbox LIVE offline, no network) into Xenia's patches folder;
  4. writes xenia_canary_netfix.exe next to xenia_canary.exe (Xenia's UDP address bug fixed; the original

@@ -11,18 +11,64 @@ Conventions (all lanes are numbered as the guest does: lane 0 is the most signif
 - Element loads place the element in its lane and zero the others (the architecture leaves them undefined).
   Element stores are modelled as a read-modify-write of the aligned 16-byte block that changes only the element.
 
+- Estimates with no p-code primitive (vexptefp, vlogefp and their 128 forms) use named ops (KNOWN_OPS:
+  exp2_estimate, log2_estimate). vupkd3d128 is split by its immediate: UIMM 20 (half to float) is modelled, UIMM 4
+  models z and w with x/y from the named op vupkd3d128_xy_unknown (PARTIAL_OPS), other values stay opaque.
+  vpkd3d128 stays opaque (OPAQUE gives the reasons).
+
 `body(name, ops)` returns the body lines (without braces) or None when the instruction stays opaque.
+`variants(name, ops)` returns the per-immediate constructors [(extra constraint, body or None)] for a split
+instruction (vupkd3d128), else None.
 ops maps roles to SLEIGH operand names: D, A, B, C (vector), IMM (immediate field), RA, RB (GPRs).
 """
 
-SEMANTICS_VERSION = '1.0'
+SEMANTICS_VERSION = '1.1'
 
 # Instructions deliberately left opaque, and why.
 OPAQUE = {
-    'vexptefp': 'no p-code primitive for 2^x (estimate)', 'vlogefp': 'no p-code primitive for log2 (estimate)',
-    'vexptefp128': 'no p-code primitive for 2^x (estimate)', 'vlogefp128': 'no p-code primitive for log2 (estimate)',
-    'vpkd3d128': 'D3D pack formats not established from a source we can check', 'vupkd3d128': 'D3D unpack formats not established from a source we can check',
+    'vpkd3d128': 'pack placement (VD3D1/VD3D2) and the type-5 pack conversion are not established by the image\'s uses',
+    'vupkd3d128': 'only UIMM 4 (z, w) and 20 (half to float) are established; other types stay opaque',
 }
+
+# Named lane-wise operations with defined semantics that p-code has no primitive for. They are CALLOTHERs, but their
+# meaning is fixed (the hardware returns estimates within the AltiVec bound, relative error <= 1/16 for 2^x and
+# absolute error <= 1/32 for log2), so the decompiler shows them by name and the batch counts them as modelled.
+KNOWN_OPS = {'exp2_estimate': '2^x per float lane (estimate)', 'log2_estimate': 'log2(x) per float lane (estimate)'}
+# Partially known: vupkd3d128 UIMM 4 lanes x, y (biased short format not verified from the image).
+PARTIAL_OPS = {'vupkd3d128_xy_unknown': 'lanes 0-1 of vupkd3d128 with UIMM 4 (unknown value)'}
+PCODEOP_DEFINES = ''.join(f'define pcodeop {n};\n' for n in list(KNOWN_OPS) + list(PARTIAL_OPS))
+
+
+def half_to_float(g, h):
+    """IEEE binary16 to binary32 for a 2-byte lane: normal, subnormal, zero, infinity/NaN (exponent 31 as IEEE)."""
+    s = g.local(4, f'zext({h} >> 15) << 31', 's')
+    e = g.local(4, f'zext(({h} >> 10) & 31)', 'x')
+    m = g.local(4, f'zext({h} & 0x3ff)', 'y')
+    normal = g.local(4, f'{s} | (({e} + 112) << 23) | ({m} << 13)', 'n')
+    inf = g.local(4, f'{s} | 0x7f800000 | ({m} << 13)', 'i')
+    tiny = g.local(4, f'int2float({m})', 'd')
+    scale = g.local(4, f'{g.fconst(1)} f/ {g.fconst(1 << 24)}', 'k')
+    sub = g.local(4, f'({tiny} f* {scale}) | {s}', 'u')
+    r = g.blend(g.mask(f'{e} == 31', 4), inf, normal, 4)
+    return g.blend(g.mask(f'{e} == 0', 4), sub, r, 4)
+
+
+def variants(name, ops):
+    """Constructors split by immediate: [(extra constraint, body or None for opaque)], or None for a single one."""
+    if name != 'vupkd3d128':
+        return None
+    g = G()
+    b = g.lanes(g.copy(ops['B']), 2)
+    lanes = [half_to_float(g, h) for h in b[4:]]
+    g.emit(f'{ops["D"]} = {g.pack(lanes, 4)};')
+    half4 = g.lines
+    g = G()
+    xy = g.local(8, f'vupkd3d128_xy_unknown({ops["B"]})', 'p')
+    one = g.fconst(1)
+    r = g.local(16, f'zext({xy}) << 64', 'r')
+    g.emit(f'{r} = {r} | zext({one});')
+    g.emit(f'{ops["D"]} = {r};')
+    return [(' & xmuimm=20', half4), (' & xmuimm=4', g.lines), ('', None)]   # a raw field: an operand cannot be constrained
 
 
 class G:
@@ -268,6 +314,11 @@ def body(name, ops):
         a, b = g.lanes(g.copy(ops['A']), 4), g.lanes(g.copy(ops['B']), 4)
         r = [fmaxmin(g, x, y, 'max' in base) for x, y in zip(a, b)]
         g.emit(f'{D} = {g.pack(r, 4)};')
+        return g.lines
+    if base in ('vexptefp', 'vlogefp', 'vexptefp128', 'vlogefp128'):
+        op = 'exp2_estimate' if 'expte' in base else 'log2_estimate'
+        b = g.lanes(g.copy(ops['B']), 4)
+        g.emit(f'{D} = {g.pack([g.local(4, f"{op}({x})", "f") for x in b], 4)};')
         return g.lines
     if base in ('vrefp', 'vrsqrtefp', 'vrefp128', 'vrsqrtefp128'):
         b = g.lanes(g.copy(ops['B']), 4)
