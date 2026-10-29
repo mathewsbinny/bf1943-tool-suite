@@ -4,6 +4,9 @@ words, name its log, and record the error in that log (%LOCALAPPDATA%\bf1943-too
 here). The BF1943 tools: the STFS reader, the spawn map, NavKit's BF1943 steps (level objects, the sampler, the
 detailed sectors, the jump links, the navigation audit, the enclosure probe) and the test runner.
 
+Also every tool that once took --help for a file name: run with --help (and -h) in an empty folder, it must exit 0,
+print its usage and write nothing.
+
   python tests\test_cli_errors.py
 """
 import glob
@@ -55,6 +58,23 @@ def main(argv):
             check(ok, f'{label}: exit {r.returncode}, the cause in words, the log ({os.path.basename(log[-1]) if log else "none"})')
             if not ok:
                 print('       ' + out.strip().replace('\n', '\n       ')[:600])
+        empty = os.path.join(tmp, 'empty')
+        os.mkdir(empty)
+        helps = ['bf1943-apt-tools/apt.py', 'bf1943-dbx-tools/schema1943.py', 'bf1943-fbrb-tool/fbrb1943.py',
+                 'bf1943-automated-map-and-bot-test-harness/xenia-run/udp_join_probe.py',
+                 'bf1943-automated-map-and-bot-test-harness/xenia-run/xeniarun.py']
+        helps += [f'bf1943-auto-navkit-{v}-endian/tools/{n}.py' for v in ('big', 'little')
+                  for n in ('detailed', 'hpdcheck', 'hpdview')]
+        for tool in helps:
+            path = os.path.join(SUITE, *tool.split('/'))
+            first = open(path, encoding='utf-8').read().split('"""')[1].strip().splitlines()[0]
+            for flag in ('--help', '-h'):
+                r = subprocess.run([PY, '-B', path, flag], capture_output=True, text=True, errors='replace', env=env,
+                                   cwd=empty, timeout=60)
+                ok = r.returncode == 0 and first in r.stdout and not os.listdir(empty)
+                check(ok, f'{tool} {flag}: exit {r.returncode}, its usage, nothing written')
+                if not ok:
+                    print('       ' + (r.stdout + r.stderr).strip().replace('\n', '\n       ')[:600])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('all passed' if not failed else f'{failed} check(s) failed')

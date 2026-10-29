@@ -124,6 +124,9 @@ def inside_game(path):
 
 
 def main(argv):
+    if any(a in ('-h', '--help') for a in argv[1:]):
+        print(__doc__)
+        return 0
     if len(argv) < 3 or argv[1] not in ('list', 'info', 'extract', 'replace'):
         print(__doc__)
         return 1

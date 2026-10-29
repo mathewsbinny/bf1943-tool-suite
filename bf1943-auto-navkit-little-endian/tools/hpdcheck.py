@@ -56,6 +56,9 @@ def check(path):
 
 
 def main(argv):
+    if any(a in ('-h', '--help') for a in argv[1:]):
+        print(__doc__)
+        return 0
     if len(argv) < 2:
         print(__doc__)
         return 1

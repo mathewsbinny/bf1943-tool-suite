@@ -73,6 +73,9 @@ def block(path):
 
 
 def main(argv):
+    if any(a in ('-h', '--help') for a in argv[1:]):
+        print(__doc__)
+        return 0
     path = argv[1] if len(argv) > 1 else default_schema()
     if not os.path.isfile(path):
         raise FileNotFoundError(f'no reflection schema at {path}: pass bf1943-reflection-schema-full.json, or set '

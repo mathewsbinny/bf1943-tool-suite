@@ -89,6 +89,9 @@ does not bring them back.
   probe); its investigations stay there and import what they need from here. Evidence written before a move names
   the old path, which that repository's history keeps.
 - No network traffic.
+- Third-party references (XenonRecomp, GNU binutils' `ppc-dis.c`, Xenia, Ghidra) are cited and credited where they
+  are used. Their files are supplied by you and checked by hash, and none is copied here. See
+  [bf1943-xex-tools](bf1943-xex-tools/README.md#sources-and-credits).
 
 ## Importing from OPFOR
 

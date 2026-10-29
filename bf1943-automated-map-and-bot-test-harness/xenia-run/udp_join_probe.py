@@ -30,6 +30,9 @@ def server_bound():
 
 
 def main():
+    if len(sys.argv) < 2 or any(a in ('-h', '--help') for a in sys.argv[1:]):
+        print(__doc__)
+        return 0 if len(sys.argv) > 1 else 1
     out = Path(sys.argv[1]) / 'udp-join-probe.txt'
     minutes = float(sys.argv[2]) if len(sys.argv) > 2 else 20
     log = out.open('a', encoding='utf-8')
@@ -86,4 +89,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

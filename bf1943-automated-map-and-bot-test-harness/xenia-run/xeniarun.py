@@ -119,6 +119,9 @@ def report(r, positions=False):
 
 
 def main(argv):
+    if any(a in ('-h', '--help') for a in argv[1:]):
+        print(__doc__)
+        return 0
     opts = dict(zip(argv[1:], argv[2:]))
     log = opts.get('--log')
     # the folder names the executables Windows' crash records are matched on; a log given on its own is read with

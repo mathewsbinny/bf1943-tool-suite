@@ -14,6 +14,10 @@ Observed in this build:
   So a rewritten block must be reachable from a frame item (not only by a branch), must not contain an End
   inside a function body, and must not share any list with another block.
 Opcode names for EA-specific opcodes are descriptive labels, not recovered originals.
+
+Command line:
+
+  python -B apt.py <menu .res>      validate one movie: its action blocks, instructions and problems
 """
 import struct
 import sys
@@ -462,6 +466,9 @@ class Rewriter:
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
+        print(__doc__)
+        sys.exit(0 if len(sys.argv) > 1 else 1)
     apt = Apt(open(sys.argv[1], 'rb').read())
     blocks, n, problems = apt.validate()
     print(f'{apt.name}: {blocks} action blocks, {n} instructions, {len(problems)} problems')

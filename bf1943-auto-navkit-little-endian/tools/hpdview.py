@@ -40,6 +40,9 @@ def segs_from_lists(m, o, count_off, table_off):
 
 
 def main():
+    if len(sys.argv) < 4 or any(a in ('-h', '--help') for a in sys.argv[1:]):
+        print(__doc__)
+        return 0 if len(sys.argv) > 1 else 1
     path, which, out = sys.argv[1], sys.argv[2], sys.argv[3]
     f = hpdtool.parse(open(path, 'rb').read())
     if which.startswith('0x'):

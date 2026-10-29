@@ -29,6 +29,27 @@ operation-rising-sun is. It is `BF1943_RESEARCH`, else the folder you run the to
 Also needed: Ghidra 12.1.4 at `C:\Tools\ghidra_12.1.4_PUBLIC` and JDK 26.0.2 at `C:\Program Files\Java\jdk-26.0.2`
 (the PowerShell steps use these paths), Python 3 with `capstone` for the disassembly helpers.
 
+## Sources and credits
+
+These tools read third-party sources that you supply. None of them is copied into this repository. Each file is
+pinned by hash, and its hash goes into the evidence the tools write.
+
+| Source | License | What we use |
+|---|---|---|
+| [XenonRecomp](https://github.com/hedge-dev/XenonRecomp), hedge-dev and contributors | MIT | `XenonUtils/xbox.h` (Xbox runtime structures, `map_functions.py`); `recompiler.cpp` (unaligned vector loads and stores, helper bodies) |
+| GNU binutils `ppc-dis.c`, Free Software Foundation (bundled in XenonRecomp's `thirdparty/disasm`) | GPL-2.0-or-later | its VMX128 opcode table: the mnemonics, encodings and operand fields that `classify_vmx.py` and `build_vmx_language.py` decode |
+| [Xenia](https://github.com/xenia-project/xenia), Ben Vanik and contributors, commit `95a5c3ee` | BSD-3-Clause | `ppc_emit_altivec.cc` and `ppc_instr.h` (VMX128 semantics, the unaligned loads and stores) |
+| [Xenia Canary](https://github.com/xenia-canary/xenia-canary), commit `e6cd2e4bc` | BSD-3-Clause | `function_trace_data.h` (the function trace format, `parse_function_trace.py`) |
+| [Ghidra](https://github.com/NationalSecurityAgency/ghidra) 12.1.4 | Apache-2.0 | the PowerPC language files that the Xenon module starts from |
+| XEXLoaderWV, commit `4bcf58da` | its own | its Java sources decode the XEX |
+
+The p-code we wrote follows the AltiVec PEM and these references. Where a reference decides a behaviour, the comment
+in the code and the research write-up name the file and lines.
+
+The language module that `build_vmx_language.py` writes (`work\vmx128\XenonVMX128`) combines Ghidra's files (Apache-2.0)
+with entries taken from `ppc-dis.c` (GPL-2.0-or-later). It stays in your workspace; if you share it, its GPL part
+comes with GPL terms.
+
 ## The pipeline
 
 Run from the workspace, in this order (`<suite>` is this suite's folder):
