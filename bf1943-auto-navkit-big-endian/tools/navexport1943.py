@@ -382,10 +382,14 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
             r = area_rows[k]
             if r[7] == 0:
                 continue
-            b0 = max(int((r[0] - sx0) // rsnv.BUCKET), 0)
-            b1 = min(int((r[2] - sx0) // rsnv.BUCKET), rsnv.BUCKETS - 1)
-            c0 = max(int((r[1] - sz0) // rsnv.BUCKET), 0)
-            c1 = min(int((r[3] - sz0) // rsnv.BUCKET), rsnv.BUCKETS - 1)
+            # the area's cells reach half a cell past their centres, and a sample leaning on a cell a quarter cell
+            # further (rsnv.LOS_GRAZE): a whole cell of margin (2026-10-26: by its centres alone an area was missing from
+            # the bucket left of its first cell, though points there lie on that cell)
+            m = r[16] / 1000.0
+            b0 = max(int((r[0] - m - sx0) // rsnv.BUCKET), 0)
+            b1 = min(int((r[2] + m - sx0) // rsnv.BUCKET), rsnv.BUCKETS - 1)
+            c0 = max(int((r[1] - m - sz0) // rsnv.BUCKET), 0)
+            c1 = min(int((r[3] + m - sz0) // rsnv.BUCKET), rsnv.BUCKETS - 1)
             for bj in range(c0, c1 + 1):
                 for bi in range(b0, b1 + 1):
                     buckets[bj * rsnv.BUCKETS + bi].append(k)

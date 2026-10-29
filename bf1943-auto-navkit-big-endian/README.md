@@ -40,7 +40,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.
-- **Wake Island, today's build (2026-10-26, round 2):** 12,783 nodes, 45,272 edges, 65 islands; the main network has 11,424
+- **Wake Island, today's build (2026-10-26, round 3):** 12,718 nodes, 45,118 edges, 65 islands; the main network has 11,363
   nodes; 16 of 16 ladders linked from the main network, the 4 carrier AA guns and 21 carrier ledges by jump links; all 10 flag pairs
   routed; `hpdcheck` passes.
 - **The audit** (`tools\navaudit1943.py`, new 2026-10-24; operation-rising-sun `research/NAVMESH_AUDIT.md`):
@@ -80,6 +80,13 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   exporter gives an area 0.4 m height blocks, then one per cell, where its 1 m grid is more than 0.25 m off at one of
   its cells (`HEIGHT_TOL`); a seam's coincident nodes are merged (`merge_coincident_border`). Tight walk edges
   150/88/124/158 -> 8/40/26/96, pockets 0.2 % or less of each main network; exports 4.2-5.5 MB.
+- **2026-10-26, round 3 (exporter 1.4):** beside a mixed (0.2/0.8 m) seam, the 0.8 m graph gets walk edges where the
+  0.2 m samples join ground its own step rule cannot (`SEAM_FINE_LINKS`: Coral Sea's last seam break, a 0.53 m lip
+  beside the South Base bunker, closed); a sector's window grows 1 m past a mixed seam so both grids' cells overlap there
+  (`MIXED_OVERLAP`; no nodes on the grown cells); exporter 1.4 rounds every edge cost up to 16 x its length and writes
+  the search heuristic's scale in the header (0.999 on all four maps: the heuristic is admissible), and lists an area in
+  every 4 m bucket its cells reach. Tight walk edges 8/40/26/96 -> 8/10/14/30 (Wake, Guadalcanal, Iwo Jima, Coral Sea); pockets 0.24/0.05/0.20/0.00 %
+  of each main network; exports 4.3-5.5 MB.
 
 **Vehicle navigation (new 2026-10-26).** One RSNV world per vehicle class beside the soldier's, read by rsnav like
 any other world: `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `.lcvp.rsnv`, `.plane.rsnv`, plus
@@ -109,6 +116,16 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   grown by 25 m), a cruise surface 60 m above it that climbs at most 7 deg, nodes every 64 m; take-off lanes along the
   spawn headings (decks, airfields) with a JUMP edge (climb-out) and a DROP edge (landing approach); parachute DROP
   transfers over every base, flag and non-carrier soldier island (Coral Sea's islets).
+- **Writer 1.2 (2026-10-29): admissible costs.** As the soldier exporter 1.4: each drive edge costs 16 x its length
+  between the float32 node positions, rounded up (a given cost, a deck drop's horizontal run, no less), and the header
+  carries the heuristic scale (`rsnv.heuristic_scale`: 0.999 on every vehicle world), so `rsnv.search` and rsnav's
+  search never overestimate on vehicle worlds either. The heading-aware planner keeps its own weighted heuristic (x1.25,
+  by design: a local, bounded search over its own primitive costs).
+- **Unload points (2026-10-29):** a landing zone's alight transfer stores a soldier cell beside the craft's bow from
+  which a main-island node is in sight (100 of 104 zones on Wake, 58 of 62 on Iwo Jima; the rest the node itself), and
+  `rsnvtrip.resolve` / `rsn_transfer_soldier_node` resolve alight and drop transfers to the nearest node within 6 m in
+  line of sight of that point (`rsnv.World.los` / `rsn_los`, 32 tried at most) when the stored node has moved: a
+  rebuilt soldier world moves its nodes, the point stays [O: the cells; H: that a soldier steps off the ramp there].
 - **Take-off lanes checked (2026-10-26):** every lane is tested against the collision on rsnav's flight-test obstacle
   grid (4 m cells, all objects): the centre line +-2 m clear from its start to 40 m past its end, the deck or field
   under the roll to lift-off (85 m). A blocked spawn heading is turned (up to 20 deg; then any heading: a turn on the

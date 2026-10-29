@@ -43,7 +43,7 @@ SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
 import rsnvgrid1943  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
-from bfbc2core import game1943, rsnv, terrain  # noqa: E402
+from bfbc2core import game1943, rsnv, rsnvtrip, terrain  # noqa: E402
 
 MARGIN = 250.0               # m of sea around the land, carriers and craft spawns
 BAND_BELOW = 0.3             # m under the draft: collision there still touches the hull
@@ -409,7 +409,7 @@ def build(lv, soldier_path=None, game=None, log=print):
     # alight transfers
     for z in zones:
         n = nid[z['cell']]
-        sp = S.node_pos[z['soldier']]
+        sp = z['unload']
         offm.append((OFFM_ALIGHT_ZONE, 3, vc.CLASS_IDS['lcvp'], n, float(sp[0]), float(sp[1]), float(sp[2]),
                      float(z['yaw']), float(z['reach']), int(z['soldier'])))
         z['node'] = n
@@ -522,9 +522,27 @@ def landing_zones(lv, cs, nav, depth, beach_cells, S, bow, pitch, x0, z0, log):
             if (dd <= FORBID_CLEAR).any():
                 rejected['ForbidPathfinding collision between bow and soldier ground'] += 1
                 continue
+        # the unload point: the soldier cell nearest the bow point (the craft's ramp reach) from which a main-island
+        # node is in sight (rsnvtrip.in_sight_node, the runtime's rule) - a point on the soldier world's cells, which
+        # stays put when the soldier world is rebuilt; else the node's own position
+        unload, un = None, None
+        loc = S.locate(bowp[0], float(sp[1]), bowp[1], max_dist=ALIGHT_REACH, dy=3.0)
+        if loc is not None:
+            ar = S.areas[loc[0]]
+            ux, uz = ar.x0 + loc[1][0] * ar.pitch, ar.z0 + loc[1][1] * ar.pitch
+            uy = S.ground(ar, ux, uz)
+            un = rsnvtrip.in_sight_node(S, ux, uy, uz)
+            if un is not None and int(S.node_island[un]) == main:
+                unload = (float(ux), float(uy), float(uz))
+        if unload is None:
+            unload, un = (float(sp[0]), float(sp[1]), float(sp[2])), sn
+            how = 'the soldier node itself'
+        else:
+            how = 'a soldier cell by the bow, a main-island node in sight'
         taken.append((x, z))
         zones.append({'cell': k, 'pos': [x, float(cs.y[k]), z], 'bow': [bowp[0], bowp[1]], 'yaw': math.atan2(dirx, dirz),
-                      'soldier': sn, 'soldier pos': [float(v) for v in sp], 'reach': float(dn[sn]),
+                      'soldier': un, 'soldier pos': [float(v) for v in S.node_pos[un]], 'unload': list(unload),
+                      'unload is': how, 'reach': float(math.hypot(unload[0] - x, unload[2] - z)),
                       'depth': float(depth[cs.j[k], cs.i[k]])})
     log(f'  {len(zones)} landing zones; rejected candidates: {dict(rejected)}')
     return zones

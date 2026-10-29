@@ -113,6 +113,17 @@ def ground_tests(tmp):
     xs = [w.node_pos[n][0] for n in p]
     check(st == rsnv.DONE and max(xs) >= 30 * 0.8 - 2, f'the tank\'s route around the wall goes through the gap '
                                                        f'(x up to {max(xs):.1f} m, {cost / 16:.1f} m)')
+    import math as _m
+    src = np.repeat(np.arange(len(w.node_pos)), np.diff(w.node_first_edge))
+    p32 = w.node_pos
+    ln = [_m.sqrt(((p32[b][0] - p32[a][0]) ** 2 + (p32[b][1] - p32[a][1]) ** 2) + (p32[b][2] - p32[a][2]) ** 2)
+          for a, b in zip(src.tolist(), w.edge_target.tolist())]
+    adm = all(int(c) >= 16.0 * l * w.h_scale for c, l in zip(w.edge_cost.tolist(), ln))
+    from bfbc2core import rsnvtrip as _rt
+    dij = _rt.dijkstra(w, lo, _rt.VEHICLE)[hi]
+    check(w.h_scale_q > 0 and adm and cost == dij,
+          f'admissible: heuristic scale {w.h_scale:.6f} in the header, every edge costs at least 16 x scale x its length, '
+          f'A* finds the Dijkstra optimum ({cost} = {int(dij)})')
     los = all(w.los(tuple(float(np.float32(v)) for v in w.node_pos[a]), tuple(float(np.float32(v)) for v in w.node_pos[b]))
               for a, b in zip(p, p[1:]))
     check(los, 'the runtime\'s line of sight holds along the route')

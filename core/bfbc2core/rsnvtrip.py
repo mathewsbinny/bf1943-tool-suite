@@ -14,7 +14,11 @@ vehicle world's OFFM records are its transfers:
   kind LCVP_LAUNCH (3): information only (the deck lane's end; the graph has the drop edge itself).
 A transfer's soldier node is checked against the soldier world in use (it may have been rebuilt since): kept when it
 lies within the reach of x, y, z (BOARD: radius + 2 m horizontally and 3.5 m vertically; the others: 2 m and 2 m),
-else resolved again by the same rule (the nearest node within the reach, horizontally, lowest index on a tie).
+else resolved again: BOARD by the same rule (the nearest node within the reach, horizontally, lowest index on a tie);
+ALIGHT and DROP (x, y, z: a soldier cell, the unload point) the nearest node within IN_SIGHT_REACH horizontally and
+IN_SIGHT_DY vertically that the point has line of sight to (rsnv.World.los, the runtime's rule), nearest first (then
+the lowest index), at most IN_SIGHT_TRIES of them (2026-10-29: a rebuilt soldier world moves its nodes; the point does
+not move).
 
 The plan, exactly (rsn_trip_plan does the same in the same order):
   1. dS_from: Dijkstra over the soldier world from start; dS_to: Dijkstra over its reversed edges to goal (both
@@ -54,6 +58,28 @@ def soldier_node(S, x, y, z, reach, dy):
     return int(k[np.argmin(d[k])])
 
 
+IN_SIGHT_REACH = 6.0          # m: an unload point's soldier node lies within this, horizontally
+IN_SIGHT_DY = 2.0
+IN_SIGHT_TRIES = 32
+
+
+def in_sight_node(S, x, y, z, reach=IN_SIGHT_REACH, dy=IN_SIGHT_DY, tries=IN_SIGHT_TRIES):
+    """The node nearest (x, z) within reach and dy that (x, y, z) has line of sight to, or None (see the module)."""
+    P = S.node_pos
+    ddx, ddz = P[:, 0] - x, P[:, 2] - z
+    d = np.sqrt(ddx * ddx + ddz * ddz)
+    ok = np.nonzero((d <= reach) & (np.abs(P[:, 1] - y) <= dy))[0]
+    if not len(ok):
+        return None
+    order = ok[np.lexsort((ok, d[ok]))][:tries]
+    a = (float(np.float32(x)), float(np.float32(y)), float(np.float32(z)))
+    for n in order.tolist():
+        b = tuple(float(np.float32(v)) for v in P[n])
+        if S.los(a, b):
+            return int(n)
+    return None
+
+
 def reach_of(rec):
     return (float(rec[8]) + 2.0, 3.5) if rec[0] == OFFM_BOARD else (2.0, 2.0)
 
@@ -68,6 +94,8 @@ def resolve(S, rec):
         ddx, ddz = float(p[0]) - x, float(p[2]) - z
         if (ddx * ddx + ddz * ddz) ** 0.5 <= reach and abs(float(p[1]) - y) <= dy:
             return aux
+    if rec[0] in (OFFM_ALIGHT, OFFM_DROP):
+        return in_sight_node(S, x, y, z)
     return soldier_node(S, x, y, z, reach, dy)
 
 

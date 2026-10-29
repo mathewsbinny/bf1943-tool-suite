@@ -73,8 +73,9 @@ LOS_COARSE_DY = LOS_STEP + 0.8 * math.sqrt(2.0)   # the step plus a diagonal 0.8
                                                    # one straight cell, 1.17 m: NavKit's step rule allows the diagonal)
 COARSE_GAP = 1.0
 LOS_GRACE = 0.25
-LOS_SEAM = 1.0          # m: line of sight looks for a sector's areas this far past its rectangle (2026-10-26): the
-                        # build's sample window overlaps the neighbour sector, and a line crossing a seam must find them
+LOS_SEAM = 2.5          # m: line of sight looks for a sector's areas this far past its rectangle (2026-10-26): the
+                        # build's sample window overlaps the neighbour sector (up to 2.4 m where MIXED_OVERLAP grows it
+                        # at a mixed seam), and a line crossing a seam must find them
 LOS_NEAR = 128          # areas at most per lookup (rsnav's MAX_NEAR)
 LOS_GRAZE = 0.25        # of a cell (2026-10-26): a sample this close to a cell's side leans on that side. In a 0.2 m
                         # area a sample on a blocked cell passes when it is within this of a walkable neighbour's square
@@ -589,13 +590,13 @@ def load(src):
     if nsec > 4 * len(SCHEMA) + 8 or HEADER + 16 * nsec > size:
         raise ValueError('RSNV: section directory outside the file')
     for k in range(nsec):
-        tag = raw[HEADER + 16 * k:HEADER + 16 * k + 4].decode('ascii')
+        tag = raw[HEADER + 16 * k:HEADER + 16 * k + 4].decode('latin-1')     # an unknown tag is skipped, as rsn_load skips it
         off, count, stride = struct.unpack_from(e + 'III', raw, HEADER + 16 * k + 4)
         if off + count * stride > len(raw) or off % 16:
             raise ValueError(f'RSNV: section {tag} outside the file or misaligned')
-        if tag in SCHEMA and stride != struct.calcsize('<' + SCHEMA[tag]):
+        if (tag in SCHEMA and stride != struct.calcsize('<' + SCHEMA[tag])) or (tag in ('BMAP', 'META') and stride != 1):
             raise ValueError(f'RSNV: section {tag} stride {stride}')
-        if tag in w.sections:
+        if tag in w.sections and (tag in SCHEMA or tag in ('BMAP', 'META')):
             raise ValueError(f'RSNV: section {tag} appears twice')
         w.sections[tag] = (off, count, stride)
     for need in ('SECT', 'NODE', 'NAUX', 'EDGE', 'AREA', 'BMAP', 'HGHT', 'GBKT', 'GLST', 'ANOD'):

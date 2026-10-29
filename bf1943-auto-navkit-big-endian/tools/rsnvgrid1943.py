@@ -31,7 +31,7 @@ SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
 from bfbc2core import rsnv  # noqa: E402
 
-EXPORTER_VERSION = '1.1 (2026-10-26: cells on sector edges kept in the sector they start)'
+EXPORTER_VERSION = '1.2 (2026-10-29: costs rounded up to 16 x length, the heuristic scale in the header)'
 OFFM_ALIGHT_ZONE = 2         # design 1.3's OFFM kinds beside rsnv.py's BOARD_VEHICLE (1) and MOUNT_STATIC (5)
 ALIGHT_TARGET_REACH = 60.0   # m: a ground vehicle's alight node lies within this of its base or flag
 ALIGHT_REACH = 6.0           # m from the alight node to the soldier node
@@ -227,9 +227,15 @@ def write_world(lv, cls, sets, nodes, edges, offm, out, sector_offsets, header, 
     pos = np.array([[*sets[si].xz(k)[:1], sets[si].y[k], sets[si].xz(k)[1]] for si, k in nodes], np.float64).reshape(-1, 3)
     n_area = np.array([cell_area[si][k] for si, k in nodes], np.int64)
     adj = collections.defaultdict(dict)
+    p32 = pos.astype(np.float32).astype(np.float64)       # the node positions as the file holds them (float32)
     for a, b, kind, cost, both in edges:
-        c = cost if cost is not None else float(np.linalg.norm(pos[a] - pos[b]))
-        ci = max(1, min(int(round(c * 16)), 0xFFFF))
+        # drive edges cost 16 x their length between the float32 positions as the search measures it (x, y summed, then
+        # z), rounded up (exporter 1.4's rule: no chain of edges then costs less than the heuristic); a given cost (a
+        # launch's drop: its horizontal run) no less than that either, so the header's scale stays near 0.999
+        d = p32[b] - p32[a]
+        ln = math.sqrt((d[0] * d[0] + d[1] * d[1]) + d[2] * d[2])
+        c = cost if cost is not None else ln
+        ci = max(1, min(int(math.ceil(c * 16.0 - 1e-9)), 0xFFFF), min(int(math.ceil(16.0 * ln)), 0xFFFF))
         adj[a][b] = (kind, ci)
         if both:
             adj[b][a] = (kind, ci)
@@ -307,8 +313,16 @@ def write_world(lv, cls, sets, nodes, edges, offm, out, sector_offsets, header, 
                 'META': json.dumps(meta, indent=1).encode('utf-8')}
     if not offm:
         del sections['OFFM']
+    # the search heuristic's scale (rsnv.heuristic_scale): the least edge cost per 1/16 m of length, so the heuristic
+    # floor(16 x distance x scale) never overestimates a path (admissible, as the soldier worlds from exporter 1.4)
+    srcs = np.repeat(np.arange(len(nodes)), np.diff(np.asarray(first_edge, np.int64)))
+    dsts = np.array([int(r[0]) & 0xFFFFFF for r in edge_rows], np.int64)
+    h_q = rsnv.heuristic_scale(pos, srcs, dsts, [r[1] for r in edge_rows]) if edge_rows else 0
+    meta['heuristic scale'] = h_q / rsnv.H_SCALE_ONE if h_q else None
+    sections['META'] = json.dumps(meta, indent=1).encode('utf-8')
     hdr = {'level': lv, 'sea_level': header['sea_level'], 'radius': header['radius'], 'height': header['height'],
-           'step': header['step'], 'water_depth': header['water_depth'], 'hpd_sha256': header.get('sha256', '0' * 8)}
+           'step': header['step'], 'water_depth': header['water_depth'], 'hpd_sha256': header.get('sha256', '0' * 8),
+           'h_scale_q': h_q}
     size = rsnv.write(out, sections, hdr, big_endian)
     if flag_tight:
         # tight edges: drive edges with no line of sight either way under the runtime's rule (rsnv.World.los), as
