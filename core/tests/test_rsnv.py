@@ -1,8 +1,9 @@
 """RSNV, the navigation runtime's per-level file (core rsnv.py), on a file made here (no game data): written in both
 byte orders it reads back identical; the Python reference search finds the cheapest path; locate finds the walkable
 cell; line of sight keeps to one floor where two areas are stacked (it starts on the floor nearest the start's
-height); damaged files (truncated, a section outside the file, a bad marker, a wrong stride) are rejected with a
-ValueError, not a crash.
+height), and a transfer's stored soldier node there is kept only when in sight (rsnvtrip.resolve); damaged files
+(truncated, a section outside the file, a bad marker, a wrong stride, a pitch over the height step) are rejected with
+a ValueError, not a crash.
 
   python -B test_rsnv.py
 """
@@ -147,6 +148,18 @@ def stacked_los_cases():
             ((0.2, 10.38, 0.2), (1.2, 10.8, 1.2), False, 'a start nearer the lower floor (0.38 m) starts there')]
 
 
+def stacked_transfer_cases():
+    """(OFFM record, expected soldier node, why) over stacked() for rsnvtrip.resolve (rsnav's
+    rsn_transfer_soldier_node): a record is (kind, team mask, vehicle class, vehicle node, x, y, z, yaw, radius,
+    stored soldier node)."""
+    up = (0.2, 10.8, 0.2)
+    return [((2, 1, 3, 0, *up, 0.0, 1.0, 2), 0, 'alight on the upper floor, stored node on the floor below (in reach, '
+                                                'out of sight): resolved again, to the upper floor\'s node'),
+            ((4, 1, 3, 0, *up, 0.0, 1.0, 2), 0, 'a drop, the same'),
+            ((2, 1, 3, 0, *up, 0.0, 1.0, 1), 1, 'alight with its stored node on the same floor, in sight: kept'),
+            ((1, 1, 3, 0, *up, 0.0, 1.0, 2), 2, 'board: the stored node in reach is kept (no sight rule for boarding)')]
+
+
 def dijkstra(w, s, g):
     import heapq
     d, q = {s: 0}, [(0, s)]
@@ -181,6 +194,9 @@ def corrupt_cases():
         'AREA height grid': lambda s: area(s, 17, [9]),
         'AREA portals': lambda s: area(s, 9, [0, 2]),
         'AREA sector': lambda s: area(s, 11, [5]),
+        # a 9 m pitch with the default 4 m height step (0): no whole cell per block (2026-10-30: loaded, then
+        # ground() divided by zero)
+        'AREA pitch over its default height step': lambda s: area(s, 16, [9000]),
         'NAUX area': lambda s: s.update(NAUX=[(7, 0, 0, 0)] + s['NAUX'][1:]),
         'NAUX sector': lambda s: s.update(NAUX=[(0, 3, 0, 0)] + s['NAUX'][1:]),
         'EDGE target': lambda s: s.update(EDGE=[(99, 38, 0)] + s['EDGE'][1:]),
@@ -303,6 +319,12 @@ if __name__ == '__main__':
     st3.los((0.2, 10.8, 0.2), (1.2, 10.0, 1.2), tr)
     check(tr.get('rule') == 'end' and abs(tr.get('d', 0) - 0.8) < 1e-6,
           f'the trace of a refused line names the rule and the amount ({tr.get("rule")}, {tr.get("d")})')
+    # a transfer's stored soldier node (rsnvtrip.resolve, 2026-10-30): an unload point keeps it only when in sight,
+    # as the rule resolving it again needs; before, in reach was enough and the floor below was taken
+    from bfbc2core import rsnvtrip
+    for rec, want, why in stacked_transfer_cases():
+        got = rsnvtrip.resolve(st3, rec)
+        check(got == want, f'stacked floors, transfer: {why} ({got})')
     loc = a.locate(1.7, 10.0, 1.7)
     check(loc is not None and loc[0] == 0 and loc[1] == (2, 2), f'locate a walkable cell: {loc}')
     loc = a.locate(2.4, 10.0, 2.4, max_dist=0.1)

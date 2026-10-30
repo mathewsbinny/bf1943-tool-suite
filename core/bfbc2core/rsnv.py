@@ -575,7 +575,9 @@ class World:
                 out.append('AREA portals past PORT')
             if a.pitch_mm_ < 50 or a.sector >= n_sect:
                 out.append('AREA pitch or sector invalid')
-            if a.hstep_mm != 0 and (a.hstep_mm < a.pitch_mm_ or a.hstep_mm > 100000):
+            # the step ground() uses (0: 4 m); under the pitch a block holds no whole cell and ground() divides by
+            # zero (2026-10-30: a 9 m pitch with step 0 passed, then crashed)
+            if (a.hstep_mm or 4000) < a.pitch_mm_ or a.hstep_mm > 100000:
                 out.append('AREA height grid step under its pitch or over 100 m')
             if not (a.min_y <= a.max_y and coord(a.x0) and coord(a.z0) and coord(a.min_y) and coord(a.max_y)):
                 out.append('AREA corner or heights inverted, not numbers or past 1e6 m')

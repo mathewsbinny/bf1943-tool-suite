@@ -82,7 +82,7 @@ def mailbox():
     check(offsets('stw', 'r22') == {bots.R_SEQ, bots.R_PLAYER, bots.R_SOLDIER, bots.R_TEAM, bots.R_X, bots.R_Y, bots.R_Z,
                                     bots.R_SEQ_END}, f'the guest writes exactly the state record\'s words: {sorted(offsets("stw", "r22"))}')
     check(offsets('lwz', 'r22') == {bots.C_STAMP, bots.C_THROTTLE, bots.C_STRAFE, bots.C_YAW, bots.C_PITCH, bots.C_BUTTONS_HI,
-                                    bots.C_BUTTONS_LO}, f'and reads exactly the command record\'s: {sorted(offsets("lwz", "r22"))}')
+                                    bots.C_BUTTONS_LO, bots.C_SEQ}, f'and reads exactly the command record\'s: {sorted(offsets("lwz", "r22"))}')
     header = {bots.H_MAGIC, bots.H_VERSION, bots.H_BOTS, bots.H_BOT_SIZE, bots.H_FLAGS_MAX, bots.H_FLAG_SIZE, bots.H_MANAGER}
     flags = {bots.F_SEQ, bots.F_ENTITY, bots.F_OWNER, bots.F_CONTROL, bots.F_ENABLED, bots.F_RADIUS, bots.F_X, bots.F_Y,
              bots.F_Z, bots.F_SEQ_END}
@@ -100,6 +100,114 @@ def mailbox():
           'past the copy (tick - stamp, unsigned)')
     k = text.index(f'li r3, {bots.BLOCK_SIZE:#x}')
     check(text[k + 1] == 'bl 0x82627d10', 'the block is allocated with the game allocator')
+    command_snapshot(md, code)
+
+
+def run_command_read(md, code, word, tick):
+    """Runs the bot code's command read (from after the frame's + 0x84 copy to push) on a small interpreter of the
+    instructions it uses, as capstone decodes them: word(offset) gives the command record's words (the host may write
+    between loads). The frame buffer's command fields as stored ((throttle, strafe, yaw, pitch, hi, lo)), or None
+    when it stays neutral."""
+    names = ppcasm.assemble(bots.CODE_SOURCE, bots.CODE, bots.assembler_symbols())[1]
+    ins = {i.address: (i.mnemonic, [a.strip() for a in i.op_str.split(',')] if i.op_str else [])
+           for i in md.disasm(code[:names['FMT_HOST'] - bots.CODE], bots.CODE)}
+    start = [a for a, (m, o) in ins.items() if m == 'stw' and o == ['r5', f'{bots.BUF + 0x84:#x}(r1)']][0] + 4
+    reg = {'r1': 0x70000000, 'r22': 0x60000000, 'r31': bots.DATA}
+    buf, cr, pc = {}, 0, start
+    num = lambda t: int(t, 0)
+    for _ in range(1000):
+        if pc == names['push']:
+            break
+        m, o = ins[pc]
+        pc += 4
+        if m in ('lwz', 'stw'):
+            off, base = o[1][:-1].split('(')
+            at = reg[base] + num(off)
+            if m == 'lwz':
+                reg[o[0]] = word(at - reg['r22']) if base == 'r22' else {bots.DATA + bots.TICK: tick}[at]
+            else:
+                buf[at - reg['r1'] - bots.BUF] = reg[o[0]]
+        elif m == 'li':
+            reg[o[0]] = num(o[1]) & 0xFFFFFFFF
+        elif m == 'addi':
+            reg[o[0]] = (reg[o[1]] + num(o[2])) & 0xFFFFFFFF
+        elif m == 'subf':
+            reg[o[0]] = (reg[o[2]] - reg[o[1]]) & 0xFFFFFFFF
+        elif m in ('cmplw', 'cmplwi', 'cmpwi', 'andi.'):
+            if m == 'andi.':
+                reg[o[0]] = a = reg[o[1]] & num(o[2])
+                b = 0
+            else:
+                a, b = reg[o[0]], reg[o[1]] if m == 'cmplw' else num(o[1]) & 0xFFFFFFFF
+            if m == 'cmpwi':
+                a, b = a - (a >> 31 << 32), b - (b >> 31 << 32)
+            cr = (a > b) - (a < b)
+        elif m in ('b', 'beq', 'bne', 'bgt', 'blt', 'bge', 'ble'):
+            taken = {'b': True, 'beq': cr == 0, 'bne': cr != 0, 'bgt': cr > 0, 'blt': cr < 0, 'bge': cr >= 0,
+                     'ble': cr <= 0}[m]
+            if taken:
+                pc = num(o[-1])
+        elif m != 'lwsync':
+            raise AssertionError(f'the interpreter does not know {m} {o} at {pc - 4:#x}')
+    else:
+        raise AssertionError('the command read did not end')
+    if not buf:
+        return None
+    return tuple(buf.get(o) for o in (8, 0x0C, 0x88, 0x8C, 0x78, 0x7C))
+
+
+def command_snapshot(md, code):
+    """Mailbox v2's sequence lock: whatever the host's writes land between, the bot code takes a whole command (the
+    old one or the new one) or none, never a mix; an odd or ever-changing sequence and a stale stamp give none."""
+    tick = 1000
+    fields = ('C_THROTTLE', 'C_STRAFE', 'C_YAW', 'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO')
+    old = dict(zip(fields, (0x3F800000, 0x3F000000, 0x3FC00000, 0x3E000000, 0x100, 0x1000)), C_STAMP=tick - 1, C_SEQ=6)
+    new = dict(zip(fields, (0xBF800000, 0xBF000000, 0xBFC00000, 0xBE000000, 0x200, 0x400000)), C_STAMP=tick)
+    # the host's writes, as guestmem and navhost make them: the sequence odd, the record, the sequence even and new
+    steps = [(bots.C_SEQ, 7)] + [(getattr(bots, n), new[n]) for n in ('C_STAMP',) + fields] + [(bots.C_SEQ, 8)]
+    whole = lambda c: tuple(c[n] for n in fields)
+    seen, model_agrees = set(), True
+    # the host's write begins after the guest's first `delay` loads, then one step lands after every `gap` loads
+    for delay in range(13):
+        for gap in (1, 2, 4, 9):
+            for runner in ('ppc', 'model'):
+                mem = {getattr(bots, n): v for n, v in old.items()}
+                pending = list(steps)
+                loads = [0]
+
+                def word(off):
+                    v = mem.get(off, 0)
+                    loads[0] += 1
+                    if pending and loads[0] >= delay and (loads[0] - delay) % gap == 0:
+                        o, w = pending.pop(0)
+                        mem[o] = w
+                    return v
+                if runner == 'ppc':
+                    got = run_command_read(md, code, word, tick)
+                    seen.add(got)
+                else:
+                    ref = bots.guest_command(word, tick)
+                    model_agrees &= (None if ref is None else tuple(ref[1:])) == got
+    check(seen <= {whole(old), whole(new), None} and seen >= {whole(old), whole(new), None},
+          f'the guest takes the old command or the new one, never a mix, whatever the host\'s writes land between '
+          f'({len(seen)} outcomes: {sorted(str(s) for s in seen)})')
+    check(model_agrees, 'bots.guest_command (the hosts\' tests\' model) takes what the bot code takes, in every case')
+    rest = {getattr(bots, n): v for n, v in new.items()}
+    rest[bots.C_SEQ] = 8
+    check(run_command_read(md, code, rest.get, tick) == whole(new), 'a whole, fresh command is used')
+    for what, change in (('an odd sequence (the host stopped mid-write)', {bots.C_SEQ: 9}),
+                         (f'a stamp more than STALE ({bots.STALE}) ticks old', {bots.C_STAMP: tick - bots.STALE - 1}),
+                         ('a stamp ahead of the tick', {bots.C_STAMP: tick + 1})):
+        check(run_command_read(md, code, {**rest, **change}.get, tick) is None, f'{what} gives the neutral frame')
+    churn = [0]
+
+    def changing(off):
+        if off == bots.C_SEQ:
+            churn[0] += 2
+            return churn[0]
+        return rest[off]
+    check(run_command_read(md, code, changing, tick) is None and churn[0] == 2 * 2 * bots.TRIES,
+          f'a sequence that changes on every read: {bots.TRIES} tries, then the neutral frame ({churn[0] // 4} tries)')
 
 
 def image():
@@ -122,6 +230,8 @@ def image():
     # (or an import thunk, after the previous thunk's bctr)
     starts = [t for t in targets if word(t) == 0x7D8802A6 or word(t - 4) in (0x4E800020, 0x4E800420, 0)]
     check(len(starts) == len(targets), f'every call in the bot code targets a function start ({len(starts)} of {len(targets)})')
+    syncs = sum(1 for k in range(0, len(data) - 3, 4) if data[k:k + 4] == struct.pack('>I', bots.LWSYNC))
+    check(syncs > 0, f'the game\'s own code uses lwsync, as the command read does ({syncs} in the image)')
 
 
 if __name__ == '__main__':

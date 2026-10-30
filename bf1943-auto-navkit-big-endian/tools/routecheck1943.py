@@ -6,7 +6,8 @@ Every soldier spawn of each base and flag, and each alternate, is joined to the 
 the nearest node within 15 m horizontally and 4 m in height); a spawn on the largest network passes, one on a
 small island or off the graph is listed. A base's spawns on a carrier form the carrier's own network, which is
 expected (the sea divides it) and reported apart. Then a route between the first spawns of every pair of flags,
-which must exist. Exit code 0 when every flag spawn is on the main network and every flag pair is routed.
+which must exist. Exit code 0 when every flag spawn is on the main network and every flag pair is routed, and there
+was something to check (evaluate: no spawn, a flag without spawns or no flag pair fails).
 """
 import json
 import os
@@ -20,17 +21,27 @@ from bfbc2core import game1943, navdata, navpath, terrain  # noqa: E402
 
 
 def check(hpd, level, game=None):
-    """{'summary', 'spawns': [...], 'routes': [...], 'ok'} for a build of a level."""
+    """{'summary', 'spawns': [...], 'routes': [...], 'problems': [...], 'notes': [...], 'ok'} for a build of a level."""
     import spawnmap
     game = game1943.find_game(game)
     g = game1943.Game(game, level)
     hf_data = g.data(f'terrains/{level}/{level}.heightfield-000.res')
     navdata.Y_OFFSET = soldier1943.HEIGHT / 2          # BF1943 builds store nodes half the soldier's height up
     nav = navdata.load(hpd, terrain.read(hf_data) if hf_data else None)
+    return evaluate(nav, spawnmap.spawn_map(game, level)['objectives'], level, hpd)
+
+
+def evaluate(nav, objectives, level, hpd):
+    """check() on a loaded build (navdata.NavData) and the level's objectives (spawnmap's). Passing needs something
+    checked (2026-10-30: an empty graph and a flag without soldier spawns passed, with no spawn and no route checked):
+    soldier spawns on the level, each joined to the graph; every flag with soldier spawns on the main network and
+    routed to every other; and when any flag has soldier spawns, every flag has them and there are at least two. A
+    level whose flags have no soldier spawns at all (Coral Sea's, an air level: its soldiers start on the carriers)
+    has no route to check, and the report says so; an objective without soldier spawns is a note then (the
+    tutorial's Axis carrier has none)."""
     main = max(range(len(nav.islands)), key=lambda i: nav.islands[i].nodes) if nav.islands else -1
-    m = spawnmap.spawn_map(game, level)
     spawns, firsts = [], {}
-    for o in m['objectives']:
+    for o in objectives:
         for s in o['spawns']:
             if s.get('kind') != 'soldier':
                 continue
@@ -55,8 +66,24 @@ def check(hpd, level, game=None):
                    spawn_points=len(spawns), flag_points_off_main=len(flag_off),
                    base_points_off_main=sum(1 for s in spawns if s['role'] == 'base' and not s['main']),
                    flag_pairs=len(routes), flag_pairs_routed=len(routes) - len(unrouted))
+    problems, notes = [], []
+    bare = [o for o in objectives if not any(s.get('kind') == 'soldier' for s in o['spawns'])]
+    flags = [o for o in objectives if o['role'] == 'flag']
+    if not spawns:
+        problems.append('no soldier spawn on the level: nothing checked')
+    unjoined = [s for s in spawns if s['island_nodes'] is None and s['role'] != 'flag']   # flags': flag_off
+    if unjoined:
+        problems.append(f'{len(unjoined)} base spawn point(s) with no route node within reach')
+    if firsts:
+        for o in bare:
+            (problems if o['role'] == 'flag' else notes).append(f"{o['role']} {o['name'] or '(no name)'}: no soldier spawn")
+        if len(firsts) < 2:
+            problems.append(f'{len(firsts)} flag with soldier spawns: no flag pair to route')
+    else:
+        notes += [f"{o['role']} {o['name'] or '(no name)'}: no soldier spawn" for o in bare]
+        notes.append(f'no route checked: none of the {len(flags)} flags has soldier spawns')
     return dict(level=level, hpd=os.path.abspath(hpd), summary=summary, spawns=spawns, routes=routes,
-                ok=not flag_off and not unrouted)
+                problems=problems, notes=notes, ok=not flag_off and not unrouted and not problems)
 
 
 def report(r):
@@ -76,6 +103,7 @@ def report(r):
         lines.append(f'  {role:4s} {spawn}, {at}: {where}')
     for rt in r['routes']:
         lines.append(f"  {rt['a']} -> {rt['b']}: " + (f"{rt['cost']} m" if rt['found'] else f"no route ({rt['reason']})"))
+    lines += [f'  problem: {p}' for p in r.get('problems', ())] + [f'  note: {n}' for n in r.get('notes', ())]
     lines.append('ok' if r['ok'] else 'FAILED')
     return '\n'.join(lines)
 

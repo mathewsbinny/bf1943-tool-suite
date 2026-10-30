@@ -17,7 +17,8 @@ Command line:
   python fbrb1943.py info <bundle.fbrb>                    counts, sizes, compression
   python fbrb1943.py extract <bundle.fbrb> <out dir> [filter]
                                                            the entries as files under their names, and
-                                                           fbrb.manifest.json (name, type, flags, size, sha256)
+                                                           fbrb.manifest.json (name, type, flags, size, sha256);
+                                                           never into the game folder
   python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
                                                            a copy with entries replaced (names as listed);
                                                            never written into the game folder or over the input
@@ -111,6 +112,20 @@ def safe_path(out_dir, name):
     return p
 
 
+def canonical(path):
+    """path as Windows resolves it: links followed, case folded (C:\\Game and c:\\game are one folder)."""
+    return os.path.normcase(os.path.realpath(path))
+
+
+def contains(folder, path):
+    """True when path is folder or lies in it; False on another drive (where os.path.commonpath raises)."""
+    f, p = canonical(folder), canonical(path)
+    try:
+        return os.path.commonpath([f, p]) == f
+    except ValueError:
+        return False
+
+
 def inside_game(path):
     """True when path lies in the BF1943 game folder (game1943.find_game), which the tools only read."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'core'))
@@ -119,8 +134,7 @@ def inside_game(path):
         game = game1943.find_game()
     except (ImportError, FileNotFoundError):
         return False
-    a, g = os.path.abspath(path), os.path.abspath(game)
-    return os.path.commonpath([a, g]) == g
+    return contains(game, path)
 
 
 def main(argv):
@@ -152,6 +166,8 @@ def main(argv):
             print(__doc__)
             return 1
         out, flt = argv[3], (argv[4].lower() if len(argv) > 4 else '')
+        if inside_game(out):
+            raise ValueError(f'{out} is in the game folder, which the tools only read; extract elsewhere')
         manifest = []
         for e in b.entries:
             if flt not in e['name'].lower():
@@ -171,7 +187,7 @@ def main(argv):
             print(__doc__)
             return 1
         out = argv[3]
-        if os.path.abspath(out) == os.path.abspath(path):
+        if canonical(out) == canonical(path):
             raise ValueError('the output would overwrite the input bundle; write a copy elsewhere')
         if inside_game(out):
             raise ValueError(f'{out} is in the game folder, which the tools only read; write the bundle elsewhere')

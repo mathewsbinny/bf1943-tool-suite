@@ -373,7 +373,7 @@ def load(lv, log=print):
     from bfbc2core import water as water_mod
     p = A.level_paths(lv)
     st = json.load(open(p['settings'], encoding='utf-8'))
-    game = game1943.find_game(None)
+    game = game1943.find_game(st.get('game'))         # the copy the level was prepared from (2026-10-30: the default)
     g = game1943.Game(game, lv)
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
     hf = terrain.read(g.data(hf_name))

@@ -16,7 +16,8 @@ Get the partitions out of a bundle with `..\..\bf1943-fbrb-tool\fbrb1943.py extr
 
 Run `build.bat`. It compiles `LevelDiff.exe` with the C# compiler that ships with Windows. It reads files
 with the suite's DbxEdit code (`..\..\bf1943-dbx-tools`; or set `DBX_TOOLS` to
-that folder).
+that folder). The hub and the tests build it through core `csbuild.py`: again whenever `LevelDiff.cs`, the
+compiled-in `DbxEdit.cs` or `build.bat` is newer than the exe or differs from what it was built from.
 
 ## Use
 
@@ -37,7 +38,8 @@ The exit code is 0 if the files have no differences, 1 if they do, 2 for bad inp
 
 Instances are matched by GUID. Each changed instance lists its fields as `path: old  ->  new`. Lists of
 references (like a level's `Objects`) are compared as sets: `-` for entries only in A, `+` for entries only
-in B. A list with the same entries in another order is reported as such.
+in B. A list with the same entries in another order is reported as such (each list on its own: a reorder is shown
+even when another list of the instance gained or lost entries).
 
 Example: Wake Island's level partition before and after an edit (extracted into `C:\dbx`, edited into
 `C:\dbx-edited`):
@@ -54,7 +56,8 @@ A partition compared with itself reports `changed: 0` with `--summary`.
 LevelDiff keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools (`ToolLog`, shared
 with DbxEdit). A file it cannot read, or one that is not binary `.dbx`, is bad input: it prints the cause (and, for
 a read failure, what to do and the log's path) and exits with code 2. An unexpected error is explained the same way
-and exits with code 1 (the code for "differences" too). Tests: `tests\test_bf1943_tools.py dbxedit` in the suite (the `bf1943` tier); its BFBC2 tests were removed.
+and exits with code 1 (the code for "differences" too). Tests: `tests\test_bf1943_tools.py dbxedit` in the suite (the `bf1943` tier); `bf1943-dbx-tools\tests\test_csharp_tools.py`
+(quick tier: reorders on made-up partitions); its BFBC2 tests were removed.
 
 ## Credits
 

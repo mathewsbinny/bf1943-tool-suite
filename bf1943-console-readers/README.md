@@ -25,8 +25,11 @@ python stfs\stfs.py extract <your BF1943 package> out
 ## Errors and logs
 
 The reader keeps a log in `%LOCALAPPDATA%\bf1943-tool-suite\logs\` like the suite's other tools; on an error
-it prints the cause, what to do and the log's path (exit code 1). Tests: `tests\test_console_readers.py`
-(the STFS reader on packages it builds, including names that try to leave the output folder; quick tier); your own BF1943 package is read by the Xenia kit's full
+it prints the cause, what to do and the log's path (exit code 1). A damaged package is refused with a
+`ValueError`: a folder entry that is (through its parents) its own parent, or a file whose blocks hold fewer bytes
+than its declared size (a package cut short) - never a hang or a short file. Tests: `tests\test_console_readers.py`
+(the STFS reader on packages it builds, including names that try to leave the output folder, parent loops and
+files cut short; quick tier); your own BF1943 package is read by the Xenia kit's full
 build test (bf1943 tier).
 
 Format notes are in the script's header (STFS follows the public Free60 documentation).

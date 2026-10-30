@@ -159,8 +159,8 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
         raise FileNotFoundError(f'{hpd}: build the level first (navkit.py build {lv})')
     st = json.load(open(os.path.join(W, 'navkit', 'navkit.json'), encoding='utf-8'))
     xoff, zoff = st['sector_offsets']
-    sea = float(st.get('sea_level', 0.0))
-    game = game1943.find_game(None)
+    sea = float(st.get('sea_level') or 0.0)         # None: a level without a water mesh (navkit.py prepare)
+    game = game1943.find_game(st.get('game'))         # the copy the level was prepared from (2026-10-30: the default)
     g = game1943.Game(game, lv)
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
     hf = terrain.read(g.data(hf_name))

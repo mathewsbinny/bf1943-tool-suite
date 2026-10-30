@@ -40,13 +40,16 @@ def xenia_folder(given=None):
                             f'{KIT_MANIFEST} names it')
 
 
-def floats(words):
+def floats(words, count):
+    if len(words) != count:
+        raise IndexError(f'{count} values expected, {len(words)} found')
     return [round(struct.unpack('>f', bytes.fromhex(w))[0], 2) for w in words]
 
 
 def read_log(path):
+    """The session's facts; bot reports that are cut short or garbled are kept, as lines, in 'malformed'."""
     out = dict(log=path, build=None, title=None, patches=[], warnings=0, last_lines=[], host=None, bots={}, spawns=[],
-               host_position=None)
+               host_position=None, malformed=[])
     lines = open(path, 'rb').read().decode('utf-8', errors='replace').splitlines()
     for line in lines:
         if line.startswith('w>'):
@@ -58,21 +61,27 @@ def read_log(path):
         elif line.startswith('!>') and 'Applying patch for:' in line:
             out['patches'].append(line.split('Applying patch for:', 1)[1].strip())
         m = BOT.search(line)
-        if not m:
-            continue
-        w = m.group(1).split()
-        if w[:2] == ['host', 'player']:
-            out['host'] = dict(player=w[2], team=int(w[4]))
-        elif w[0] == 'host' and w[2:4] == ['soldier', 'position']:
-            out['host_position'] = floats(w[4:7])
-        elif w[0] == 'bot' and w[2] == 'team':
-            out['bots'].setdefault(w[1], {}).update(team=int(w[3]), kit=w[5])
-        elif w[0] == 'bot' and w[2:4] == ['soldier', 'position']:
-            out['bots'].setdefault(w[1], {})['position'] = floats(w[4:7])
-        elif w[0] == 'spawned':
-            out['spawns'].append(dict(bot=w[1], team=int(w[3]), spawn_id=w[7], soldier=w[9]))
+        if m:
+            try:
+                bot_report(out, m.group(1).split())
+            except (IndexError, ValueError, struct.error):     # cut short (a log still being written, a crash) or garbled
+                out['malformed'].append(line.strip())
     out['last_lines'] = [l for l in lines if l.strip()][-8:]
     return out
+
+
+def bot_report(out, w):
+    """One "rs-bots:" report's words into the result; IndexError, ValueError or struct.error when it is incomplete."""
+    if w[:2] == ['host', 'player']:
+        out['host'] = dict(player=w[2], team=int(w[4]))
+    elif w[0] == 'host' and w[2:4] == ['soldier', 'position']:
+        out['host_position'] = floats(w[4:7], 3)
+    elif w[0] == 'bot' and w[2] == 'team':
+        out['bots'].setdefault(w[1], {}).update(team=int(w[3]), kit=w[5])
+    elif w[0] == 'bot' and w[2:4] == ['soldier', 'position']:
+        out['bots'].setdefault(w[1], {})['position'] = floats(w[4:7], 3)
+    elif w[0] == 'spawned':
+        out['spawns'].append(dict(bot=w[1], team=int(w[3]), spawn_id=w[7], soldier=w[9]))
 
 
 def crashes(exe_names, since):
@@ -110,6 +119,8 @@ def report(r, positions=False):
                 s.append(f"  bot {k} team {b.get('team')} kit {b.get('kit')}: {b.get('position')}")
     else:
         s.append('no bots experiment in this session')
+    if r.get('malformed'):
+        s.append(f"bot reports cut short or garbled (skipped): {len(r['malformed'])}, the last: {r['malformed'][-1][:160]}")
     if r['crashes']:
         for c in r['crashes']:
             s.append(f"CRASH {c['time']}: {c['exe']} in {c['module']} at +{c['offset']} (exception {c['code']})")

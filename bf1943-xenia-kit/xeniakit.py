@@ -234,7 +234,17 @@ def verify(args):
             bad.append(path)
     if bad:
         raise ValueError(f'changed or missing since the build: {bad}')
-    say(f'ok: {len(title_manifest["files"])} title files, the fixed Xenia and the patch file match the build')
+    # the build's bot mode: Xenia applies every patch file in the folder, so a normal build must find no bots patch
+    # there (another build against the same Xenia may have written one), and a bots build only its own
+    patches = os.path.dirname(m['patch'])
+    bots_files = [os.path.join(patches, f) for f in sorted(os.listdir(patches)) if f == bots.PATCH_FILE or f.endswith('.toml')
+                  and open(os.path.join(patches, f), encoding='utf-8', errors='replace').read().startswith(bots.HEADER)]
+    extra = [p for p in bots_files if not (m.get('bots_patch') and os.path.normcase(p) == os.path.normcase(m['bots_patch']))]
+    if extra:
+        raise ValueError(f'{"a normal build, but Xenia has" if not m.get("bots_patch") else "Xenia has another"} '
+                         f'bots experiment patch: {extra} (rebuild, or move it away)')
+    say(f'ok: {len(title_manifest["files"])} title files, the fixed Xenia and the patch file match the build'
+        f'{" (with the bots experiment)" if m.get("bots_patch") else "; no bots patch"}')
 
 
 def launch(args):

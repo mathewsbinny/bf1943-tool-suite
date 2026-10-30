@@ -9,7 +9,7 @@ probes below came from operation-rising-sun's `src/xeniaprobe` on 2026-10-23.
 | `run_xenia_probe.ps1` | a traced session of the Xenia kit's build (below) |
 | `capture_xenia_window.ps1` | screenshots of Xenia's own window only, a frame kept when the picture changed: `-OutDir <folder> [-Minutes 10] [-IntervalMs 1500]` (generic: any title in Xenia) |
 | `udp_join_probe.py` | watch a local multiplayer join from the host side: listens at the ports a client may send to by mistake (1001 / 1003, Xenia's 11001 / 11003) and tests the game's server port 127.0.0.1:25003; `python -B udp_join_probe.py <session folder> [minutes]`, results in `udp-join-probe.txt` there. Loopback only |
-| `guestmem.py` | the running game's memory from outside Xenia (probe N0; mailbox v2 for N4, 2026-10-30): `attach` finds Xenia and the guest base and checks `MZ` at 0x82000000, the bots experiment's code and its mailbox; `bots` reads the bot code's state and tick, each bot's state record (player, soldier, team, position) and command, the capture points' records, soldier health and aim; `throttle <value> [--slot N\|all] [--hold S]` and `input [--throttle] [--strafe] [--yaw] [--pitch] [--buttons Jump,...] [--slot N\|all] [--press S] [--hold S]` drive the bots for `--hold` seconds (default 10), stamping each command with the guest's tick about 60 times a second (a command more than 10 ticks old is ignored), then zero them; `stop` zeroes every command; `watch [seconds] [--every S] [--slot N] [--json out.json]`. Only command records are written. Needs a build with `--experiment-bots`. v1 worked in game on 2026-10-30 (guest base 0x100000000); v2 is tested on a made-up guest only. navhost (project-opfor-bf1943) is the mailbox's real host |
+| `guestmem.py` | the running game's memory from outside Xenia (probe N0; mailbox v2 for N4, 2026-10-30): `attach` finds Xenia and the guest base and checks `MZ` at 0x82000000, the bots experiment's code, the hook that branches to it (code without it is "unhooked", not applied) and its mailbox; `bots` reads the bot code's state and tick, each bot's state record (player, soldier, team, position) and command, the capture points' records, soldier health and aim; `throttle <value> [--slot N\|all] [--hold S]` and `input [--throttle] [--strafe] [--yaw] [--pitch] [--buttons Jump,...] [--slot N\|all] [--press S] [--hold S]` drive the bots for `--hold` seconds (default 10), stamping each command with the guest's tick about 60 times a second (a command more than 10 ticks old is ignored) under the mailbox's sequence lock, then zero them; a hold stops writing (exit 1) once the match's mailbox is cleared or replaced; `stop` zeroes every command; `watch [seconds] [--every S] [--slot N] [--json out.json]`. Only command records are written. Needs a build with `--experiment-bots`. v1 worked in game on 2026-10-30 (guest base 0x100000000); v2 is tested on a made-up guest only. navhost (project-opfor-bf1943) is the mailbox's real host |
 
 ## Traced sessions (run_xenia_probe.ps1)
 
@@ -50,7 +50,9 @@ crashes are matched on the executables in the log's own folder.
   (`w>` lines), and the log's last lines (where a hang or crash left it).
 - **The bots experiment** (`bf1943-xenia-kit --experiment-bots`; its `rs-bots:` lines): the host's player and
   team, each bot's team and kit, the spawns, and the last reported soldier positions of the host and every bot.
-  Without those lines it says there was no bots experiment in the session.
+  Without those lines it says there was no bots experiment in the session. A report cut short or garbled (a log
+  read while Xenia still writes it, or one a crash ended mid-line) is skipped and kept in `malformed`; the report
+  counts them and shows the last.
 - **A crash:** Windows' Application log (Application Error, event 1000) for the Xenia executable within 5 minutes
   of the log's last write: faulting module, offset and exception code. Xenia writes no crash report of its own.
   A normal exit ends the log with "Cheap-skate exit!", and the reader says so.
@@ -62,11 +64,15 @@ only read (the event log through PowerShell's `Get-WinEvent`).
 
 `python tests\test_xeniarun.py` (the `quick` tier of `run_tests.py`; no game data, no Xenia): the reader on a log
 the test writes - build, title and patches, warnings, the bots' reports (host team, bots' teams and kits, spawns,
-last positions), the normal exit line, and the report text.
+last positions), the normal exit line, and the report text; and the same log cut off inside each kind of report
+(recorded as malformed, the rest kept).
 
 `python tests\test_guestmem.py` (quick tier; no Xenia): `guestmem.py` on a made-up guest memory laid out as `bots.py`'s
-mailbox v2: attach, the records and flags, torn records, `input` and `throttle` (fields first, the stamp last, zeroed
-afterwards), `stop`, a block of another version refused, `--help`.
+mailbox v2: attach, the records and flags, torn records, `input` and `throttle` (under the sequence lock: the
+sequence odd, the stamp and fields, the sequence even; zeroed afterwards), `stop`, a block of another version
+refused, `--help`; a command write against the bot code's read (`bots.guest_command`) wherever its writes land
+between the guest's loads (a whole command or none, never a mix); the bot code without its hook (not applied); a
+hold that outlives its match (nothing more written).
 
 ## Errors and logs
 

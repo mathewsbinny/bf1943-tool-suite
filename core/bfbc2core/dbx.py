@@ -98,25 +98,27 @@ def _string(strings, index, pos):
     return strings[index]
 
 
-def _strings(data, tolerant):
+def _strings(data):
     if len(data) < 24:
         raise ValueError('truncated .dbx: no string table header')
     area, count = struct.unpack_from('>II', data, 16)
     _need(data, 24, 4 * count, f'a table of {count} string offsets')
-    if 24 + area > len(data) and not tolerant:
-        raise ValueError(f'truncated .dbx: the string area ends at {24 + area:#x}, past the file ({len(data):#x})')
+    stop = 24 + area                                # the string area: the offset table, then the strings
+    if stop > len(data):
+        raise ValueError(f'truncated .dbx: the string area ends at {stop:#x}, past the file ({len(data):#x})')
     offsets = struct.unpack_from(f'>{count}I', data, 24)
     base = 24 + 4 * count
+    if base > stop:
+        raise ValueError(f'damaged .dbx: {count} string offsets do not fit in the string area of {area} bytes')
     out = []
-    for off in offsets:
+    for i, off in enumerate(offsets):
         start = base + off
-        end = data.find(b'\0', start)
+        end = data.find(b'\0', start, stop)
         if end < 0:
-            if not tolerant:
-                raise ValueError('string without end')
-            end = len(data)
+            raise ValueError(f'damaged .dbx: string {i} at {start:#x} does not end inside the string area '
+                             f'(which ends at {stop:#x})')
         out.append(data[start:end].decode('utf-8', errors='replace'))
-    return out, 24 + area
+    return out, stop
 
 
 class DeletedEntry(ValueError):
@@ -129,7 +131,7 @@ def parse(data):
         raise DeletedEntry('empty file: a *deleted* bundle entry (older FbrbTool unpacks wrote them as files)')
     if not is_binary(data):
         raise ValueError('not a binary .dbx file')
-    strings, pos = _strings(data, tolerant=False)
+    strings, pos = _strings(data)
     roots = []
     stack = []
     n = len(data)
@@ -162,6 +164,8 @@ def parse(data):
             start = pos
             count, pos = _varint(data, pos)
             size, pos = _varint(data, pos)
+            if count and size < 2:                  # every value reads at least two bytes (FORMAT.md section 3)
+                raise ValueError(f'damaged .dbx: {count} numbers of size {size} at {start:#x} (the smallest is 2 bytes)')
             _need(data, pos, count * size, f'{count} numbers of {size} bytes')
             pos += count * size
             e.raw = data[start:pos]
@@ -276,53 +280,25 @@ def _escape(s):
 
 
 def to_xml(data):
-    """FORMAT.md section 3: the readable XML, identical to `DbxEdit xml` (string reading tolerant to a missing
-    terminator at the end, as the export is)."""
-    strings, pos = _strings(data, tolerant=True)
+    """FORMAT.md section 3: the readable XML, identical to `DbxEdit xml` on every valid file. The file is read
+    with parse(), so a damaged one raises its ValueError here too (DbxEdit's export reads a string with no zero
+    byte to the end of the file; this does not)."""
     out = ['<?xml version="1.0"?>\r\n']
-    open_tags = []
-    n = len(data)
-    while pos < n:
-        tag, pos = _varint(data, pos)
-        if tag == 0:
-            if not open_tags:
-                break
-            closing = open_tags.pop()
-            out.append('\t' * len(open_tags) + '</' + closing + '>\r\n')
-            continue
-        name = strings[tag]
-        head = data[pos]
-        pos += 1
-        kind = head >> 4
-        line = ['\t' * len(open_tags), '<', name]
-        first = ''
-        for i in range(head & 0xF):
-            k, pos = _varint(data, pos)
-            v, pos = _varint(data, pos)
-            if i == 0:
-                first = strings[v]
-            line.append(' ' + strings[k] + '="' + _escape(strings[v]) + '"')
-        if kind == CONTAINER:
-            pos += 1
-            out.append(''.join(line) + '>\r\n')
-            open_tags.append(name)
-            continue
-        if kind == TEXT:
-            idx, pos = _varint(data, pos)
-            content = _escape(strings[idx])
-            if not content:
-                out.append(''.join(line) + ' />\r\n')
-                continue
-        elif kind == NUMBERS:
-            count, pos = _varint(data, pos)
-            size, pos = _varint(data, pos)
-            vals = [_number_text(data[pos + i * size:pos + i * size + (4 if size == 4 else 8 if size == 8 else 2)], size, first)
-                    for i in range(count)]
-            pos += count * size
-            content = '/'.join(vals)
+
+    def emit(e, depth):
+        line = '\t' * depth + '<' + e.tag + ''.join(' ' + k + '="' + _escape(v) + '"' for k, v in e.attributes)
+        if e.kind == CONTAINER:
+            out.append(line + '>\r\n')
+            for c in e.children:
+                emit(c, depth + 1)
+            out.append('\t' * depth + '</' + e.tag + '>\r\n')
+            return
+        content = _escape(value(e))
+        if e.kind == TEXT and not content:
+            out.append(line + ' />\r\n')
         else:
-            v = data[pos + 1]
-            pos += 2
-            content = 'false' if v == 0 else 'true' if v == 1 else str(v)
-        out.append(''.join(line) + '>' + content + '</' + name + '>\r\n')
+            out.append(line + '>' + content + '</' + e.tag + '>\r\n')
+
+    for root in parse(data).roots:
+        emit(root, 0)
     return ''.join(out)

@@ -9,10 +9,21 @@ folder for what the tools make from it.
     level_work(lv)                         # <suite>\\work\\levels\\<lv> (BF1943_WORK overrides <suite>\\work)
 
 The game files are only read: the copy stays as the Xenia kit extracted it. Bundles are BF1943's FbRB v2
-(bf1943-fbrb-tool/fbrb1943.py); three of the 85 use another layout and are left out.
+(bf1943-fbrb-tool/fbrb1943.py). The three of the 85 in another layout (build_overlay-00, async/ondemand_awards-00,
+async/ondemand_sounds-00) are not level bundles, so Game never opens them; every bundle it opens is one fbrb1943 reads
+(checked 2026-10-30 on every level), so one the reader refuses is damaged and raises BundleError (2026-10-30: such
+a bundle was skipped as "another layout", and a damaged level bundle silently gave the shared bundle's copy of its
+files, or none).
 """
+import gzip
 import os
+import struct
 import sys
+import zlib
+
+
+class BundleError(ValueError):
+    """A level bundle (or the shared one) the reader refuses: damaged or cut short. Raised, never skipped."""
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
@@ -74,10 +85,14 @@ class Game:
         for p in paths:
             if not os.path.isfile(p):
                 continue
+            raw = open(p, 'rb').read()
             try:
-                b = Bundle(open(p, 'rb').read())
-            except ValueError:                    # one of the three bundles in another layout
-                continue
+                b = Bundle(raw)
+            except (ValueError, struct.error, EOFError, gzip.BadGzipFile, zlib.error) as e:
+                # not "another layout": no level bundle is in one (the module's description); a damaged level
+                # bundle left out would let the shared bundle's file stand in for the level's own
+                raise BundleError(f'{p}: the bundle is damaged ({type(e).__name__}: {e}); extract the game again '
+                                  f'(bf1943-xenia-kit)') from e
             for e in b.entries:
                 self.entries.setdefault(e['name'].lower(), (b, e['name']))
 

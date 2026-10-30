@@ -27,10 +27,12 @@ guest's 0x82000000 starts with MZ. Guest memory is big-endian.
 
 Mailbox v2 (bf1943-xenia-kit/bots.py, its MBOX_MAGIC ... BLOCK_SIZE names): the bot code allocates one block per
 match and puts its address in its data area. Each bot has a state record the guest writes every tick and a command
-record the host writes. A command counts only while its stamp (the tick it answered, written last) is at most STALE
-ticks old, so `input` and `throttle` keep rewriting it while they hold, and the bots stand once they stop. Only
-command records are written, and only by `throttle`, `input` and `stop`; nothing else in Xenia or the game is
-changed. Soldier health (soldier + 0x3c) and aim (the object at soldier + 0x230: yaw + 4, pitch + 8, radians) are
+record the host writes under a sequence lock (C_SEQ odd while it is written, even and new once it is whole; the
+guest takes only a whole record). A command counts only while its stamp (the tick it answered) is at most STALE
+ticks old, so `input` and `throttle` keep rewriting it while they hold, and the bots stand once they stop; they
+stop writing when the match's mailbox goes away or is replaced. `attach` reports the bots as applied only when the
+code is in place and the hook branches to it. Only command records are written, and only by `throttle`, `input`
+and `stop`; nothing else in Xenia or the game is changed. Soldier health (soldier + 0x3c) and aim (the object at soldier + 0x230: yaw + 4, pitch + 8, radians) are
 read as research/evidence/bot-interfaces.json gives them (operation-rising-sun). The mailbox's real host is navhost
 (project-opfor-bf1943 TnT/Code/Engine/AI/Bots/navhost); this is the probe and test tool.
 """
@@ -60,6 +62,7 @@ BUTTONS = {name: bit for bit, name in enumerate(
     'IngameMenu ScoreboardMenu CarHorn GearUp GearDown GiveOrder SelectWeapon1 SelectWeapon2 SelectWeapon3 '
     'SelectWeapon4 MapZoom SnapView SelectAll Select1 Select2 Select3'.split(), 8)}
 FACING_VALID = 40
+MATCH_CHANGED = 'the match ended or another replaced its mailbox during the hold: stopped, nothing more written'
 k32 = ctypes.WinDLL('kernel32', use_last_error=True)
 
 
@@ -172,14 +175,15 @@ def button_names(mask):
 
 
 def bot_code_state(g):
-    """'applied', 'absent' (the cave is zero: a normal build) or 'other' (neither), and the hook word."""
-    _, code, tail = bots.build()
+    """'applied' (the bot code, and the hook branching to it), 'unhooked' (the code without that hook: it never
+    runs), 'absent' (the cave is zero and the hook the game's own: a normal build) or 'other', and the hook word."""
+    words, code, tail = bots.build()
     blob = code + tail
     have = g.read(bots.CODE, len(blob))
     hook = g.u32(bots.HOOK)
     if have == blob:
-        return 'applied', hook
-    return ('absent' if not any(have) else 'other'), hook
+        return ('applied' if hook == dict((a, w) for a, w, _ in words)[bots.HOOK] else 'unhooked'), hook
+    return ('absent' if not any(have) and hook == bots.HOOK_ORIGINAL else 'other'), hook
 
 
 def block_of(g):
@@ -221,12 +225,16 @@ def flag_records(g, block):
 
 
 def write_command(g, block, k, stamp, throttle=0.0, strafe=0.0, yaw=0.0, pitch=0.0, buttons=0):
-    """Slot k's command: the fields first, the stamp last (aligned 32-bit words, as navhost writes them)."""
+    """Slot k's command under its sequence lock (bots.py, C_SEQ; as navhost writes it): the sequence odd, the stamp
+    and fields, then the sequence even and new, aligned 32-bit words. The guest takes none of it until the end."""
     at = block + bots.BOT0 + bots.BOT_SIZE * k
-    for name, value in (('C_THROTTLE', bits32(throttle)), ('C_STRAFE', bits32(strafe)), ('C_YAW', bits32(yaw)),
-                        ('C_PITCH', bits32(pitch)), ('C_BUTTONS_HI', buttons >> 32), ('C_BUTTONS_LO', buttons & 0xFFFFFFFF),
-                        ('C_STAMP', stamp)):
+    odd = (g.u32(at + bots.C_SEQ) + 1 | 1) & 0xFFFFFFFF
+    g.write_u32(at + bots.C_SEQ, odd)
+    for name, value in (('C_STAMP', stamp), ('C_THROTTLE', bits32(throttle)), ('C_STRAFE', bits32(strafe)),
+                        ('C_YAW', bits32(yaw)), ('C_PITCH', bits32(pitch)), ('C_BUTTONS_HI', buttons >> 32),
+                        ('C_BUTTONS_LO', buttons & 0xFFFFFFFF)):
         g.write_u32(at + getattr(bots, name), value)
+    g.write_u32(at + bots.C_SEQ, (odd + 1) & 0xFFFFFFFF)
 
 
 def snapshot(g):
@@ -292,24 +300,37 @@ def slots_of(opts):
     return [k]
 
 
+def still_block(g, block):
+    """Whether the data area still names this block (its magic and address): a new match replaces or clears it."""
+    return struct.unpack('>II', g.read(bots.DATA + bots.MBOX_MAGIC, 8)) == (bots.MAGIC, block)
+
+
 def drive(g, block, slots, hold, press, throttle=0.0, strafe=0.0, yaw=None, pitch=None, mask=0, sleep=time.sleep):
     """Keeps the commands fresh for hold seconds (about 60 times a second, stamped with the guest's tick), the
-    buttons in mask for the first press seconds (all of hold when press is None), then zeroes them."""
+    buttons in mask for the first press seconds (all of hold when press is None), then zeroes them. Each round
+    first checks that the data area still names the block: once a match ends or another replaces it, nothing more
+    is written (not even the zeroing: the old block is no longer the bots', and a new one starts zeroed). True when
+    held to the end, False when the match changed."""
     facing = 1 << FACING_VALID if yaw is not None or pitch is not None else 0
     start = time.time()
+    ours = True
     try:
         while True:
             t = time.time() - start
             buttons = facing | (mask if press is None or t < press else 0)
             tick = g.u32(bots.DATA + bots.TICK)
+            ours = still_block(g, block)
+            if not ours:
+                return False
             for k in slots:
                 write_command(g, block, k, tick, throttle, strafe, yaw or 0.0, pitch or 0.0, buttons)
             if t >= hold:
-                break
+                return True
             sleep(1 / 60)
     finally:
-        for k in slots:
-            write_command(g, block, k, 0)
+        if ours and still_block(g, block):
+            for k in slots:
+                write_command(g, block, k, 0)
 
 
 def main(argv, guest=None, sleep=time.sleep):
@@ -361,7 +382,9 @@ def main(argv, guest=None, sleep=time.sleep):
         if len(argv) < 3 or argv[2].startswith('--'):
             raise ValueError('throttle needs a value, such as 0 or 1')
         opts = dict(zip(argv[3:], argv[4:]))
-        drive(g, block, slots_of(opts), float(opts.get('--hold', 10)), None, throttle=float(argv[2]), sleep=sleep)
+        if not drive(g, block, slots_of(opts), float(opts.get('--hold', 10)), None, throttle=float(argv[2]), sleep=sleep):
+            print(MATCH_CHANGED)
+            return 1
         print(f'throttle {float(argv[2]):g} held {float(opts.get("--hold", 10)):g} s, then zeroed')
         return 0
     given = argv[2::2]
@@ -376,8 +399,10 @@ def main(argv, guest=None, sleep=time.sleep):
             raise ValueError(f'unknown button {name}: one of {", ".join(BUTTONS)}')
         mask |= 1 << BUTTONS[name]
     num = lambda k: float(opts[k]) if k in opts else None
-    drive(g, block, slots_of(opts), float(opts.get('--hold', 10)), num('--press'), throttle=num('--throttle') or 0.0,
-          strafe=num('--strafe') or 0.0, yaw=num('--yaw'), pitch=num('--pitch'), mask=mask, sleep=sleep)
+    if not drive(g, block, slots_of(opts), float(opts.get('--hold', 10)), num('--press'), throttle=num('--throttle') or 0.0,
+                 strafe=num('--strafe') or 0.0, yaw=num('--yaw'), pitch=num('--pitch'), mask=mask, sleep=sleep):
+        print(MATCH_CHANGED)
+        return 1
     print(f'held {float(opts.get("--hold", 10)):g} s, then zeroed')
     return 0
 

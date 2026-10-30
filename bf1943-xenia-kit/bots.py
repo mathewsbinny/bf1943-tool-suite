@@ -75,9 +75,15 @@ HANDLE = SLOTS + 4 * MAX_BOTS + 4
 #   per bot slot k at BOT0 + BOT_SIZE * k: a state record the guest writes every tick (R_*: the tick, then player,
 #     soldier (0: dead or not spawned), team, position x y z as float bits, then the tick again; a reader that sees
 #     the two ticks differ read it while it was written), and a command record the host writes (C_*: the stamp,
-#     the tick it answered, written last; throttle, strafe (actions 0 and 1), absolute yaw and pitch (frame + 0x88 /
-#     + 0x8c, used with button bit 40), the button u64 at frame + 0x78 as high and low words). A command whose stamp
-#     is more than STALE ticks old (or ahead, or none: 0) gives a neutral frame, so the bots stand if the host stops.
+#     the tick it answered; throttle, strafe (actions 0 and 1), absolute yaw and pitch (frame + 0x88 / + 0x8c, used
+#     with button bit 40), the button u64 at frame + 0x78 as high and low words; then a sequence word, C_SEQ). The
+#     sequence is a lock: the host makes it odd, writes the stamp and fields, then makes it even and new
+#     ((seq + 1) | 1, then that + 1). The guest reads the sequence, the record, the sequence again, and takes the
+#     record only when both are the same even value (else it tries again, TRIES times in all); with no whole record,
+#     or one whose stamp is more than STALE ticks old (or ahead, or none: 0), the frame is neutral, so the bots stand
+#     if the host stops. (Before 2026-10-30 the stamp was written last and nothing else guarded the fields: a read
+#     during a write could mix the new throttle with the old facing. The word was spare, so zero is an even
+#     sequence: a host that does not lock is read as before.)
 #   per capture point f (FLAG0 + FLAG_SIZE * f, up to MAX_FLAGS, in the game's own iteration order): the tick, the
 #     entity, owner team (+0x80), control 0-100 (+0xa0, float bits), enabled (+0xad), radius (data + 0x114, float
 #     bits), position x y z, then the tick again.
@@ -91,7 +97,9 @@ MAX_FLAGS = 8
 H_MAGIC, H_VERSION, H_BOTS, H_BOT_SIZE, H_FLAGS_MAX, H_FLAG_SIZE, H_MANAGER, H_TICK, H_FLAGS = (4 * k for k in range(9))
 BOT0, BOT_SIZE = 0x40, 0x40
 R_SEQ, R_PLAYER, R_SOLDIER, R_TEAM, R_X, R_Y, R_Z, R_SEQ_END = (4 * k for k in range(8))
-C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO = (0x20 + 4 * k for k in range(7))
+C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO, C_SEQ = (0x20 + 4 * k for k in range(8))
+TRIES = 4                    # reads of a command record before a neutral frame (the guest's own; not in rsmbox.h)
+LWSYNC = 0x7C2004AC          # lwsync (ppcasm has no mnemonic for it; the game's own code uses it)
 FLAG0 = BOT0 + BOT_SIZE * MAX_BOTS
 FLAG_SIZE = 0x30
 F_SEQ, F_ENTITY, F_OWNER, F_CONTROL, F_ENABLED, F_RADIUS, F_X, F_Y, F_Z = (4 * k for k in range(9))
@@ -102,7 +110,7 @@ CP_TYPE = 0x82D57850         # ServerCapturePointEntity's type (research/evidenc
 MAILBOX_NAMES = ('MBOX_MAGIC', 'MBOX', 'MAGIC', 'VERSION', 'STALE', 'MAX_FLAGS', 'H_MAGIC', 'H_VERSION', 'H_BOTS',
                  'H_BOT_SIZE', 'H_FLAGS_MAX', 'H_FLAG_SIZE', 'H_MANAGER', 'H_TICK', 'H_FLAGS', 'BOT0', 'BOT_SIZE',
                  'R_SEQ', 'R_PLAYER', 'R_SOLDIER', 'R_TEAM', 'R_X', 'R_Y', 'R_Z', 'R_SEQ_END', 'C_STAMP', 'C_THROTTLE',
-                 'C_STRAFE', 'C_YAW', 'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO', 'FLAG0', 'FLAG_SIZE', 'F_SEQ',
+                 'C_STRAFE', 'C_YAW', 'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO', 'C_SEQ', 'FLAG0', 'FLAG_SIZE', 'F_SEQ',
                  'F_ENTITY', 'F_OWNER', 'F_CONTROL', 'F_ENABLED', 'F_RADIUS', 'F_X', 'F_Y', 'F_Z', 'F_SEQ_END',
                  'BLOCK_SIZE', 'CP_TYPE')
 FRAME = 0x1E0                # stack frame: an input frame buffer at +0x80 (0x100 bytes, 16-aligned); saves (to -0x58) above it
@@ -311,23 +319,39 @@ spawn:
                              # (with the AI flag they settled onto the deck but ignored forward input)
     lwz r5, 0x84(r4)
     stw r5, BUF_84(r1)
-    lwz r5, TICK(r31)        # the host's command, if it answered a tick at most STALE ticks ago (tick - stamp,
-    lwz r6, C_STAMP(r22)     # unsigned: a stamp of 0 or one ahead is as old)
-    subf r5, r6, r5
+    li r7, TRIES             # the host's command, read whole (a sequence lock): the sequence, the record into
+command:                     # registers, the sequence again; taken only when both reads are the same even value,
+    lwz r8, C_SEQ(r22)       # else tried again, TRIES times in all, then a neutral frame
+    .long LWSYNC             # (lwsync: the record's loads after the first sequence load, and before the second)
+    lwz r6, C_STAMP(r22)
+    lwz r9, C_THROTTLE(r22)
+    lwz r10, C_STRAFE(r22)
+    lwz r11, C_YAW(r22)
+    lwz r12, C_PITCH(r22)
+    lwz r0, C_BUTTONS_HI(r22)
+    lwz r3, C_BUTTONS_LO(r22)
+    .long LWSYNC
+    lwz r4, C_SEQ(r22)
+    cmplw r8, r4
+    bne command_again        # the host wrote meanwhile
+    andi. r4, r4, 1
+    beq command_whole        # even: no write was under way
+command_again:
+    addi r7, r7, -1
+    cmpwi r7, 0
+    bne command
+    b push                   # no whole command: a neutral frame this tick
+command_whole:
+    lwz r5, TICK(r31)        # used if it answered a tick at most STALE ticks ago (tick - stamp, unsigned: a stamp
+    subf r5, r6, r5          # of 0 or one ahead is as old)
     cmplwi r5, STALE
     bgt push                 # else a neutral frame: the bot stands
-    lwz r5, C_THROTTLE(r22)  # EIAThrottle (action 0, an analog float at frame + 8)
-    stw r5, BUF_THROTTLE(r1)
-    lwz r5, C_STRAFE(r22)    # EIAStrafe (action 1, frame + 0x0c)
-    stw r5, BUF_STRAFE(r1)
-    lwz r5, C_BUTTONS_HI(r22)    # the button bits (actions 8-39; bit 40: the absolute facing is valid), a u64
-    stw r5, BUF_BUTTONS_HI(r1)
-    lwz r5, C_BUTTONS_LO(r22)
-    stw r5, BUF_BUTTONS_LO(r1)
-    lwz r5, C_YAW(r22)       # the absolute facing read with bit 40 (82308268): frame + 0x88 and + 0x8c
-    stw r5, BUF_YAW(r1)
-    lwz r5, C_PITCH(r22)
-    stw r5, BUF_PITCH(r1)
+    stw r9, BUF_THROTTLE(r1)     # EIAThrottle (action 0, an analog float at frame + 8)
+    stw r10, BUF_STRAFE(r1)      # EIAStrafe (action 1, frame + 0x0c)
+    stw r0, BUF_BUTTONS_HI(r1)   # the button bits (actions 8-39; bit 40: the absolute facing is valid), a u64
+    stw r3, BUF_BUTTONS_LO(r1)
+    stw r11, BUF_YAW(r1)     # the absolute facing read with bit 40 (82308268): frame + 0x88 and + 0x8c
+    stw r12, BUF_PITCH(r1)
 push:
     lwz r3, 0x118(r27)
     addi r4, r1, BUF
@@ -537,9 +561,23 @@ def assembler_symbols(table=0):
     symbols = {'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS, 'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4,
                'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
                'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'BUF_STRAFE': BUF + 0x0C,
-               'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table}
+               'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table,
+               'TRIES': TRIES, 'LWSYNC': LWSYNC}
     symbols.update({name: globals()[name] for name in MAILBOX_NAMES})
     return symbols
+
+
+def guest_command(word, tick):
+    """The bot code's command read, in Python, for the hosts' tests (tests/test_bots.py checks it against the code):
+    word(offset) gives a word of the bot's record (C_SEQ, C_STAMP, ...). (stamp, throttle, strafe, yaw, pitch,
+    buttons hi, buttons lo) as words, or None: a neutral frame."""
+    fields = (C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO)
+    for _ in range(TRIES):
+        seq = word(C_SEQ)
+        record = tuple(word(o) for o in fields)
+        if word(C_SEQ) == seq and not seq & 1:
+            return record if (tick - record[0]) & 0xFFFFFFFF <= STALE else None
+    return None
 
 
 def build(bots=DEFAULT_BOTS):

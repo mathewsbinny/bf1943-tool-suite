@@ -19,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 SUITE = os.path.dirname(os.path.abspath(__file__))
 NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit-big-endian')
 sys.path.insert(0, os.path.join(SUITE, 'core'))
-from bfbc2core import errors, game1943  # noqa: E402
+from bfbc2core import csbuild, errors, game1943  # noqa: E402
 
 # library -> what needs it (checked when the window opens)
 LIBRARIES = [('numpy', 'every tool'), ('matplotlib', 'screenshots'), ('moderngl', 'the 3D tools'),
@@ -29,11 +29,6 @@ if not os.path.isfile(PYTHON):
     PYTHON = sys.executable
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
-TOOLS = {
-    'leveldiff': (os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'LevelDiff.exe'),
-                  os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'build.bat')),
-    'dbxgui': (os.path.join(SUITE, 'bf1943-dbx-tools', 'DbxEditGUI.exe'), os.path.join(SUITE, 'bf1943-dbx-tools', 'build.bat')),
-}
 SCRIPTS = {
     'inspector': os.path.join(SUITE, 'bf1943-map-inspector', 'inspector.py'),
     'studio': os.path.join(SUITE, 'bf1943-navigation-studio', 'studio.py'),
@@ -48,15 +43,15 @@ NAV_STEPS = ('prepared', 'sampled', 'built', 'checked')          # navkit.json k
 
 
 def tool(name):
-    """The tool's exe, built first (with the C# compiler Windows ships) if it is not there yet."""
-    exe, bat = TOOLS[name]
-    if not os.path.isfile(exe):
-        r = subprocess.run(['cmd', '/c', bat], capture_output=True, text=True, errors='replace', creationflags=NO_WINDOW)
-        if not os.path.isfile(exe):
-            errors.logger().error(f'building {os.path.basename(exe)} failed:\n{r.stdout}{r.stderr}')
-            raise RuntimeError(f'{os.path.basename(exe)} could not be built (the C# compiler that comes with Windows, '
-                               f'.NET Framework 4, is needed). Run {bat} to see why.')
-    return exe
+    """The tool's exe ('leveldiff', 'dbxgui'), built first (with the C# compiler Windows ships) if it is missing or
+    older than its sources (core csbuild.py)."""
+    exe, bat, _ = csbuild.tools()[name]
+    try:
+        return csbuild.ensure(name, log=errors.logger().info)
+    except RuntimeError as e:
+        errors.logger().error(f'building {os.path.basename(exe)} failed:\n{e}')
+        raise RuntimeError(f'{os.path.basename(exe)} could not be built from its current sources (the C# compiler that '
+                           f'comes with Windows, .NET Framework 4, is needed). Run {bat} to see why.') from e
 
 
 class Hub:

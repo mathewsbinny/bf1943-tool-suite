@@ -13,8 +13,8 @@ vehicle world's OFFM records are its transfers:
     node;
   kind LCVP_LAUNCH (3): information only (the deck lane's end; the graph has the drop edge itself).
 A transfer's soldier node is checked against the soldier world in use (it may have been rebuilt since): kept when it
-lies within the reach of x, y, z (BOARD: radius + 2 m horizontally and 3.5 m vertically; the others: 2 m and 2 m),
-else resolved again: BOARD by the same rule (the nearest node within the reach, horizontally, lowest index on a tie);
+lies within the reach of x, y, z (BOARD: radius + 2 m horizontally and 3.5 m vertically; the others: 2 m and 2 m,
+and the point has line of sight to it, as the resolving rule below needs; 2026-10-30), else resolved again: BOARD by the same rule (the nearest node within the reach, horizontally, lowest index on a tie);
 ALIGHT and DROP (x, y, z: a soldier cell, the unload point) the nearest node within IN_SIGHT_REACH horizontally and
 IN_SIGHT_DY vertically that the point has line of sight to (rsnv.World.los, the runtime's rule), nearest first (then
 the lowest index), at most IN_SIGHT_TRIES of them (2026-10-29: a rebuilt soldier world moves its nodes; the point does
@@ -89,12 +89,16 @@ def resolve(S, rec):
     x, y, z = (float(np.float32(v)) for v in rec[4:7])
     reach, dy = reach_of(rec)
     aux = int(rec[9])
+    unload = rec[0] in (OFFM_ALIGHT, OFFM_DROP)
     if aux < len(S.node_pos):
         p = S.node_pos[aux]
         ddx, ddz = float(p[0]) - x, float(p[2]) - z
-        if (ddx * ddx + ddz * ddz) ** 0.5 <= reach and abs(float(p[1]) - y) <= dy:
+        # an unload point's node also needs the fallback's line of sight (2026-10-30: in a rebuilt world the
+        # stored index can name a node near the point but on the floor below)
+        if (ddx * ddx + ddz * ddz) ** 0.5 <= reach and abs(float(p[1]) - y) <= dy and \
+                (not unload or S.los((x, y, z), tuple(float(np.float32(v)) for v in p))):
             return aux
-    if rec[0] in (OFFM_ALIGHT, OFFM_DROP):
+    if unload:
         return in_sight_node(S, x, y, z)
     return soldier_node(S, x, y, z, reach, dy)
 

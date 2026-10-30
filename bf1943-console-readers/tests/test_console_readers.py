@@ -117,6 +117,37 @@ def main(argv):
                 refused = 'unsafe path' in str(e)
             outside = os.path.exists(os.path.join(work, 'outside.bin')) or os.path.exists(os.path.join(work, 'x.bin'))
             c.check(refused and not outside and not os.path.exists(dest), f'stfs: a package name {bad!r} is refused, nothing written')
+        # damaged packages: a folder that is its own parent (or two that are each other's), a file shorter than its size
+        table = (0x971A + 0xFFF & ~0xFFF) + 0x1000                     # data block 0 of a read-only package
+        for label, parents in (('a folder that is its own parent', {0: 0}), ('two entries that are each other\'s parent', {0: 1, 1: 0})):
+            path = os.path.join(work, 'cycle')
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                for i, parent in parents.items():
+                    f.seek(table + i * 0x40 + 0x32)
+                    f.write(struct.pack('>H', parent))
+            try:
+                stfs.Package(path).f.close()
+                why = 'read without an error'
+            except ValueError as e:
+                why = str(e)
+            c.check('parent' in why, f'stfs: {label} is refused', why)
+        for label, size, cut in (('a file cut short by the end of the package', 9, 3), ('a size larger than its blocks', 0x1001, None)):
+            path = os.path.join(work, 'short')
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                f.seek(table + 3 * 0x40 + 0x34)                         # top.txt, data block 6
+                f.write(struct.pack('>I', size))
+                if cut is not None:
+                    f.truncate(table + 6 * 0x1000 + cut)
+            p = stfs.Package(path)
+            try:
+                got = p.read(next(e for e in p.entries if e['path'] == 'top.txt'))
+                why = f'{len(got)} bytes returned'
+            except ValueError as e:
+                why = str(e)
+            p.f.close()
+            c.check('bytes' in why and 'returned' not in why, f'stfs: {label} is refused', why)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print('all passed' if not c.failed else f'{c.failed} check(s) failed')

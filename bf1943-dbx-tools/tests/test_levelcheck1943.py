@@ -12,7 +12,7 @@ r"""DbxEdit's level check with BF1943's rules, on your BF1943 copy (BF1943_GAME 
 
 The game copy is only read (through game1943); every file is written to a temporary folder in the suite's work folder
 (short, for .NET Framework's 260-character limit), removed afterwards. DbxEdit.exe is built (build.bat) when missing
-or older than DbxEdit.cs.
+or not from the current DbxEdit.cs (core csbuild.py).
 """
 import os
 import re
@@ -42,9 +42,8 @@ def run(*args):
 
 
 def build():
-    src = [os.path.join(HERE, n) for n in ('DbxEdit.cs', 'DbxEditGUI.cs')]
-    if not os.path.isfile(EXE) or os.path.getmtime(EXE) < max(os.path.getmtime(s) for s in src):
-        subprocess.run(['cmd', '/c', os.path.join(HERE, 'build.bat')], capture_output=True)
+    from bfbc2core import csbuild
+    csbuild.ensure('dbxedit')
 
 
 class Xml:

@@ -13,8 +13,8 @@ navdiff); the format is in bf1943-auto-navkit-little-endian/research/KYNAPSE_SPE
 
 Cells come from navdiff.area_cells (samples inside an area's boundary, height from the nearest boundary point, less
 Y_OFFSET); where a cell and that boundary point lie on terrain (_ground), the terrain height field's height is used
-instead. That step is slow for a whole level (10-40 s), so it is cached per file (size and date) and Y_OFFSET when
-cache_dir is given.
+instead. That step is slow for a whole level (10-40 s), so it is cached per file (size and date), Y_OFFSET and the
+height field's contents when cache_dir is given.
 """
 import hashlib
 import json
@@ -94,9 +94,24 @@ class NavData:
         return sorted({a.sector for a in self.areas})
 
 
+def terrain_digest(heightfield):
+    """A hash of the height field's contents (bounds, size, samples), or None for a height source without them
+    (whose results are then not cached). 2026-10-30: the key held only whether there was a height field, so a
+    changed terrain under an unchanged .hpd got the old terrain's cell heights back from the cache."""
+    raw = getattr(heightfield, 'raw', None)
+    if raw is None:
+        raw = getattr(heightfield, 'heights', None)
+    if raw is None:
+        return None
+    h = hashlib.sha1(np.ascontiguousarray(raw).tobytes())
+    for v in (getattr(heightfield, 'min', None), getattr(heightfield, 'max', None), getattr(heightfield, 'size', None)):
+        h.update(np.asarray(v, np.float64).tobytes() if v is not None else b'-')
+    return h.hexdigest()[:20]
+
+
 def _key(path, heightfield=None):
     st = os.stat(path)
-    hf = 'hf' if heightfield is not None else 'est'
+    hf = f'hf:{terrain_digest(heightfield)}' if heightfield is not None else 'est'
     return hashlib.sha1(f'{CACHE_VERSION}|{os.path.abspath(path).lower()}|{st.st_size}|{st.st_mtime_ns}|{hf}|{Y_OFFSET}'.encode()).hexdigest()[:20]
 
 
@@ -153,8 +168,8 @@ def _cells(f, heightfield, cache_dir, path):
 
 def load(path, heightfield=None, cache_dir=None):
     """The file as NavData. With cache_dir, the whole result is kept there per file (and per height source), so
-    opening a level again takes about a second."""
-    if cache_dir:
+    opening a level again takes about a second. The key holds the height field's contents (terrain_digest)."""
+    if cache_dir and (heightfield is None or terrain_digest(heightfield) is not None):
         pk = os.path.join(cache_dir, _key(path, heightfield) + '.navdata.pkl')
         if os.path.isfile(pk):
             try:

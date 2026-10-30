@@ -4,7 +4,8 @@
 
   level    core level1943.py loads every multiplayer map: entities, collision, terrain, water, two bases and
            their flags, spawns with sides (a base's and a carrier's); Wake Island's 16 ladders
-  dbxedit  DbxEdit and LevelDiff (built with their build.bat if needed) on Wake Island's partitions: every one
+  dbxedit  DbxEdit and LevelDiff (built with their build.bat when missing or older than their sources, core
+           csbuild.py) on Wake Island's partitions: every one
            round-trips byte for byte, DbxEdit's XML equals core dbx.py's, the level check passes, LevelDiff finds
            no change between a partition and itself
   fbrb     fbrb1943.py's command line: info, list and extract with a manifest; replace writes a copy whose entry
@@ -60,13 +61,8 @@ def level():
 
 
 def dbxedit():
-    from bfbc2core import dbx
-    exe = os.path.join(SUITE, 'bf1943-dbx-tools', 'DbxEdit.exe')
-    ldiff = os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'LevelDiff.exe')
-    for e, bat in ((exe, os.path.join(SUITE, 'bf1943-dbx-tools', 'build.bat')),
-                   (ldiff, os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff', 'build.bat'))):
-        if not os.path.isfile(e):
-            subprocess.run(['cmd', '/c', bat], capture_output=True)
+    from bfbc2core import csbuild, dbx
+    exe, ldiff = csbuild.ensure('dbxedit'), csbuild.ensure('leveldiff')      # rebuilt when older than their sources
     work = os.path.join(game1943.work_root(), 'test-dbx')            # short: .NET Framework's 260-character limit
     import shutil
     shutil.rmtree(work, ignore_errors=True)

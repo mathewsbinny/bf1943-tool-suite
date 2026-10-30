@@ -51,7 +51,9 @@ and everything DbxEdit does; the code is written from it.
 ## Build
 
 Run `build.bat`. It compiles `DbxEdit.exe` and `DbxEditGUI.exe` into this folder with the C# compiler
-that ships with Windows (.NET Framework 4) and needs no install.
+that ships with Windows (.NET Framework 4) and needs no install. The hub and the tests build through core
+`csbuild.py`, which runs `build.bat` whenever an exe is missing, older than a source it compiles in (or than
+`build.bat`), or built from sources whose SHA-256 differs from the one it recorded (`<exe>.sources`, not committed).
 
 ### The schema
 
@@ -104,7 +106,8 @@ DbxEdit import <file.xml> <out.dbx> [--like <original.dbx>] [--types <file.dbx |
 `xml` converts every binary `.dbx` file it finds (folders are searched recursively) and skips plain-XML
 ones. Empty files are skipped and counted, not reported as errors: they are bundles' `*deleted*` entries,
 which OPFOR's BFBC2 FbrbTool versions before 2026-10-16 unpacked as zero-byte files (current ones list them in
-`fbrb.manifest` only). `roundtrip` counts them the same way.
+`fbrb.manifest` only). `roundtrip` counts them the same way. A file that cannot be converted (damaged) is named
+on stderr and counted as FAILED; the exit code is then 1 (0 when every binary file converted).
 
 The XML doesn't record every type. For example, `1` may be the integer 1 or the decimal 1.0. So `import`
 takes the types from **the original file**: `--like`, or `<name>.dbx` next to the XML.
@@ -326,12 +329,17 @@ memory) and what to do - with the log's path: on the command line with exit code
 
 ## Tests
 
-`python -B ..\tests\test_bf1943_tools.py dbxedit` (in the `bf1943` tier of `run_tests.py`; it runs `build.bat` if
-`DbxEdit.exe` is missing): DbxEdit on Wake Island's partitions, as above, and LevelDiff on a partition against
+`python -B tests\test_csharp_tools.py` (quick tier, no game data): core `csbuild.py` rebuilds a (fake) exe older than
+a compiled-in source or built from other sources, and the hub builds through it; DbxEdit.exe and LevelDiff.exe are
+built from the current sources; `xml` exits 0 on sound files and 1 with a damaged one; LevelDiff reports a list
+only reordered even when an earlier list of the same instance gained an entry.
+
+`python -B ..\tests\test_bf1943_tools.py dbxedit` (in the `bf1943` tier of `run_tests.py`; it builds through
+`csbuild.py`): DbxEdit on Wake Island's partitions, as above, and LevelDiff on a partition against
 itself. BF1943's `.dbx` partitions are also checked by the Python reader (the suite's `tests\test_bf1943_data.py dbx`).
 
-`python -B tests\test_levelcheck1943.py` (also in the `bf1943` tier; it runs `build.bat` if `DbxEdit.exe` is missing
-or older than the code): the level check on all five shipped level partitions (BF1943's rules from the file, nothing
+`python -B tests\test_levelcheck1943.py` (also in the `bf1943` tier; it builds `DbxEdit.exe` through `csbuild.py`
+when it is not from the current code): the level check on all five shipped level partitions (BF1943's rules from the file, nothing
 reported), each with `--bundle`, and 25 broken copies of Wake Island (plus 5 of its exclusive cull tree) - made with `xml`, a text change and
 `import` in a temporary folder - each failing with its rule's message (errors exit 1, warnings 0); `--rules bfbc2` and
 a LevelData with BFBC2's fields choosing BFBC2's rules; `--slots-from` and `fixslots` on swapped cull slots.

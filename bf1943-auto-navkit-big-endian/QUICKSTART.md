@@ -69,6 +69,8 @@ Check runs two checks:
   the rules that fail, with an example.
 - **routes** (`tools\routecheck1943.py`): every soldier spawn of each base and flag is joined to the route graph
   (the nearest node within 15 m across and 4 m in height), and a route is looked for between every pair of flags.
+  It fails when there was nothing to check: no soldier spawn, a flag without spawns while the others have them, or
+  fewer than two flags (Coral Sea's flags have no soldier spawns: its carriers are checked, and a note says so).
 
 For Wake Island's build of 2026-10-29 (round 5) it reports 12,779 nodes, 45,278 edges and 64 islands; the main network
 has 11,420 nodes; 16 of 16 ladders are linked from the main network; all 10 flag pairs are routed; the structure check

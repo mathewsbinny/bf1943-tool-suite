@@ -5,7 +5,7 @@ r"""Runs the suite's tests: one line per test, the failures' output at the end, 
 A test that skips (its data is missing: a line starting "skip") is shown as SKIP, one that skipped some of its
 checks as "ok, partly skipped", and both are counted in the summary: a passing run is not full coverage unless the
 summary says nothing was skipped. --strict fails the run when anything was skipped (use it before a push). An
---only that matches no test is an error, not "0 of 0 passed".
+--only that matches no test is an error, not "0 of 0 passed"; an unknown tier or option is a usage error (exit 2).
 
 Every test is about BF1943 or the tools that work on it; tests for BFBC2 data and for the copied tools not yet
 adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
@@ -15,7 +15,10 @@ adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests
           (both variants), the offline sampler on a made-up level, rsnvtool on a made-up file, jump links to a
           made-up ship's gun platform, a full build of a made-up level with a 0.8 m / 0.2 m seam, vehicle navigation
           (ground and sea grids, trips, heading-aware planning, take-off lanes), the navigation reader's heights,
-          the Xenia run reader on a log it writes, the executable tools' workspace lookup and vector p-code generator
+          the Xenia run reader on a log it writes, the executable tools' workspace lookup and vector p-code generator,
+          the runner's own command line, the OPFOR import tool's updates, the bundle tool's write guards, APT
+          validation's exit code, and the C# tools (rebuilt from their current sources; DbxEdit xml, LevelDiff) on
+          made-up files
   bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), about 5 minutes: the kit's
           full build, every BF1943 bundle and DBX partition, terrain and water on every level, the menu movies, the
           spawn map, Havok 4.6.1 collision, Wake Island's objects for NavKit; the level loader on every map, DbxEdit
@@ -47,11 +50,17 @@ def tests():
     return [
         ('repository rules', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_repo.py')]),
         ('error handling and logs', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_errors.py')]),
-        ('navigation reader: cell heights use the node offset', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navdata_offset.py')]),
-        ('DBX reader: truncated and damaged files refused', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx_malformed.py')]),
+        ('navigation reader: cell heights use the node offset; the cache follows the terrain', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navdata_offset.py')]),
+        ('game loader: a damaged level bundle raises, never the shared copy', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_game1943_bundles.py')]),
+        ('DBX reader: truncated and damaged files refused (parse and XML)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx_malformed.py')]),
         ('RSNV navigation file: both byte orders, search, locate, damaged files', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_rsnv.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
-        ('STFS reader, built packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
+        ('the test runner: unknown tiers and options refused', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_run_tests.py')]),
+        ('OPFOR import tool: updates on made-up trees', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_import_opfor.py')]),
+        ('STFS reader, built and damaged packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
+        ('bundle tool: game folder and input never written (made-up bundle)', 'quick', [PY, os.path.join(SUITE, 'bf1943-fbrb-tool', 'tests', 'test_fbrb_guards.py')]),
+        ('APT validation: exit code (made-up movie)', 'quick', [PY, os.path.join(SUITE, 'bf1943-apt-tools', 'tests', 'test_apt_cli.py')]),
+        ('C# tools: rebuilt from current sources; DbxEdit xml exit code, LevelDiff reorders', 'quick', [PY, os.path.join(SUITE, 'bf1943-dbx-tools', 'tests', 'test_csharp_tools.py')]),
         ('Xenia run reader, a written log', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_xeniarun.py')]),
         ('Xenia guest memory: bots mailbox v2 on a made-up guest', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_guestmem.py')]),
         ('executable tools: research workspace lookup', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_workspace.py')]),
@@ -75,6 +84,8 @@ def tests():
         ('NavKit big-endian: narrow lips and sills', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_lips.py')]),
         ('NavKit big-endian: roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_roof_prune.py')]),
         ('NavKit big-endian: vehicle navigation (ground grid, sea grid, trips)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_vehicles_nav1943.py')]),
+        ('NavKit big-endian: steps keep to one preparation (stamps, pitches, game copy)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_stages.py')]),
+        ('NavKit big-endian: route check passes only when something was checked', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_routecheck1943.py')]),
         ('NavKit little-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_water_rule.py')]),
         ('NavKit little-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navedits.py')]),
         ('NavKit little-endian: area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_area_link.py')]),
@@ -109,8 +120,18 @@ def tests():
 
 
 def main(argv):
-    tier = next((a for a in argv[1:] if a in SELECT), 'quick')
     only = argv[argv.index('--only') + 1].lower() if '--only' in argv else None
+    rest = list(argv[1:])
+    if '--only' in rest:
+        del rest[rest.index('--only'):rest.index('--only') + 2]       # its value is a name, not a tier
+    tiers = [a for a in rest if a in SELECT]
+    unknown = [a for a in rest if a not in SELECT and a not in ('--list', '--strict')]
+    if unknown or len(tiers) > 1:
+        # a misspelled tier must not quietly run another one (and pass)
+        print(f'error: {"unknown tier or option " + repr(unknown[0]) if unknown else "more than one tier: " + " ".join(tiers)}')
+        print(f'usage: python run_tests.py [{" | ".join(TIERS)}] [--only <name>] [--list] [--strict]')
+        return 2
+    tier = tiers[0] if tiers else 'quick'
     chosen = [x for x in tests() if x[1] in SELECT[tier] and (only is None or only in x[0].lower())]
     if only is not None and not chosen:
         print(f'error: --only {only!r} matches no {tier} test (see --list)')

@@ -60,5 +60,22 @@ if __name__ == '__main__':
         r.update(log_time='-', crashes=[], normal_exit=any('Cheap-skate exit' in l for l in r['last_lines']))
         text = xeniarun.report(r)
         check(r['normal_exit'] and 'exited normally' in text and 'bots: 2' in text, 'the report: bots, a normal exit')
+        check(r.get('malformed') == [] and 'garbled' not in text, 'no malformed bot reports in a whole log')
+        # a log cut off mid-line (Xenia still running, or crashed while writing): the whole reports still count
+        cut = ['bot', 'host player d997e0b0', 'bot dc7dc3e0 team', 'bot dc7dc3e0 team x kit 1',
+               'bot dc7dc3e0 soldier position c3160000 4366', 'bot dc7dc3e0 soldier position c3160000 zz 0 0',
+               'spawned dc7dc3e0 team 2 at', 'host d997e0b0 soldier position', '']
+        for tail in cut:
+            open(p, 'w', encoding='utf-8').write(LOG + f'i> F80000C0 (DbgPrint) rs-bots: {tail}')
+            try:
+                r = xeniarun.read_log(p)
+                ok = (len(r['malformed']) == 1 and r['malformed'][0].endswith(tail.strip() or 'rs-bots:')
+                      and r['bots']['dc7dc3e0']['position'] == [-150.0, 230.25, -555.5] and len(r['spawns']) == 1)
+            except Exception as e:      # noqa: BLE001 - the reader must not raise on a cut log
+                ok, r = False, {'error': repr(e)}
+            check(ok, f'a log ending "rs-bots: {tail}": recorded as malformed, the rest kept '
+                      f'({r.get("malformed", r.get("error"))})')
+        r.update(log_time='-', crashes=[], normal_exit=False)
+        check('cut short or garbled (skipped): 1' in xeniarun.report(r), 'the report counts the malformed reports')
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

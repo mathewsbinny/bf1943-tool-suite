@@ -3466,27 +3466,30 @@ namespace Bfbc2Dbx
             return n == 0 ? "" : ", skipped " + n + " empty file(s) (*deleted* bundle entries)";
         }
 
+        // exit 0 = every binary file converted, 1 = one or more failed (each named on stderr)
         static int Xml(IEnumerable<string> paths)
         {
-            int converted = 0, deleted = 0;
+            int converted = 0, deleted = 0, notBinary = 0, failed = 0;
             foreach (string f in paths.SelectMany(DbxFiles))
             {
                 try
                 {
                     if (DeletedEntry(f)) { deleted++; continue; }
                     byte[] data = File.ReadAllBytes(f);
-                    if (Encoding.ASCII.GetString(data, 0, 8) == "{binary}")
-                        File.WriteAllText(Path.ChangeExtension(f, ".xml"), XmlExport.Convert(data));
+                    if (data.Length < 8 || Encoding.ASCII.GetString(data, 0, 8) != "{binary}") { notBinary++; continue; }
+                    File.WriteAllText(Path.ChangeExtension(f, ".xml"), XmlExport.Convert(data));
                     converted++;
                 }
                 catch (Exception e)
                 {
+                    failed++;
                     Console.Error.WriteLine(f + ": " + e.Message);
                     ToolLog.Warn("xml: " + f + ": " + e.Message);
                 }
             }
-            Console.WriteLine("converted " + converted + " file(s)" + DeletedNote(deleted));
-            return 0;
+            Console.WriteLine("converted " + converted + " file(s)" + (notBinary > 0 ? ", " + notBinary + " not binary (left as they are)" : "")
+                              + (failed > 0 ? ", " + failed + " FAILED" : "") + DeletedNote(deleted));
+            return failed == 0 ? 0 : 1;
         }
 
         // import <in.xml> <out.dbx> [--like <original.dbx>] [--types <file.dbx|folder>]...

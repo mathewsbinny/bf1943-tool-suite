@@ -18,10 +18,13 @@ python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
 ```
 
 - `extract` writes the entries (all, or those whose name contains the filter) as files under their names, and
-  `fbrb.manifest.json`: the bundle's path and SHA-256, and per entry its name, type, flags, size and SHA-256.
+  `fbrb.manifest.json`: the bundle's path and SHA-256, and per entry its name, type, flags, size and SHA-256. It
+  refuses an output folder in the game folder.
 - `replace` writes a copy of the bundle with the named entries replaced (names as `list` shows them). It refuses
   to write into the game folder (core `game1943.find_game`) or over the input bundle. A changed bundle goes
   elsewhere, for the Xenia kit or a mod folder to use.
+- Paths are compared as Windows resolves them (links followed, case ignored: `C:\Game` and `c:\game` are one
+  folder); an output on another drive than the game folder is allowed.
 
 From Python: `Bundle(raw).data(name)`, and `build({name: bytes})` to replace entries.
 
@@ -45,6 +48,9 @@ DICE's tools used; the game reads the decompressed content.
 - `python -B ..\tests\test_bf1943_tools.py fbrb`: the command line on Wake Island's terrain bundle: `info`, `list`
   with a filter, `extract` with a manifest; `replace` writes a copy whose entry reads back, and refuses the game
   folder.
+- `python -B tests\test_fbrb_guards.py` (quick tier, no game data): on a made-up bundle and a made-up game folder,
+  `replace` and `extract` refuse the game folder however it is cased, `replace` refuses its input however it is
+  cased, and an output on another drive is not taken for the game folder.
 
 ## Errors and logs
 

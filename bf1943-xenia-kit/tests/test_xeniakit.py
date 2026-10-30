@@ -1,11 +1,14 @@
 """Tests for the BF1943 Xenia kit.
 
   python -B test_xeniakit.py           no game data: known.json, the patch file, the port edit on a built ZIP,
-                                       the Xenia fix on built executables (right bytes, wrong bytes)
+                                       the Xenia fix on built executables (right bytes, wrong bytes), and
+                                       verify's bot mode on a made-up build
   python -B test_xeniakit.py --game    + a full build from your package into a temporary folder, checked
                                        against the known hashes (BF1943_PACKAGE and XENIA_DIR, or the
                                        operation-rising-sun locations next to the suite)
 """
+import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -102,6 +105,51 @@ def xenia_fix():
         check(True, 'the Xenia fix refuses another Xenia build')
 
 
+def verify_bot_mode():
+    """verify enforces the build's bot mode on a made-up build (no game data): a normal build fails while Xenia's
+    patches folder holds a bots experiment patch (as another build against the same Xenia leaves it), under its
+    own name or another; a bots build passes with its own patch and fails with a second one."""
+    import logging
+    import bots
+    import xeniakit
+    xeniakit.log = logging.getLogger('test_xeniakit')
+    with tempfile.TemporaryDirectory() as d:
+        title, patches = os.path.join(d, 'title'), os.path.join(d, 'xenia', 'patches')
+        os.makedirs(title)
+        os.makedirs(patches)
+        json.dump(dict(files=[]), open(os.path.join(title, 'title-manifest.json'), 'w', encoding='utf-8'))
+        made = {}
+        for name, text in (('netfix', b'exe'), ('patch', b'patch')):
+            path = os.path.join(d, 'xenia', netfix.FIXED) if name == 'netfix' else os.path.join(patches, 'kit.patch.toml')
+            open(path, 'wb').write(text)
+            made[name], made[name + '_sha256'] = path, hashlib.sha256(text).hexdigest()
+        bots_path = os.path.join(patches, bots.PATCH_FILE)
+        text = bots.patch_toml().encode()
+
+        def verify(bots_build):
+            m = dict(made, title=title, bots_patch=bots_path if bots_build else None,
+                     bots_patch_sha256=hashlib.sha256(text).hexdigest() if bots_build else None)
+            json.dump(m, open(os.path.join(d, 'kit-manifest.json'), 'w', encoding='utf-8'))
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    xeniakit.verify(argparse.Namespace(out=d))
+                return True
+            except ValueError:
+                return False
+        check(verify(False), 'verify: a normal build without a bots patch passes')
+        open(bots_path, 'wb').write(text)
+        check(not verify(False), 'verify: a normal build fails while Xenia has the bots patch (another build wrote it)')
+        open(bots_path, 'wb').write(text.replace(b'is_enabled = true', b'is_enabled = false'))
+        check(not verify(False), 'verify: and while it is there disabled')
+        os.replace(bots_path, os.path.join(patches, 'renamed.patch.toml'))
+        check(not verify(False), 'verify: and under another name')
+        os.remove(os.path.join(patches, 'renamed.patch.toml'))
+        open(bots_path, 'wb').write(text)
+        check(verify(True), 'verify: a bots build passes with its own bots patch')
+        open(os.path.join(patches, 'copy.patch.toml'), 'wb').write(text)
+        check(not verify(True), 'verify: a bots build fails with a second bots patch')
+
+
 def full_build():
     research = os.path.join(os.path.dirname(os.path.dirname(KIT)), 'operation-rising-sun')
     package = os.environ.get('BF1943_PACKAGE', os.path.join(research, 'Battlefield 1943 (XBLA)', '5841097E', '000D0000',
@@ -153,6 +201,7 @@ if __name__ == '__main__':
     known_and_patch()
     port_edit()
     xenia_fix()
+    verify_bot_mode()
     if '--game' in sys.argv:
         full_build()
     print('all passed' if not failures else f'{len(failures)} failed')

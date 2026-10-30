@@ -35,8 +35,17 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   BF1943's soldier (`tools\soldier1943.py`): 0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn seeds,
   ladder links, jump links to ships' AA gun platforms (`tools\jumplinks1943.py`), and a shared node wherever the
   two grids' ground meets a mixed-pitch seam with no node joining it (`navbuild.SEAM_GAP_NODES`). *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
-  to the route graph, and a route between every pair of flags. A Wake Island run takes about 45 minutes on 8
-  cores, most of it the 0.2 m sampling.
+  to the route graph, and a route between every pair of flags; it fails when there was nothing to check (no
+  soldier spawn, a flag without spawns while others have them, fewer than two flags; 2026-10-30). A Wake Island run
+  takes about 45 minutes on 8 cores, most of it the 0.2 m sampling.
+- **Stamps** (`navkit.json`, 2026-10-30). Each step records what it was made from and refuses another generation's
+  work: *prepare* stores the game folder, every objects file's SHA-256 and their digest (`preparation`), and drops
+  the later stamps; each sampling pass stores that digest and the game (`samples`: `0.8`, and `0.2` with its
+  sectors) and drops the stamps after it; *build* needs the current preparation's 0.8 m pass (the 0.2 m samples
+  only when theirs too) and records them (`build_from`); *check* needs that build. A `--game` other than the
+  preparation's is refused, and so is a `--pitch` other than 0.8 or 0.2. Levels prepared before 2026-10-30 have no
+  digest: prepare and sample them again. The audit and the RSNV export read the game copy the level was prepared
+  from.
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.

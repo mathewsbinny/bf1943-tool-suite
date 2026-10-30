@@ -115,7 +115,7 @@ def update_one(commit, manifest, destination):
         old = known.get(rel)
         if old and old['git_blob'] == blob:
             continue                                    # unchanged in the source
-        local = os.path.join(dst, rel)
+        local = dst if path == source else os.path.join(dst, rel)     # a single-file import is the file itself
         if old and os.path.isfile(local) and hashlib.sha256(open(local, 'rb').read()).hexdigest() != old['sha256']:
             conflicts.append(rel)                       # changed here too: merge by hand
             continue

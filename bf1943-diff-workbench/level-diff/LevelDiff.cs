@@ -248,9 +248,10 @@ static class LevelDiff
             if (!lb.TryGetValue(k, out y)) y = new List<string>();
             var cx = Counts(x);
             var cy = Counts(y);
+            int entries = d.Removed.Count + d.Added.Count;          // this list's own changes, not the earlier lists'
             foreach (var kv in cx) for (int n = (cy.ContainsKey(kv.Key) ? cy[kv.Key] : 0); n < kv.Value; n++) d.Removed.Add(k + ": " + kv.Key);
             foreach (var kv in cy) for (int n = (cx.ContainsKey(kv.Key) ? cx[kv.Key] : 0); n < kv.Value; n++) d.Added.Add(k + ": " + kv.Key);
-            if (d.Removed.Count == 0 && d.Added.Count == 0 && !x.SequenceEqual(y, StringComparer.OrdinalIgnoreCase))
+            if (d.Removed.Count + d.Added.Count == entries && !x.SequenceEqual(y, StringComparer.OrdinalIgnoreCase))
                 d.Changes.Add(new Change { Path = k, A = "same " + x.Count + " entries", B = "in another order" });
         }
         return d;

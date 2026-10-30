@@ -1,0 +1,48 @@
+r"""The test runner's command line (run_tests.py), with its test list replaced by two made-up tests (nothing else
+runs): a known tier runs its tests; a misspelled tier or option is a usage error with a nonzero exit, never a run of
+the quick tier; the value after --only is a name, not a tier.
+
+  python -B tests\test_run_tests.py
+"""
+import contextlib
+import io
+import os
+import sys
+
+sys.dont_write_bytecode = True
+SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SUITE)
+import run_tests  # noqa: E402
+
+PY = sys.executable
+failures = []
+
+
+def check(ok, what):
+    print(('ok   ' if ok else 'FAIL ') + what)
+    if not ok:
+        failures.append(what)
+
+
+def run(*args):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = run_tests.main(['run_tests.py', *args])
+    return code, buf.getvalue()
+
+
+if __name__ == '__main__':
+    run_tests.tests = lambda: [('made-up quick test', 'quick', [PY, '-c', 'print("all passed")']),
+                               ('made-up bf1943 test', 'bf1943', [PY, '-c', 'print("all passed")'])]
+    code, out = run('quick', '--strict')
+    check(code == 0 and '1 of 1 passed' in out, f'quick --strict runs the quick test (exit {code})')
+    code, out = run('bf1943', '--list')
+    check(code == 0 and 'made-up bf1943 test' in out and 'made-up quick test' in out, f'bf1943 --list lists both (exit {code})')
+    code, out = run('--only', 'bf1943 test', 'bf1943')
+    check(code == 0 and '1 of 1 passed' in out, f'--only takes a name that holds a tier\'s name (exit {code})')
+    for args in (['bf19433', '--strict'], ['quik'], ['--strcit'], ['quick', 'bf1943']):
+        code, out = run(*args)
+        check(code == 2 and 'usage' in out.lower() and 'passed' not in out, f'{" ".join(args)}: a usage error, exit {code}'
+              + ('' if code == 2 else '\n       ' + out.strip().replace('\n', '\n       ')[:400]))
+    print('all passed' if not failures else f'{len(failures)} failed')
+    sys.exit(1 if failures else 0)

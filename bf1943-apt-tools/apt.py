@@ -18,6 +18,7 @@ Opcode names for EA-specific opcodes are descriptive labels, not recovered origi
 Command line:
 
   python -B apt.py <menu .res>      validate one movie: its action blocks, instructions and problems
+                                    (exit 0 = no problem, 1 = problems found)
 """
 import struct
 import sys
@@ -474,3 +475,4 @@ if __name__ == '__main__':
     print(f'{apt.name}: {blocks} action blocks, {n} instructions, {len(problems)} problems')
     for p in problems[:40]:
         print('  ', p)
+    sys.exit(1 if problems else 0)                  # a script can tell an invalid movie from a sound one

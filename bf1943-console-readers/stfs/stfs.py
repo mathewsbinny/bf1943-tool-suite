@@ -88,19 +88,30 @@ class Package:
                             'consecutive': bool(flags & 0x40), 'count': int.from_bytes(e[0x29:0x2C], 'little'),
                             'start': int.from_bytes(e[0x2F:0x32], 'little'), 'parent': struct.unpack_from('>H', e, 0x32)[0],
                             'size': struct.unpack_from('>I', e, 0x34)[0]})
-        for e in entries:
-            parts, p = [e['name']], e['parent']
+        for i, e in enumerate(entries):
+            parts, p, seen = [e['name']], e['parent'], {i}
             while p != 0xFFFF and p < len(entries):
+                if p in seen:                       # a damaged table: the parent chain loops
+                    raise ValueError(f'damaged package: entry {i} ({e["name"]!r}) has itself among its parent '
+                                     f'folders (entry {p}); nothing was read')
+                seen.add(p)
                 parts.append(entries[p]['name'])
                 p = entries[p]['parent']
             e['path'] = '/'.join(reversed(parts))
         return entries
 
     def read(self, e):
+        """The file's bytes; ValueError when its blocks hold fewer than its declared size (a damaged or cut package)."""
+        if e['size'] > e['count'] * BLOCK:
+            raise ValueError(f'damaged package: {e["path"]} declares {e["size"]} bytes in {e["count"]} block(s) '
+                             f'of {BLOCK} bytes')
         out = bytearray()
         for b in self._blocks(e['start'], e['count'], e['consecutive']):
             self.f.seek(self._addr(b))
             out += self.f.read(BLOCK)
+        if len(out) < e['size']:
+            raise ValueError(f'damaged package: {e["path"]} declares {e["size"]} bytes, the package holds {len(out)} '
+                             f'(it ends early)')
         return bytes(out[:e['size']])
 
 
