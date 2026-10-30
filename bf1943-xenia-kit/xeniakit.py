@@ -125,6 +125,7 @@ def build(args):
     xenia_bytes = open(xenia_exe, 'rb').read()
     if sha256(xenia_bytes) != KNOWN['xenia']['exe_sha256']:
         raise ValueError(f'xenia_canary.exe is not the build the kit was made for ({KNOWN["xenia"]["build"]})')
+    foreign_bots_patch(os.path.join(args.xenia, 'patches'))   # refused before anything is written
     os.makedirs(title, exist_ok=True)
     say('2/5 extracting and checking every file (about 560 MB)')
     count = extract(args.package, title)
@@ -167,12 +168,7 @@ def build(args):
     if args.experiment_bots:
         say('    experiment: offline bots (bots.py; they join, take a kit and spawn, and move only on a host program\'s commands: navhost, guestmem.py)')
         bots_text = bots.patch_toml()
-        with open(bots_dst, 'w', encoding='utf-8', newline='\n') as f:
-            f.write(bots_text)
-    elif os.path.isfile(bots_dst):
-        if not open(bots_dst, encoding='utf-8').read().startswith(bots.HEADER):
-            raise FileExistsError(f'{bots_dst} was not made by this kit: move it away first')
-        os.remove(bots_dst)  # a normal build has no bots
+    install_bots_patch(os.path.dirname(bots_dst), bots_text)
     fixed, fix_log = netfix.build(xenia_bytes)
     if sha256(fixed) != KNOWN['xenia']['netfix_sha256']:
         raise ValueError('the fixed Xenia differs from the verified result')
@@ -199,6 +195,38 @@ def build(args):
         json.dump(manifest, f, indent=1)
     write_launcher(out, manifest, args.gpu)
     say(f'done: {out}\n    play: {os.path.join(out, "launch.cmd")}  (or: python -B xeniakit.py launch)')
+
+
+def kit_bots_patches(patches):
+    """Every bots experiment patch in a Xenia patches folder: the file under the kit's bots patch name, and any .toml
+    the kit made (it starts with bots.HEADER) under another name. verify allows none in a normal build and only its
+    own in a bots build; build leaves the folder that way."""
+    if not os.path.isdir(patches):
+        return []
+    return [os.path.join(patches, f) for f in sorted(os.listdir(patches)) if f == bots.PATCH_FILE or f.endswith('.toml')
+            and open(os.path.join(patches, f), encoding='utf-8', errors='replace').read().startswith(bots.HEADER)]
+
+
+def foreign_bots_patch(patches):
+    """Refuses a file under the kit's bots patch name that the kit did not make (it is never overwritten or removed)."""
+    own = os.path.join(patches, bots.PATCH_FILE)
+    if os.path.isfile(own) and not open(own, encoding='utf-8', errors='replace').read().startswith(bots.HEADER):
+        raise FileExistsError(f'{own} was not made by this kit: move it away first')
+
+
+def install_bots_patch(patches, text):
+    """A normal build (text None) leaves no bots patch in Xenia's patches folder, a bots build exactly its own: every
+    other kit-made bots patch, under any name, is removed (verify would refuse it; before 2026-10-30 only the kit's own
+    file name was, so a renamed copy made the build pass and its verify fail). A file under the kit's name that the
+    kit did not make is refused, with nothing changed."""
+    foreign_bots_patch(patches)
+    own = os.path.join(patches, bots.PATCH_FILE)
+    for p in kit_bots_patches(patches):
+        if text is None or os.path.normcase(p) != os.path.normcase(own):
+            os.remove(p)
+    if text is not None:
+        with open(own, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
 
 
 def launch_args(manifest, gpu):
@@ -236,10 +264,8 @@ def verify(args):
         raise ValueError(f'changed or missing since the build: {bad}')
     # the build's bot mode: Xenia applies every patch file in the folder, so a normal build must find no bots patch
     # there (another build against the same Xenia may have written one), and a bots build only its own
-    patches = os.path.dirname(m['patch'])
-    bots_files = [os.path.join(patches, f) for f in sorted(os.listdir(patches)) if f == bots.PATCH_FILE or f.endswith('.toml')
-                  and open(os.path.join(patches, f), encoding='utf-8', errors='replace').read().startswith(bots.HEADER)]
-    extra = [p for p in bots_files if not (m.get('bots_patch') and os.path.normcase(p) == os.path.normcase(m['bots_patch']))]
+    extra = [p for p in kit_bots_patches(os.path.dirname(m['patch']))
+             if not (m.get('bots_patch') and os.path.normcase(p) == os.path.normcase(m['bots_patch']))]
     if extra:
         raise ValueError(f'{"a normal build, but Xenia has" if not m.get("bots_patch") else "Xenia has another"} '
                          f'bots experiment patch: {extra} (rebuild, or move it away)')

@@ -10,13 +10,15 @@ summary says nothing was skipped. --strict fails the run when anything was skipp
 Every test is about BF1943 or the tools that work on it; tests for BFBC2 data and for the copied tools not yet
 adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
   quick   no game data, one to two minutes: repository rules, error handling and every command-line tool's errors,
-          the DBX reader on damaged files, the RSNV file (both byte orders, search, locate, damaged files), the STFS
+          the DBX and water mesh readers on damaged files, the suite window on a made-up game, the RSNV file (both byte orders, search, locate, damaged files), the STFS
           reader on packages it builds, the Xenia kit's patch file, assembler and bot code, NavKit's builder rules
-          (both variants), the offline sampler on a made-up level, rsnvtool on a made-up file, jump links to a
+          (both variants; the little-endian one's edge cases, damaged files, navkit.py steps and window Cancel too),
+          the spawn map's --navflags, the Navigation Studio's colours and options, the 3D tools' screenshot exit
+          code, the offline sampler on a made-up level, rsnvtool on a made-up file, jump links to a
           made-up ship's gun platform, a full build of a made-up level with a 0.8 m / 0.2 m seam, vehicle navigation
           (ground and sea grids, trips, heading-aware planning, take-off lanes), the navigation reader's heights,
           the Xenia run reader on a log it writes, the executable tools' workspace lookup and vector p-code generator,
-          the runner's own command line, the OPFOR import tool's updates, the bundle tool's write guards, APT
+          the runner's own command line, the OPFOR import tool's updates and partial runs, the bundle tool's write guards, APT
           validation's exit code, and the C# tools (rebuilt from their current sources; DbxEdit xml, LevelDiff) on
           made-up files
   bf1943  + your BF1943 copy, as bf1943-xenia-kit extracts it (BF1943_GAME overrides), about 5 minutes: the kit's
@@ -52,11 +54,14 @@ def tests():
         ('error handling and logs', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_errors.py')]),
         ('navigation reader: cell heights use the node offset; the cache follows the terrain', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_navdata_offset.py')]),
         ('game loader: a damaged level bundle raises, never the shared copy', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_game1943_bundles.py')]),
+        ('vehicle entry points: cached per game copy, never by id (made-up blueprints)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_vehicles1943.py')]),
         ('DBX reader: truncated and damaged files refused (parse and XML)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx_malformed.py')]),
+        ('water mesh reader: triangles past their vertices refused', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_water_mesh.py')]),
         ('RSNV navigation file: both byte orders, search, locate, damaged files', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_rsnv.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
         ('the test runner: unknown tiers and options refused', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_run_tests.py')]),
         ('OPFOR import tool: updates on made-up trees', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_import_opfor.py')]),
+        ('the suite window: pane errors, LevelDiff codes, UTF-8 output, Stop (made-up game)', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_hub.py')]),
         ('STFS reader, built and damaged packages', 'quick', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'tests', 'test_console_readers.py')]),
         ('bundle tool: game folder and input never written (made-up bundle)', 'quick', [PY, os.path.join(SUITE, 'bf1943-fbrb-tool', 'tests', 'test_fbrb_guards.py')]),
         ('APT validation: exit code (made-up movie)', 'quick', [PY, os.path.join(SUITE, 'bf1943-apt-tools', 'tests', 'test_apt_cli.py')]),
@@ -65,6 +70,11 @@ def tests():
         ('Xenia guest memory: bots mailbox v2 on a made-up guest', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_guestmem.py')]),
         ('executable tools: research workspace lookup', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_workspace.py')]),
         ('executable tools: Xenon vector p-code generator', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_vector_semantics.py')]),
+        ('executable tools: call graph forgets overwritten stores', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_callgraph_memory.py')]),
+        ('executable tools: Ghidra mapping judged by its result', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_map_project.py')]),
+        ('executable tools: VMX recorder checks what the fingerprint misses', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_record_vmx.py')]),
+        ('Xenia UDP join probe never holds the server port', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_udp_join_probe.py')]),
+        ('Xenia probe launcher on a made-up build', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_run_xenia_probe.py')]),
         ('Xenia kit: patch file, port edit, Xenia fix', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py')]),
         ('Xenia kit: PowerPC assembler against capstone', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_ppcasm.py')]),
         ('Xenia kit: bots experiment layout', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py')]),
@@ -85,6 +95,8 @@ def tests():
         ('NavKit big-endian: roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_roof_prune.py')]),
         ('NavKit big-endian: vehicle navigation (ground grid, sea grid, trips)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_vehicles_nav1943.py')]),
         ('NavKit big-endian: steps keep to one preparation (stamps, pitches, game copy)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_stages.py')]),
+        ('NavKit big-endian: vehicle steps keep to one preparation (stamps, game copy, absent worlds, no water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_vehicle_stages.py')]),
+        ('NavKit big-endian: review fixes (navkit.json lock, stale samples and masks, arguments, failed checks)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_review.py')]),
         ('NavKit big-endian: route check passes only when something was checked', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_routecheck1943.py')]),
         ('NavKit little-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_water_rule.py')]),
         ('NavKit little-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navedits.py')]),
@@ -97,7 +109,17 @@ def tests():
         ('NavKit little-endian: collision index', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_havok_index.py')]),
         ('NavKit little-endian: narrow lips and sills', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_lips.py')]),
         ('NavKit little-endian: roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_roof_prune.py')]),
+        ('NavKit little-endian: builder edge cases', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navbuild_edges.py')]),
+        ('NavKit little-endian: damaged files', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_formats.py')]),
+        ('NavKit little-endian: navkit.py steps', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navkit_driver.py')]),
+        ('NavKit little-endian: window Cancel', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navkit_gui.py')]),
+        ('Spawn map: --navflags on made-up maps', 'quick', [PY, os.path.join(SUITE, 'bf1943-spawn-map', 'tests', 'test_spawnmap.py'), '--made-up']),
+        ('Navigation Studio: colours and options', 'quick', [PY, os.path.join(SUITE, 'bf1943-navigation-studio', 'tests', 'test_studio.py')]),
+        ('Map Inspector: screenshot exit code', 'quick', [PY, os.path.join(SUITE, 'bf1943-map-inspector', 'tests', 'test_inspector.py')]),
         ('Xenia kit: full build from your BF1943 package', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py'), '--game']),
+        ('Xenia kit: bots code against the decoded BF1943 image', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py'), '--image']),
+        ('executable tools: lis pairs end when the register is written', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_xexrefs.py')]),
+        ('executable tools: pinned outputs written byte for byte', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_output_bytes.py')]),
         ('BF1943 bundles: read and rebuild (fbrb1943)', 'bf1943', [PY, data, 'bundles']),
         ('BF1943 DBX: every partition parses', 'bf1943', [PY, data, 'dbx']),
         ('BF1943 terrain and water, every level', 'bf1943', [PY, data, 'terrain']),
@@ -120,6 +142,11 @@ def tests():
 
 
 def main(argv):
+    if '--only' in argv and argv.index('--only') + 1 >= len(argv):
+        # 2026-10-30: an IndexError before; a usage error like any other
+        print('error: --only needs a part of a test\'s name')
+        print(f'usage: python run_tests.py [{" | ".join(TIERS)}] [--only <name>] [--list] [--strict]')
+        return 2
     only = argv[argv.index('--only') + 1].lower() if '--only' in argv else None
     rest = list(argv[1:])
     if '--only' in rest:
@@ -145,7 +172,8 @@ def main(argv):
     failures, skipped, partly, start = [], [], [], time.time()
     for name, t, args in chosen:
         t0 = time.time()
-        r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE)
+        r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE,
+                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))   # no __pycache__, their children too
         out = (r.stdout + r.stderr).strip()
         main_out = r.stdout.strip() or out            # the summary line is the test's own last line, not a warning it printed
         lines = main_out.splitlines()

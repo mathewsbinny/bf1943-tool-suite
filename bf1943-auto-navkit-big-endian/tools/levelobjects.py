@@ -169,10 +169,10 @@ def main(argv):
             v = [float(a) for a in t.group(1).split('/')]
             if any(abs(c) > 1e-3 for c in v[12:15]):
                 spawns.append(v[12:15])
-    json.dump(spawns, open(os.path.join(level_dir, 'soldier_spawns.json'), 'w'))
-    json.dump(order_points(x), open(os.path.join(level_dir, 'order_points.json'), 'w'))
-    json.dump(objs, open(os.path.join(level_dir, 'objects.json'), 'w'))
-    json.dump(groups, open(os.path.join(level_dir, 'group_instances.json'), 'w'))
+    for name, value in (('soldier_spawns.json', spawns), ('order_points.json', order_points(x)), ('objects.json', objs),
+                        ('group_instances.json', groups)):
+        with open(os.path.join(level_dir, name), 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(value, f)
 
     havok = havok_index(bases)
     # blueprints without their own collision asset use the one of the object their Mesh reference names

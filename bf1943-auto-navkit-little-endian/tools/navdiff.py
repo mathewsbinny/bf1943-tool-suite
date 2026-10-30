@@ -346,7 +346,7 @@ def main(argv):
         return 1
     res, rows, R, C = diff(args[0], args[1], per_sector='--sectors' in argv)
     if '--json' in opts:
-        json.dump(res, open(opts['--json'], 'w'), indent=1)
+        json.dump(res, open(opts['--json'], 'w', encoding='utf-8', newline='\n'), indent=1)
     if '--png' in opts:
         pngs(rows, R, C, opts['--png'], int(opts.get('--top', 6)))
     return 0

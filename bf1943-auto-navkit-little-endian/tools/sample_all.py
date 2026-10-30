@@ -27,7 +27,7 @@ def main(argv):
     levels = opts['--levels'].split(',') if '--levels' in opts else list(LEVELS)
     smoke = opts.get('--smoke')
     budget = int(opts['--budget']) if '--budget' in opts else None
-    logf = open(opts.get('--log', os.path.join(navkit.Project(None).work, 'navsample', 'sample_all.log')), 'a', encoding='utf-8')
+    logf = open(opts.get('--log', os.path.join(navkit.Project(None).work, 'navsample', 'sample_all.log')), 'a', encoding='utf-8', newline='\n')
 
     def log(*a):
         line = time.strftime('%H:%M:%S ') + ' '.join(str(x) for x in a)

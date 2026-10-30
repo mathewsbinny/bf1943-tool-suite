@@ -18,8 +18,7 @@ BOATS = {'lcvp-landingcraft'}
 AIRCRAFT = {'corsair', 'zero_fighter'}
 STATIONARY = {'aa_bofors', '30cal_tripod', '30cal_windowmount'}
 CLASSES = ['ground vehicle', 'boat', 'aircraft', 'stationary weapon', 'other']
-
-_cache = {}
+CACHE_ATTR = '_vehicle_entries'     # the per-game cache: an attribute of the game object, so it goes with the object
 
 
 def vehicle_class(name):
@@ -36,9 +35,17 @@ def vehicle_partition(entity):
 
 
 def local_entries(game, partition):
-    """[(local position (3,), radius, order)] of a vehicle blueprint's PlayerEntryComponentData (cached)."""
-    key = (id(game), partition)
-    if key not in _cache:
+    """[(local position (3,), radius, order)] of a vehicle blueprint's PlayerEntryComponentData (cached on the game
+    object: 2026-10-30, a module cache keyed by id(game) gave a new game, whose id Python had reused, another copy's
+    entries)."""
+    cache = getattr(game, CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(game, CACHE_ATTR, cache)
+        except (AttributeError, TypeError):
+            pass                                  # an object that takes no attributes: read every time
+    if partition not in cache:
         out = []
         data = game.data(partition + '.dbx')
         if data:
@@ -53,8 +60,8 @@ def local_entries(game, partition):
                 except (KeyError, ValueError, TypeError):
                     continue
                 out.append((np.array(m[12:15]), radius, order))
-        _cache[key] = out
-    return _cache[key]
+        cache[partition] = out
+    return cache[partition]
 
 
 def entry_points(game, entity):

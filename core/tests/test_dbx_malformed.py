@@ -1,7 +1,8 @@
 """The binary .dbx reader (core dbx.py) on a made-up file (no game data): the file parses; every truncated copy, a
 numbers block longer than the file, numbers 0 or 1 byte wide, a string index past the table, a string offset past
 the string area and a container left open are refused with a ValueError naming the cause, never an IndexError or a
-silent short value. to_xml refuses the same files with the same error.
+silent short value. to_xml refuses the same files with the same error, and writes nesting deeper than Python's
+recursion limit, which parse() accepts.
 
   python -B test_dbx_malformed.py
 """
@@ -103,5 +104,48 @@ if __name__ == '__main__':
         why = xml_refused(data)
         check(why is not None and not why.startswith('CRASH') and why == refused(data),
               f'to_xml refuses {label} as parse() does: {why}')
+    # nesting deeper than Python's recursion limit: parse() reads it, so to_xml must write it (no RecursionError)
+    deep_n = sys.getrecursionlimit() + 100
+    deep = (dbx.MAGIC + bytes(8) + struct.pack('>II', 4 * 2 + 3, 2) + struct.pack('>2I', 0, 1) + b'\0c\0'
+            + bytes([1, dbx.CONTAINER << 4, 0]) * deep_n + bytes(deep_n) + b'\0')
+    try:
+        xml = dbx.to_xml(deep)
+        why = 'ok'
+    except Exception as e:
+        xml, why = '', f'{type(e).__name__}: {e}'
+    lines = xml.split('\r\n')
+    check(why == 'ok' and len(lines) == 2 * deep_n + 2 and lines[deep_n] == '\t' * (deep_n - 1) + '<c>'
+          and lines[deep_n + 1] == '\t' * (deep_n - 1) + '</c>' and lines[-2] == '</c>',
+          f'to_xml writes {deep_n} nested containers, which parse() accepts ({why})')
+    # ... and level.Entity.refs walks it too (2026-10-30: it recursed, RecursionError)
+    from bfbc2core import level
+    inst = dbx.parse(deep).roots[0]
+    leaf = inst
+    while leaf.children:
+        leaf = leaf.children[0]
+    leaf.children.append(dbx.Element('field', 0, [('name', 'Blueprint'), ('ref', 'objects/x/y')], raw=b'\0\0'))
+    try:
+        got = level.Entity(0, 'g', 't', 't', 'c', None, None, 'p', None, None, inst).refs()
+        why = 'ok'
+    except Exception as e:
+        got, why = [], f'{type(e).__name__}'
+    check(why == 'ok' and len(got) == 1 and got[0][1] == 'objects/x/y' and got[0][0].count('/') == deep_n - 1,
+          f'Entity.refs reads a reference {deep_n} containers deep ({why})')
+    shallow = dbx.Element('instance', dbx.CONTAINER, children=[
+        dbx.Element('array', dbx.CONTAINER, [('name', 'A')], children=[
+            dbx.Element('item', 0, [('ref', 'r1')]), dbx.Element('item', 0, [('ref', 'null')]),
+            dbx.Element('complex', dbx.CONTAINER, [('name', 'C')], children=[dbx.Element('field', 0, [('name', 'F'), ('ref', 'r2')])])]),
+        dbx.Element('field', 0, [('name', 'B'), ('ref', 'r3')])])
+    got = level.Entity(0, 'g', 't', 't', 'c', None, None, 'p', None, None, shallow).refs()
+    check(got == [('A/item', 'r1'), ('A/C/F', 'r2'), ('B', 'r3')], f'Entity.refs keeps document order and paths ({got})')
+    # the first element a value, not a container: refused (2026-10-30: parsed, then .instances raised TypeError)
+    names = [b'', b'root', b'x']
+    blob = b''.join(s + b'\0' for s in names)
+    offs = [0, 1, 6]
+    value_root = (dbx.MAGIC + bytes(8) + struct.pack('>II', 4 * 3 + len(blob), 3) + struct.pack('>3I', *offs) + blob
+                  + bytes([1, dbx.TEXT << 4, 2, 0]))
+    why = refused(value_root)
+    check(why is not None and 'container' in why and not why.startswith('CRASH'),
+          f'a file whose first element is a value is refused: {why}')
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

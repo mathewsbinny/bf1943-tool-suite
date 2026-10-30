@@ -103,6 +103,31 @@ def encodings():
     got = capstone_text(code, ORIGIN)
     check(got == ['lis r3, -0x7d0f', 'addi r3, r3, -0x8000', 'lis r4, -0x7dca', 'ori r4, r4, 0xbc98'],
           f'la and li32 build the full value: {got}')
+    # la into r0: addi's base r0 reads 0, so lis + addi would leave only the low half (capstone: lis r0, ...; li r0,
+    # 0x1234). Each pair is run as capstone decodes it, for the value it leaves in the register.
+    for line in ('la r0, 0x82f01234', 'la r0, 0x82f08000', 'la r3, 0x82f01234', 'la r3, 0x82f08000', 'li32 r0, 0x82f08000'):
+        v = int(line.split(', ')[1], 0)
+        got = capstone_text(ppcasm.assemble(line, ORIGIN)[0], ORIGIN)
+        check(loaded(got) == v, f'{line} leaves {v:#x} in the register: {got}')
+
+
+def loaded(text):
+    """The value a lis/li/addi/ori sequence (capstone's text) leaves in its register, rA = r0 in addi read as 0."""
+    regs = {}
+    for line in text:
+        m, ops = line.split(None, 1)
+        o = [x.strip() for x in ops.split(',')]
+        if m == 'lis':
+            regs[o[0]] = int(o[1], 0) << 16 & 0xFFFFFFFF
+        elif m == 'li':
+            regs[o[0]] = int(o[1], 0) & 0xFFFFFFFF
+        elif m == 'addi':
+            regs[o[0]] = ((0 if o[1] == 'r0' else regs[o[1]]) + int(o[2], 0)) & 0xFFFFFFFF
+        elif m == 'ori':
+            regs[o[0]] = regs[o[1]] | int(o[2], 0)
+        else:
+            raise AssertionError(f'loaded() does not know {line}')
+    return regs[o[0]]
 
 
 def data_and_errors():
@@ -111,12 +136,26 @@ def data_and_errors():
           and names['c'] == ORIGIN + 12, '.long and .string lay out words, padded, with labels')
     code, _ = ppcasm.assemble('stwu r1, -FRAME(r1)\nlwz r3, OFF(r4)', ORIGIN, {'FRAME': 0x1C0, 'OFF': 0x98})
     check(code == ppcasm.assemble('stwu r1, -0x1c0(r1)\nlwz r3, 0x98(r4)', ORIGIN)[0], 'symbols (and negated symbols) as offsets')
-    for bad in ('li r3, 0x8000','std r31, -0x12(r1)','lwz r3, 0x28', 'foo r3', 'bl 0x80000000', 'beq far', 'mr r32, r3', 'x:\nx:'):
+    # a base of r0 reads 0 (addi, addis and every D-form access): refused rather than assembled as something else
+    for bad in ('li r3, 0x8000','std r31, -0x12(r1)','lwz r3, 0x28', 'foo r3', 'bl 0x80000000', 'beq far', 'mr r32, r3', 'x:\nx:',
+                'addi r3, r0, 4', 'addis r3, r0, 1', 'lwz r3, 8(r0)', 'stw r3, 0(r0)', 'std r3, 8(r0)', 'lfs f1, 4(r0)'):
         try:
             ppcasm.assemble(bad, ORIGIN, {'far': ORIGIN + 0x10000})
             check(False, f'refuses {bad!r}')
         except ppcasm.AsmError:
             check(True, f'refuses {bad!r}')
+    # operand counts: an extra operand was dropped and a missing one raised IndexError (no line number) before
+    # 2026-10-30; both are an AsmError naming the line now
+    for bad in ('li r3, 1, 2', 'mr r3, r4, r5', 'mtctr r11, r12', 'b 0x1000, 0x2000', 'subf r5, r6, r5, r7', 'blr r3',
+                'lwz r3, 0(r4), 8', '.long 1, 2', 'beq cr0, x, y', 'cmpwi cr0, r3, 0, 1',
+                'addi r3, r4', 'slwi r3, r4', 'mr r3', 'lis r3', 'la r3', 'std r3', 'cmpwi r3', 'beq', 'bl'):
+        try:
+            ppcasm.assemble(f'nop\n{bad}', ORIGIN, {'x': ORIGIN, 'y': ORIGIN})
+            check(False, f'refuses {bad!r} (operand count)')
+        except ppcasm.AsmError as e:
+            check(str(e).startswith('line 2:'), f'refuses {bad!r} (operand count), naming the line: {e}')
+        except Exception as e:      # noqa: BLE001 - anything else is the defect
+            check(False, f'refuses {bad!r} (operand count) with an AsmError, not {type(e).__name__}')
 
 
 if __name__ == '__main__':

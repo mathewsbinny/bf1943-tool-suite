@@ -21,6 +21,7 @@ import json
 import os
 import pickle
 import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import List
@@ -136,12 +137,31 @@ def _ground(xz, est, heightfield, near=None):
     return np.where(on, t, est)
 
 
+def _write_cache(path, write):
+    """A cache file written beside itself and moved into place, so a tool closed while writing never leaves one cut
+    short (2026-10-30: a cut .npz failed every later load of that level until deleted by hand)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.navdata-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as fh:
+            write(fh)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
 def _cells(f, heightfield, cache_dir, path):
     if cache_dir:
         cp = os.path.join(cache_dir, _key(path) + '.npz')
         if os.path.isfile(cp):
-            z = np.load(cp)
-            return z['xz'], _ground(z['xz'], z['est'], heightfield, z['near']), z['area'], z['est']
+            try:
+                with np.load(cp) as z:
+                    xz, est, near, area = z['xz'], z['est'], z['near'], z['area']
+                return xz, _ground(xz, est, heightfield, near), area, est
+            except Exception:
+                pass                                         # an unreadable cache entry is rebuilt
     xz, ys, nears, area_of = [], [], [], []
     k = 0
     for s in f.sectors:
@@ -161,8 +181,8 @@ def _cells(f, heightfield, cache_dir, path):
     area = np.concatenate(area_of) if area_of else np.zeros(0, np.int32)
     y = _ground(xz, est, heightfield, near)
     if cache_dir:
-        os.makedirs(cache_dir, exist_ok=True)
-        np.savez(os.path.join(cache_dir, _key(path) + '.npz'), xz=xz, y=y, area=area, est=est, near=near)
+        _write_cache(os.path.join(cache_dir, _key(path) + '.npz'),
+                     lambda fh: np.savez(fh, xz=xz, y=y, area=area, est=est, near=near))
     return xz, y, area, est
 
 
@@ -178,9 +198,7 @@ def load(path, heightfield=None, cache_dir=None):
             except Exception:
                 pass                                         # an unreadable cache entry is rebuilt
         nav = _load(path, heightfield, cache_dir)
-        os.makedirs(cache_dir, exist_ok=True)
-        with open(pk, 'wb') as fh:
-            pickle.dump(nav, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        _write_cache(pk, lambda fh: pickle.dump(nav, fh, protocol=pickle.HIGHEST_PROTOCOL))
         return nav
     return _load(path, heightfield, None)
 

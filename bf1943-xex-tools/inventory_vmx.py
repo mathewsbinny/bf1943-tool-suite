@@ -20,11 +20,12 @@ with (ROOT/'work/xex-analysis/functions.tsv').open() as f:
             rows.append(dict(address=f'{address:08x}',function=f'{start:08x}',word=f'{word:08x}',
                 mnemonic='lvx128' if opcode==0x100000c3 else 'stvx128',
                 vector=((word>>21)&31)|((word<<3)&96),ra=(word>>16)&31,rb=(word>>11)&31))
-with (ROOT/'work/vmx128/inventory.tsv').open('w',newline='') as f:
-    writer=csv.DictWriter(f,fieldnames=list(rows[0]),delimiter='\t');writer.writeheader();writer.writerows(rows)
+with (ROOT/'work/vmx128/inventory.tsv').open('w',encoding='utf-8',newline='') as f:
+    writer=csv.DictWriter(f,fieldnames=list(rows[0]),delimiter='\t',lineterminator='\r\n')  # CRLF, as recorded: evidence pins these bytes
+    writer.writeheader();writer.writerows(rows)
 report=dict(image_sha256=hashlib.sha256(data).hexdigest(),counts=dict(collections.Counter(r['mnemonic'] for r in rows)),
     containing_functions=len({r['function'] for r in rows}),other_primary_opcode4_words=other,
     scope='Two supported opcodes only, aligned scan of mapped function bodies. May include embedded data; not execution or full VMX128 coverage.',
     inventory_sha256=hashlib.sha256((ROOT/'work/vmx128/inventory.tsv').read_bytes()).hexdigest())
-(ROOT/'research/evidence/vmx128-inventory.json').write_text(json.dumps(report,indent=2)+'\n')
+(ROOT/'research/evidence/vmx128-inventory.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8', newline='\n')
 print(json.dumps(report))

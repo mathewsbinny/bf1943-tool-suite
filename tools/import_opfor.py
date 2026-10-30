@@ -15,6 +15,10 @@ A folder renamed in this suite is recorded as {"kind": "rename", "from", "to", "
 version (import or update) is compared with the source: a file changed there is replaced only where this
 suite's copy is still exactly that recorded version; a file changed in both places is left alone and reported
 as a conflict, to merge by hand; files new in the source are added. The update is recorded like an import.
+
+Every item of a plan (sources committed, destinations free and named once) and every --update destination is checked
+before anything is written. A run that still stops part-way records the files it wrote, with the error under
+"incomplete", so no copied or updated file is left without its record.
 """
 import argparse
 import datetime
@@ -55,7 +59,9 @@ def tracked(commit, source):
     return out
 
 
-def import_one(commit, source, destination, note):
+def check_import(commit, source, destination):
+    """(source, destination folder, files) of one import, or SystemExit before anything is written: a destination
+    outside this suite or already there, nothing committed at the source."""
     source = source.replace('\\', '/').strip('/')
     dst = os.path.normpath(os.path.join(SUITE, destination))
     if os.path.commonpath([dst, SUITE]) != SUITE or dst == SUITE:
@@ -65,8 +71,18 @@ def import_one(commit, source, destination, note):
     files = tracked(commit, source)
     if not files:
         sys.exit(f'nothing committed at {source} in {commit}')
+    return source, dst, files
+
+
+def import_one(commit, source, destination, note, item=None):
+    """Copies one import; its record is filled in as each file is written (item: the dict to fill, already in the
+    manifest's list, so a failure part-way still leaves the files written on record)."""
+    source, dst, files = check_import(commit, source, destination)
     single = len(files) == 1 and files[0][0] == source
     copied = []
+    item = item if item is not None else {}
+    item.update({'source': source, 'destination': os.path.relpath(dst, SUITE).replace(os.sep, '/'), 'note': note,
+                 'files': copied})
     for path, rel, blob in files:
         data = git('cat-file', 'blob', blob)
         if blob_id(data) != blob:
@@ -80,7 +96,7 @@ def import_one(commit, source, destination, note):
                 sys.exit(f'written file differs from its source: {d}')
         copied.append({'path': rel, 'bytes': len(data), 'git_blob': blob, 'sha256': hashlib.sha256(data).hexdigest()})
     print(f'{len(copied):4d} files  {source} -> {os.path.relpath(dst, SUITE)}')
-    return {'source': source, 'destination': os.path.relpath(dst, SUITE).replace(os.sep, '/'), 'note': note, 'files': copied}
+    return item
 
 
 def recorded(manifest, destination):
@@ -104,11 +120,15 @@ def recorded(manifest, destination):
     return source, files, removed
 
 
-def update_one(commit, manifest, destination):
+def update_one(commit, manifest, destination, item=None):
+    """Brings one import up to commit; its record (item: the dict to fill, already in the manifest's list) is filled
+    in as each file is written, so a failure part-way still leaves the files written on record."""
     destination = destination.replace('\\', '/').strip('/')
     dst = os.path.normpath(os.path.join(SUITE, destination))
     source, known, removed = recorded(manifest, destination)
     updated, conflicts = [], []
+    item = item if item is not None else {}
+    item.update({'source': source, 'destination': destination, 'note': 'update', 'files': updated, 'conflicts': conflicts})
     for path, rel, blob in tracked(commit, source):
         if rel in removed:
             continue                                    # removed here on purpose
@@ -133,7 +153,36 @@ def update_one(commit, manifest, destination):
     print(f'{len(updated):4d} files updated, {len(conflicts)} to merge by hand  {source} -> {destination}')
     for c in conflicts:
         print(f'       conflict: {c}')
-    return {'source': source, 'destination': destination, 'note': 'update', 'files': updated, 'conflicts': conflicts}
+    return item
+
+
+def save_manifest(manifest):
+    """The manifest written beside itself and moved into place (UTF-8, \\n newlines)."""
+    tmp = MANIFEST + '.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(manifest, f, indent=2)
+        f.write('\n')
+    os.replace(tmp, MANIFEST)
+
+
+def run_recorded(manifest, entry, work):
+    """Runs work(items) - which appends each item's record to items before writing its files - and records entry in
+    the manifest whatever happens: a failure part-way (2026-10-30: the manifest was written only after the last item,
+    so files already copied or updated were left without a record) is recorded with the files written so far and the
+    error under 'incomplete'."""
+    items = entry['items']
+    try:
+        work(items)
+    except BaseException as e:
+        if any(i.get('files') for i in items):
+            entry['incomplete'] = str(e) if isinstance(e, SystemExit) else f'{type(e).__name__}: {e}'
+            manifest['imports'].append(entry)
+            save_manifest(manifest)
+            print(f'stopped part-way; the {sum(len(i.get("files", ())) for i in items)} file(s) written so far are '
+                  f'recorded in {MANIFEST} (marked incomplete)', file=sys.stderr)
+        raise
+    manifest['imports'].append(entry)
+    save_manifest(manifest)
 
 
 def main():
@@ -148,14 +197,18 @@ def main():
         commit = git('rev-parse', 'HEAD').decode().strip()
         with open(MANIFEST, encoding='utf-8') as f:
             manifest = json.load(f)
-        items = [update_one(commit, manifest, d) for d in a.update]
+        for d in a.update:                              # every destination known before anything is written
+            recorded(manifest, d.replace('\\', '/').strip('/'))
         dirty = [l[3:] for l in git('status', '--porcelain', '--untracked-files=no').decode('utf-8').splitlines()]
-        manifest['imports'].append({'commit': commit, 'imported': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
-                                    'kind': 'update', 'source_uncommitted_not_copied': dirty, 'items': items})
-        with open(MANIFEST, 'w', encoding='utf-8', newline='\n') as f:
-            json.dump(manifest, f, indent=2)
-            f.write('\n')
-        print(f'{sum(len(i["files"]) for i in items)} files updated to {commit[:7]}; manifest updated')
+        entry = {'commit': commit, 'imported': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+                 'kind': 'update', 'source_uncommitted_not_copied': dirty, 'items': []}
+
+        def work(items):
+            for d in a.update:
+                items.append({})
+                update_one(commit, manifest, d, items[-1])
+        run_recorded(manifest, entry, work)
+        print(f'{sum(len(i["files"]) for i in entry["items"])} files updated to {commit[:7]}; manifest updated')
         return
     if a.plan:
         with open(a.plan, encoding='utf-8') as f:
@@ -164,24 +217,27 @@ def main():
         plan = [{'source': a.source, 'destination': a.destination, 'note': a.note}]
     else:
         ap.error('give a source and destination, or --plan')
-    for item in plan:
-        if os.path.exists(os.path.join(SUITE, item['destination'])):
-            sys.exit(f"destination exists, refusing to overwrite: {item['destination']}")
     commit = git('rev-parse', 'HEAD').decode().strip()
+    # every item checked before anything is written (2026-10-30: a later item's missing source stopped the run after
+    # the earlier items were copied, and those were never recorded)
+    seen = set()
+    for i in plan:
+        _, dst, _ = check_import(commit, i['source'], i['destination'])
+        if os.path.normcase(dst) in seen:
+            sys.exit(f"destination named twice in the plan: {i['destination']}")
+        seen.add(os.path.normcase(dst))
     dirty = [l[3:] for l in git('status', '--porcelain', '--untracked-files=no').decode('utf-8').splitlines()]
-    imports = [import_one(commit, i['source'], i['destination'], i.get('note', '')) for i in plan]
     with open(MANIFEST, encoding='utf-8') as f:
         manifest = json.load(f)
-    manifest['imports'].append({
-        'commit': commit,
-        'imported': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
-        'source_uncommitted_not_copied': dirty,
-        'items': imports,
-    })
-    with open(MANIFEST, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(manifest, f, indent=2)
-        f.write('\n')
-    print(f'{sum(len(i["files"]) for i in imports)} files from {commit[:7]}; manifest updated')
+    entry = {'commit': commit, 'imported': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+             'source_uncommitted_not_copied': dirty, 'items': []}
+
+    def work(items):
+        for i in plan:
+            items.append({})
+            import_one(commit, i['source'], i['destination'], i.get('note', ''), items[-1])
+    run_recorded(manifest, entry, work)
+    print(f'{sum(len(i["files"]) for i in entry["items"])} files from {commit[:7]}; manifest updated')
 
 
 if __name__ == '__main__':

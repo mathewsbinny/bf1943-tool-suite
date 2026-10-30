@@ -253,16 +253,16 @@ def render(path, cells, edges, portals, only, region, title):
 def export(out, cells, edges, portals):
     from bfbc2core import navdata
     G = navdata.GRID
-    with open(os.path.join(out, 'cells.csv'), 'w', newline='') as fh:
-        w = csv.writer(fh)
+    with open(os.path.join(out, 'cells.csv'), 'w', encoding='utf-8', newline='') as fh:
+        w = csv.writer(fh, lineterminator='\n')
         w.writerow(['x', 'z', 'dice_area', 'navkit_area', 'height', 'slope_deg', 'dice_single_cell', 'dice_area_merged'])
         h, s = cells['height'], cells['slope']
         for k, (i, j) in enumerate(cells['ij'].tolist()):
             w.writerow([round(i * G, 2), round(j * G, 2), int(cells['dice_area'][k]), int(cells['navkit_area'][k]),
                         '' if h is None else round(float(h[k]), 3), '' if s is None else round(float(s[k]), 1),
                         int(cells['dice_single'][k]), int(cells['dice_merged'][k])])
-    with open(os.path.join(out, 'edges.csv'), 'w', newline='') as fh:
-        w = csv.writer(fh)
+    with open(os.path.join(out, 'edges.csv'), 'w', encoding='utf-8', newline='') as fh:
+        w = csv.writer(fh, lineterminator='\n')
         w.writerow(['x', 'z', 'along', 'kind', 'dice_area_a', 'dice_area_b', 'navkit_area_a', 'navkit_area_b', 'height_step'])
         h = cells['height']
         for k in np.nonzero(edges['kind'] != '')[0].tolist():
@@ -270,8 +270,8 @@ def export(out, cells, edges, portals):
             w.writerow([round(m[0] / 2 * G, 2), round(m[1] / 2 * G, 2), 'z' if m[0] % 2 else 'x', edges['kind'][k],
                         int(cells['dice_area'][p]), int(cells['dice_area'][q]), int(cells['navkit_area'][p]),
                         int(cells['navkit_area'][q]), '' if h is None else round(float(abs(h[q] - h[p])), 3)])
-    with open(os.path.join(out, 'portals.csv'), 'w', newline='') as fh:
-        w = csv.writer(fh)
+    with open(os.path.join(out, 'portals.csv'), 'w', encoding='utf-8', newline='') as fh:
+        w = csv.writer(fh, lineterminator='\n')
         w.writerow(['source', 'x', 'z', 'length'])
         for name in ('dice', 'navkit'):
             for x, z, ln in portals[name].tolist():
@@ -329,7 +329,7 @@ def main(argv):
             summary['worst_square'] = w
             render(os.path.join(out, 'worst_sector.png'), cells, edges, portals, only, w,
                    f'{lv}: the 100 m square with the most mismatched boundary edges')
-    json.dump(summary, open(os.path.join(out, 'summary.json'), 'w'), indent=1)
+    json.dump(summary, open(os.path.join(out, 'summary.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     for k in ('shared_cells', 'match', 'missing', 'extra', 'boundary_precision_0', 'boundary_recall_0',
               'boundary_precision_1', 'boundary_recall_1', 'boundary_precision_2', 'boundary_recall_2',
               'exact_areas_pct', 'dice_areas_merged_by_navkit', 'dice_areas_split_by_navkit',

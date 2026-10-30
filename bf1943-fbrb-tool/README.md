@@ -19,10 +19,21 @@ python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
 
 - `extract` writes the entries (all, or those whose name contains the filter) as files under their names, and
   `fbrb.manifest.json`: the bundle's path and SHA-256, and per entry its name, type, flags, size and SHA-256. It
-  refuses an output folder in the game folder.
+  refuses an output folder in the game folder. Each entry's folders and file are resolved (links and junctions
+  followed) before anything is made or written there, and an entry that would land outside the output folder or in
+  the game folder - through a junction already inside the output folder, say - stops the extraction there.
+  The manifest is UTF-8 with `\n` newlines. Before anything is written, it refuses entries that would be one file on
+  Windows (one name twice, or names equal but for case), a file where another entry's folder goes, and an entry
+  named as the manifest - before 2026-10-30 the later entry silently replaced the earlier one.
 - `replace` writes a copy of the bundle with the named entries replaced (names as `list` shows them). It refuses
-  to write into the game folder (core `game1943.find_game`) or over the input bundle. A changed bundle goes
+  to write into the game folder (core `game1943.find_game`) or over the input bundle. Both commands also treat the
+  input bundle's own game copy as read-only: the nearest folder above the bundle whose `levels` folder holds
+  bundles. A changed bundle goes
   elsewhere, for the Xenia kit or a mod folder to use.
+- Every file (entry, manifest, bundle copy) is written to a temporary file beside it and then moved into place, so
+  an existing file there is replaced, never written into: a hard link there to a game file (which resolving paths
+  cannot see) loses its name in the output, and the game file stays as it was. A failed write leaves the old file
+  and no temporary file.
 - Paths are compared as Windows resolves them (links followed, case ignored: `C:\Game` and `c:\game` are one
   folder); an output on another drive than the game folder is allowed.
 
@@ -50,7 +61,10 @@ DICE's tools used; the game reads the decompressed content.
   folder.
 - `python -B tests\test_fbrb_guards.py` (quick tier, no game data): on a made-up bundle and a made-up game folder,
   `replace` and `extract` refuse the game folder however it is cased, `replace` refuses its input however it is
-  cased, and an output on another drive is not taken for the game folder.
+  cased, an output on another drive is not taken for the game folder, and a junction inside the output folder (to the
+  game folder or elsewhere) does not carry an entry out of it (skipped where no junction can be made); a hard link in
+  the output to a game file (an extracted entry, or the `replace` output) leaves the game file unchanged; a write that
+  fails part-way leaves the old file and no temporary file; the manifest has `\n` newlines only.
 
 ## Errors and logs
 

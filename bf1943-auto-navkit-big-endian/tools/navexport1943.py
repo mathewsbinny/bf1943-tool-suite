@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tools')]
 import navbuild  # noqa: E402
+import navkitjson1943 as nj  # noqa: E402
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, navdata, rsnv, terrain, vehicles1943  # noqa: E402
 
@@ -48,12 +49,7 @@ END_MATCH = 1.0           # m: a ladder's / jump link's end and its route node l
 AREA_GROUND_TOP = 1.52    # m: an area's stored max_y is its highest ground plus this (navbuild.AREA_Y_MAX)
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for b in iter(lambda: f.read(1 << 22), b''):
-            h.update(b)
-    return h.hexdigest()
+sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
 
 
 def rasterise(area, pitch, y_offset, heightfield):
@@ -151,19 +147,40 @@ def grid_error(ii, jj, y, grid, hw, hh, cpb, pitch, miny):
                 for u, v, h in zip(ii, jj, y)), default=0.0)
 
 
+class NotCurrent(RuntimeError):
+    """The build on disk is not the checked build of the level's current preparation."""
+
+
+build_refusal = nj.build_refusal    # why the build on disk may not be exported (navkitjson1943: the audit's rule too)
+
+
+def prepared_terrain(lv, st):
+    """(game folder, game1943.Game, height field name, terrain) of the copy the level was prepared from (navkit.json's
+    'game'; 2026-10-30: the export and test_navexport1943 read the default copy's)."""
+    game = game1943.find_game(st.get('game'))
+    g = game1943.Game(game, lv)
+    hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
+    return game, g, hf_name, terrain.read(g.data(hf_name))
+
+
 def export(lv, out=None, big_endian=False, log=print, compare=False):
     """compare: also rasterise the outlines where the build's cells are read, and report how they differ."""
     W = game1943.level_work(lv)
     hpd = os.path.join(W, 'navkit', f'{lv}.hpd')
     if not os.path.isfile(hpd):
         raise FileNotFoundError(f'{hpd}: build the level first (navkit.py build {lv})')
-    st = json.load(open(os.path.join(W, 'navkit', 'navkit.json'), encoding='utf-8'))
+    st = nj.read(lv)
+    why = build_refusal(st, lv, hpd)
+    if why:
+        raise NotCurrent(why)
+    if not nj.check_passed(st):
+        # exported, so the failed build can be looked at, but never stamped as the soldier world: the vehicle builders
+        # refuse it, and navexport1943.py exits with code 1 (2026-10-30 review: it was stamped, exit code 0)
+        log(f'{lv}: the build\'s check failed ({st["checked"]}; navkit\\check.txt): exported for inspection only, '
+            f'not stamped as the soldier world')
     xoff, zoff = st['sector_offsets']
-    sea = float(st.get('sea_level') or 0.0)         # None: a level without a water mesh (navkit.py prepare)
-    game = game1943.find_game(st.get('game'))         # the copy the level was prepared from (2026-10-30: the default)
-    g = game1943.Game(game, lv)
-    hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
-    hf = terrain.read(g.data(hf_name))
+    game, g, hf_name, hf = prepared_terrain(lv, st)
+    sea = soldier1943.sea_level(st, hf)               # a level without water: under all its terrain
     soldier1943.configure()
     yoff = soldier1943.HEIGHT / 2
     navdata.Y_OFFSET = yoff
@@ -489,11 +506,36 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
     meta['counts']['tight walk edges'] = len(tight)
     sections['META'] = json.dumps(meta, indent=1).encode('utf-8')
     size = rsnv.write(out, sections, header, big_endian)
+    stamp_export(lv, st, out)                         # when out is the soldier world the vehicle builders read
     walk = sum(1 for k in range(len(E)) if int(kind[k]) == rsnv.EDGE_WALK)
     log(f'{lv}: heuristic scale {h_q / rsnv.H_SCALE_ONE:.6f} (the least edge cost per 1/16 m of length)')
     log(f'{lv}: wrote {out} ({size / 1e6:.2f} MB; {len(port)} portals, {len(ladr)} ladders and jump links, '
         f'{len(offm)} vehicle entries, {len(island_rows)} islands; {len(tight)} of {walk} walk edges tight)')
     return out, nav
+
+
+def stamp_export(lv, st, path):
+    """navkit.json 'exported' when path is the soldier world the vehicle builders read (<level>.rsnv, by file identity:
+    2026-10-30, --out naming that file left the old stamp): the build it was made from (its .hpd's SHA-256,
+    'hpd_sha256'; 'built' keeps only the minute) and the file's SHA-256 (vehicleclasses1943.soldier_world checks both).
+    Not written when navkit.json now holds another build (built again meanwhile), or when the build's check failed
+    (an export of a failed build is for inspection only). Returns whether it was written."""
+    if not nj.same_file(path, os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv')):
+        return False
+    build = (st.get('build_from') or {}).get('hpd_sha256')
+    h = sha256(path)
+    stamped = []
+
+    def change(now):
+        if not build or now.get('preparation') != st['preparation'] or (now.get('build_from') or {}).get('hpd_sha256') != build:
+            return
+        if not nj.check_passed(now):
+            return
+        now['exported'] = {'preparation': st['preparation'], 'built': now.get('built'), 'hpd_sha256': build, 'sha256': h,
+                           'exporter': EXPORTER_VERSION.split(' ')[0]}
+        stamped.append(True)
+    nj.update(lv, change)
+    return bool(stamped)
 
 
 def check(path, nav, log=print):
@@ -532,10 +574,16 @@ def main(argv):
     ap.add_argument('--compare', action='store_true', help='also compare the cells of the build with the rasterised outlines')
     a = ap.parse_args(argv[1:])
     path, nav = export(a.level, a.out, a.big_endian, compare=a.compare)
+    failed = 0
     if a.check:
         problems, _ = check(path, nav)
-        return 1 if problems else 0
-    return 0
+        failed = 1 if problems else 0
+    st = nj.read(a.level)
+    if not nj.check_passed(st):
+        print(f'error: {a.level}: the build\'s check failed ({st.get("checked")}): {path} was written for inspection only '
+              f'and is not the soldier world (fix the build, navkit.py check {a.level}, export again)')
+        return 1
+    return failed
 
 
 if __name__ == '__main__':

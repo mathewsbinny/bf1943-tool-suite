@@ -40,6 +40,7 @@ SCRIPTS = {
     'tests': os.path.join(SUITE, 'run_tests.py'),
 }
 NAV_STEPS = ('prepared', 'sampled', 'built', 'checked')          # navkit.json keys, in order
+LEVELDIFF_OK = (0, 1)               # LevelDiff: 0 no differences, 1 differences found (2 = bad input or a crash)
 
 
 def tool(name):
@@ -59,6 +60,7 @@ class Hub:
         self.root = root
         self.lines = queue.Queue()
         self.proc = None                       # the tab's running tool (one at a time)
+        self.stopped_pids = set()              # processes the user stopped: their end is not a failure
         root.title('BF1943 Tool Suite')
         root.minsize(900, 640)
         try:
@@ -120,23 +122,37 @@ class Hub:
                                                    f'Install them with:\npip install {pip}')
 
     # --- running tools ------------------------------------------------------------------------------
-    def run(self, args, label, cwd=None):
-        """One tool in the background (the tab's), its output streamed to the pane."""
+    @staticmethod
+    def child_env(args):
+        """(environment, encoding to read its output with): a Python tool writes UTF-8 (2026-10-30: through a pipe
+        it wrote the ANSI code page and died on a path outside it, a Cyrillic folder name); others (LevelDiff) keep
+        the system's."""
+        env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
+        if args and os.path.normcase(str(args[0])) in (os.path.normcase(PYTHON), os.path.normcase(sys.executable)):
+            env['PYTHONIOENCODING'] = 'utf-8'
+            return env, 'utf-8'
+        return env, None
+
+    def run(self, args, label, cwd=None, ok=(0,)):
+        """One tool in the background (the tab's), its output streamed to the pane. ok: the exit codes that are not a
+        failure (LevelDiff: 1 = the files differ)."""
         if self.proc is not None and self.proc.poll() is None:
             messagebox.showinfo('BF1943 Tool Suite', 'A tool is still running - wait for it or press Stop.')
             return
         self.write(f'\n> {label}\n')
         errors.logger().info(f'run: {label}: {subprocess.list2cmdline([str(a) for a in args])}')
         self.tails[label] = []
+        env, encoding = self.child_env(args)
         try:
             self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                         errors='replace', cwd=cwd or SUITE, creationflags=NO_WINDOW)
+                                         encoding=encoding, errors='replace', cwd=cwd or SUITE, creationflags=NO_WINDOW,
+                                         env=env)
         except OSError as e:
             errors.report(e, where=f'starting {label}')
             return
         self.status.set(f'Running: {label}')
         self.stop_btn.configure(state='normal')
-        threading.Thread(target=self.reader, args=(self.proc, label, True), daemon=True).start()
+        threading.Thread(target=self.reader, args=(self.proc, label, True, tuple(ok)), daemon=True).start()
 
     def launch(self, args, label):
         """A window of its own (3D tools, other GUIs): runs alongside, and on after this window closes. Its log goes
@@ -148,7 +164,7 @@ class Hub:
         log = tempfile.NamedTemporaryFile(prefix='bf1943suite_', suffix='.log', delete=False)
         try:
             p = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, cwd=SUITE, creationflags=NO_WINDOW,
-                                 env={**os.environ, 'PYTHONUNBUFFERED': '1'})
+                                 env=self.child_env(args)[0])
         except OSError as e:
             log.close()
             errors.report(e, where=f'starting {label}')
@@ -173,44 +189,55 @@ class Hub:
                         self.lines.put(rest)
                     break
                 time.sleep(0.2)
-        self.lines.put(('done', label, proc.returncode, False))
+        self.lines.put(('done', label, proc.returncode, False, (0,), proc.pid))
         try:
             os.remove(path)
         except OSError:
             pass
 
-    def reader(self, proc, label, main):
+    def reader(self, proc, label, main, ok=(0,)):
         for line in proc.stdout:
             self.lines.put(line)
             tail = self.tails.setdefault(label, [])
             tail.append(line.rstrip())
             del tail[:-12]
         code = proc.wait()
-        self.lines.put(('done', label, code, main))
+        self.lines.put(('done', label, code, main, ok, proc.pid))
 
     def pump(self):
+        """The tools' output into the pane, every 100 ms. One item's error is reported and the rest go on, and the
+        next round is always scheduled (2026-10-30: an error here - the game folder gone when a Levels run ended -
+        stopped the pump for good, and no output reached the pane again)."""
         try:
             while True:
-                item = self.lines.get_nowait()
-                if isinstance(item, tuple):
-                    _, label, code, main = item
-                    self.write(f'{"done" if code == 0 else f"finished with exit code {code}"}: {label}\n')
-                    errors.logger().info(f'exit {code}: {label}')
-                    if main:
-                        self.status.set('Ready.')
-                        self.stop_btn.configure(state='disabled')
-                        if label.startswith('Levels'):
-                            self.fill_levels()
-                    if code not in (0, None) and not self.stopped:
-                        self.failed(label, code, main)
-                    self.stopped = False
-                else:
-                    self.write(item)
-        except queue.Empty:
-            pass
-        self.root.after(100, self.pump)
+                try:
+                    item = self.lines.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    if isinstance(item, tuple):
+                        self.ended(*item[1:])
+                    else:
+                        self.write(item)
+                except Exception as e:
+                    errors.report(e, where='the output pane')
+        finally:
+            self.root.after(100, self.pump)
 
-    stopped = False
+    def ended(self, label, code, main, ok, pid):
+        """A tool's end: a line in the pane, and a failure told unless it was an accepted code or the user stopped
+        that very process (2026-10-30: one flag for all, so another tool's end could take it)."""
+        stopped = pid in self.stopped_pids
+        self.stopped_pids.discard(pid)
+        self.write(f'{"done" if code in ok else f"finished with exit code {code}"}: {label}\n')
+        errors.logger().info(f'exit {code}: {label}')
+        if main:
+            self.status.set('Ready.')
+            self.stop_btn.configure(state='disabled')
+        if code not in ok and code is not None and not stopped:
+            self.failed(label, code, main)
+        if main and label.startswith('Levels'):
+            self.fill_levels()
 
     def failed(self, label, code, main):
         """A tool ended with an error: logged, and the user told what it said last. The 3D tools and other
@@ -226,7 +253,7 @@ class Hub:
 
     def stop(self):
         if self.proc is not None and self.proc.poll() is None:
-            self.stopped = True
+            self.stopped_pids.add(self.proc.pid)
             # the tool and what it started (NavKit's samplers): ending the tool alone leaves those running
             subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.proc.pid)], capture_output=True, creationflags=NO_WINDOW)
             self.write('stopped.\n')
@@ -301,20 +328,29 @@ class Hub:
             self.tree.insert('', 'end', text='(no game copy found)', values=('',) * 5)
             self.write(f'Levels: {getattr(self, "game_error", "no BF1943 game folder")}\n')
             return
-        for lv in game1943.levels(self.game):
+        try:
+            found = game1943.levels(self.game)
+        except OSError as e:                    # the copy moved or rebuilt since the window opened: said, not raised
+            self.tree.insert('', 'end', text='(game copy not readable)', values=('',) * 5, tags=('none',))
+            self.write(f'Levels: the game copy could not be read: {e}\n')
+            return
+        for lv in found:
             p = os.path.join(game1943.level_work(lv), 'navkit', 'navkit.json')
             s = {}
             if os.path.isfile(p):
                 try:
-                    s = json.load(open(p, encoding='utf-8'))
+                    with open(p, encoding='utf-8') as fh:
+                        s = json.load(fh)
                 except (OSError, ValueError):
                     s = {}
+            if not isinstance(s, dict):         # valid JSON but not NavKit's record: shown as not run
+                s = {}
             kind = 'multiplayer map' if lv in game1943.MP_LEVELS else 'other level'
             self.tree.insert('', 'end', iid=lv, text=lv, values=(kind,) + tuple(s.get(k, '-') for k in NAV_STEPS))
 
     def chosen_level(self):
         sel = self.tree.selection()
-        if not sel or self.game is None:
+        if not sel or self.game is None or 'none' in self.tree.item(sel[0], 'tags'):
             messagebox.showinfo('BF1943 Tool Suite', 'Choose a level in the list first.')
             return None
         return sel[0]
@@ -402,7 +438,7 @@ class Hub:
                 args += ['--ignore', field]
         if self.ld_json.get().strip():
             args += ['--json', self.ld_json.get().strip()]
-        self.run(args, 'LevelDiff')
+        self.run(args, 'LevelDiff', ok=LEVELDIFF_OK)
 
     # --- Xenia run ----------------------------------------------------------------------------------
     def tab_xenia(self):

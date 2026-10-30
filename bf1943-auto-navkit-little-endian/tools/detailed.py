@@ -77,6 +77,37 @@ def choose(level_dir, common, samples_path, xoff, zoff, margin=MARGIN, stacked_m
     return sorted(flag | stacked), {'flag': len(flag), 'stacked': len(stacked), 'stacked only': len(stacked - flag)}
 
 
+def sampled_record_path(p02):
+    """The record a pitch-0.2 sampling run leaves next to its samples: which sectors it covered, at which offsets."""
+    return p02[:-4] + '.sectors.json'
+
+
+def write_sampled_record(p02, sectors, xoff, zoff):
+    tmp = sampled_record_path(p02) + '.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump({'xoff': xoff, 'zoff': zoff, 'sectors': sorted([int(i), int(j)] for i, j in sectors)}, f)
+    os.replace(tmp, sampled_record_path(p02))
+
+
+def sampled_problem(p02, samples08, sectors, xoff, zoff):
+    """Why the pitch-0.2 samples p02 do not fit the detailed sectors chosen now (None: they fit). With the run's record:
+    the same sector offsets, and every chosen sector among those it covered. Without one (a run from before the
+    record): the 0.8 m samples the choice came from must not be newer than the 0.2 m ones."""
+    rec = sampled_record_path(p02)
+    if os.path.isfile(rec):
+        with open(rec, encoding='utf-8') as f:
+            r = json.load(f)
+        if (r.get('xoff'), r.get('zoff')) != (xoff, zoff):
+            return f'sampled with sector offsets {r.get("xoff")},{r.get("zoff")}, the level now has {xoff},{zoff}'
+        missing = sorted({(int(i), int(j)) for i, j in sectors} - {(int(i), int(j)) for i, j in r.get('sectors', ())})
+        if missing:
+            return f'{len(missing)} detailed sector(s) are not in the 0.2 m samples, e.g. {missing[0]}'
+        return None
+    if samples08 and os.path.isfile(samples08) and os.path.getmtime(samples08) > os.path.getmtime(p02):
+        return 'the 0.8 m samples (which choose the detailed sectors) are newer than the 0.2 m samples'
+    return None
+
+
 def score(chosen, dice_pathdata):
     """Against DICE's choice (evaluation only): (found, DICE detailed, chosen sectors DICE builds at 0.8)."""
     import hpdtool

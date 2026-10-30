@@ -176,6 +176,10 @@ def parse(data):
         (stack[-1].children if stack else roots).append(e)
     if not roots:
         raise ValueError('damaged .dbx: no element after the string table (a partition has at least its root)')
+    if roots[0].kind != CONTAINER:
+        # DbxFile.instances reads the first root's children (2026-10-30: a value there passed, then raised TypeError)
+        raise ValueError(f'damaged .dbx: the first element ({roots[0].tag!r}) is a value, not the container a '
+                         f'partition starts with')
     if stack:
         raise ValueError(f'truncated .dbx: {len(stack)} container(s) not closed at the end of the file '
                          f'(innermost {stack[-1].tag!r})')
@@ -282,23 +286,24 @@ def _escape(s):
 def to_xml(data):
     """FORMAT.md section 3: the readable XML, identical to `DbxEdit xml` on every valid file. The file is read
     with parse(), so a damaged one raises its ValueError here too (DbxEdit's export reads a string with no zero
-    byte to the end of the file; this does not)."""
+    byte to the end of the file; this does not). Written with a stack, not recursion, so any nesting parse() accepts
+    is exported (parse() reads iteratively too)."""
     out = ['<?xml version="1.0"?>\r\n']
-
-    def emit(e, depth):
+    todo = [(e, 0) for e in reversed(parse(data).roots)]    # (element, depth); (tag string, depth) closes a container
+    while todo:
+        e, depth = todo.pop()
+        if isinstance(e, str):
+            out.append('\t' * depth + '</' + e + '>\r\n')
+            continue
         line = '\t' * depth + '<' + e.tag + ''.join(' ' + k + '="' + _escape(v) + '"' for k, v in e.attributes)
         if e.kind == CONTAINER:
             out.append(line + '>\r\n')
-            for c in e.children:
-                emit(c, depth + 1)
-            out.append('\t' * depth + '</' + e.tag + '>\r\n')
-            return
+            todo.append((e.tag, depth))
+            todo.extend((c, depth + 1) for c in reversed(e.children))
+            continue
         content = _escape(value(e))
         if e.kind == TEXT and not content:
             out.append(line + ' />\r\n')
         else:
             out.append(line + '>' + content + '</' + e.tag + '>\r\n')
-
-    for root in parse(data).roots:
-        emit(root, 0)
     return ''.join(out)

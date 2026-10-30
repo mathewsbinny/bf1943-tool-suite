@@ -30,7 +30,6 @@ What it builds (parameters: vehicleclasses1943.CLASSES['lcvp']):
 """
 import argparse
 import collections
-import json
 import math
 import os
 import sys
@@ -42,6 +41,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
 import rsnvgrid1943  # noqa: E402
+import soldier1943  # noqa: E402
+import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 from bfbc2core import game1943, rsnv, rsnvtrip, terrain  # noqa: E402
 
@@ -163,10 +164,22 @@ def cell_line(nav, a, b):
 
 
 def build(lv, soldier_path=None, game=None, log=print):
+    """The LCVP world: (rsnv path, stats), or (None, stats) when the level has none (no water, no craft spawns: stamped
+    absent). Reads the level from the game copy it was prepared from (2026-10-30: game=None read the default copy)."""
     p = paths(lv)
     t0 = time.time()
-    st = json.load(open(os.path.join(p['navkit'], 'navkit.json'), encoding='utf-8'))
-    sea = float(st.get('sea_level', 0.0))
+    st = nj.read(lv)
+    game = vc.prepared_game(st, game, lv)
+    want = vc.inputs(st, lv, 'lcvp')
+    if not soldier1943.has_water(st):            # prepare found no water mesh (2026-10-30: float(None) raised)
+        # absent whatever the soldier world: the level's data says so (2026-10-30: a current soldier export was needed)
+        why = 'no water on the level (navkit.py prepare found no water mesh)'
+        log(f'{lv}: {why}: no LCVP world')
+        vc.absent(lv, 'lcvp', want, p['rsnv'], why, log)
+        return None, {'spawns': 0, 'note': why}
+    soldier_path = soldier_path or p['soldier']
+    want['soldier'] = vc.soldier_world(st, lv, soldier_path)
+    vc.drop(lv, 'worlds', 'lcvp')
     pitch = vc.value('lcvp', 'pitch')
     draft = vc.value('lcvp', 'draft')
     radius = vc.value('lcvp', 'radius')
@@ -175,11 +188,12 @@ def build(lv, soldier_path=None, game=None, log=print):
     bow = vc.value('lcvp', 'bow')
     hf_path = os.path.join(p['objects'], 'heightfield.res')
     hf = terrain.read(hf_path)
+    sea = soldier1943.sea_level(st, hf)
     spawns, lvl = craft_spawns(lv, game)
-    soldier_path = soldier_path or p['soldier']
     S = rsnv.load(soldier_path)
     if not spawns:
         log(f'{lv}: no landing craft spawns: no LCVP world')
+        vc.absent(lv, 'lcvp', want, p['rsnv'], 'no landing craft spawns on the level', log)
         return None, {'spawns': 0}
     # the box: land, carriers (objects holding soldier spawns), craft spawns
     land = hf.heights > sea - draft
@@ -426,6 +440,7 @@ def build(lv, soldier_path=None, game=None, log=print):
               'water_depth': draft, 'sha256': meta['sources']['soldier rsnv']['sha256']}
     stats = rsnvgrid1943.write_world(lv, 'lcvp', sets, node_list, edge_list, offm, p['rsnv'], st['sector_offsets'],
                                      header, meta, node_flags=nflags, log=log)
+    vc.record(lv, 'worlds', want, 'lcvp')
     stats.update({'lanes': len(lanes), 'landing zones': len(zones), 'boarding': len(board),
                   'seconds': round(time.time() - t0, 1)})
     log(f'{lv}: LCVP world {p["rsnv"]}: {stats["nodes"]} nodes, {len(lanes)} lanes, {len(zones)} landing zones, '

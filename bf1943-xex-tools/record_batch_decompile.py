@@ -15,7 +15,7 @@ saved=(WORK/'saved-validation.txt').read_text()
 assert saved.startswith('PASS functions=33232') and image in saved
 rows=list(csv.DictReader((WORK/'decompiled-index.tsv').open(),delimiter='\t'))
 assert len(rows)==33232
-with (WORK/'decompiled-manifest.tsv').open('w',newline='') as out:
+with (WORK/'decompiled-manifest.tsv').open('w',encoding='utf-8',newline='') as out:
     out.write('file\tsha256\n')
     for r in rows:
         if r['file']:out.write(f"{r['file']}\t{sha(WORK/'decompiled'/r['file'])}\n")

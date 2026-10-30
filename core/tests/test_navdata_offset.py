@@ -98,5 +98,25 @@ if __name__ == '__main__':
             check(len(os.listdir(d)) == n, 'a height source without contents to hash is not cached')
     finally:
         navdata._load = real_load
+    # a cell cache cut short (the tool closed while writing it): rebuilt, not an error on every later load (2026-10-30)
+    with tempfile.TemporaryDirectory() as d:
+        hpd = os.path.join(d, 'lv.hpd')
+        with open(hpd, 'wb') as fh:
+            fh.write(b'made-up')
+        cp = os.path.join(d, navdata._key(hpd) + '.npz')
+        good = os.path.join(d, 'good.npz')
+        np.savez(good, xz=np.zeros((5, 2)), y=np.zeros(5), area=np.zeros(5, np.int32), est=np.zeros(5), near=np.zeros((5, 2)))
+        with open(good, 'rb') as fh, open(cp, 'wb') as out:
+            out.write(fh.read()[:200])
+        try:
+            xz, y, area, est = navdata._cells(SimpleNamespace(sectors=[]), None, d, hpd)
+            with np.load(cp) as z:
+                again = len(z['xz'])
+            got = f'rebuilt: {len(xz)} cells, the cache readable again ({again} cells)'
+            ok = len(xz) == 0 and again == 0
+        except Exception as e:
+            got, ok = f'{type(e).__name__}: {e}', False
+        leftovers = [n for n in os.listdir(d) if n.endswith('.tmp')]
+        check(ok and not leftovers, f'a cut-short cell cache is rebuilt ({got}; temporary files {leftovers})')
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

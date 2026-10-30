@@ -150,6 +150,41 @@ def verify_bot_mode():
         check(not verify(True), 'verify: a bots build fails with a second bots patch')
 
 
+def build_bots_patch():
+    """build leaves Xenia's patches folder as verify requires (before 2026-10-30 it removed only the file under the
+    kit's bots patch name, so a renamed kit-made copy passed the build and failed its verify): a normal build no kit-made
+    bots patch under any name, a bots build only its own; other patch files stay; a file under the kit's name that the
+    kit did not make is refused with nothing changed."""
+    import bots
+    import xeniakit
+    text = bots.patch_toml()
+    with tempfile.TemporaryDirectory() as patches:
+        own, renamed, mine = (os.path.join(patches, n) for n in (bots.PATCH_FILE, 'renamed.patch.toml', 'mine.patch.toml'))
+
+        def put(path, data):
+            open(path, 'w', encoding='utf-8', newline='\n').write(data)
+        put(renamed, text)
+        put(own, text)
+        put(mine, '# the user\'s own patch\n')
+        xeniakit.install_bots_patch(patches, None)
+        check(xeniakit.kit_bots_patches(patches) == [] and os.path.isfile(mine),
+              'a normal build removes every kit-made bots patch (a renamed copy too) and keeps other patch files')
+        put(renamed, text)
+        xeniakit.install_bots_patch(patches, text)
+        check(xeniakit.kit_bots_patches(patches) == [own] and open(own, encoding='utf-8').read() == text,
+              'a bots build leaves exactly its own bots patch')
+        put(own, '# not the kit\'s\n')
+        put(renamed, text)
+        for mode in (None, text):
+            try:
+                xeniakit.install_bots_patch(patches, mode)
+                refused = False
+            except FileExistsError:
+                refused = True
+            check(refused and open(own, encoding='utf-8').read() == '# not the kit\'s\n' and os.path.isfile(renamed),
+                  f'{"a bots" if mode else "a normal"} build refuses a foreign file under the kit\'s name, changing nothing')
+
+
 def full_build():
     research = os.path.join(os.path.dirname(os.path.dirname(KIT)), 'operation-rising-sun')
     package = os.environ.get('BF1943_PACKAGE', os.path.join(research, 'Battlefield 1943 (XBLA)', '5841097E', '000D0000',
@@ -202,6 +237,7 @@ if __name__ == '__main__':
     port_edit()
     xenia_fix()
     verify_bot_mode()
+    build_bots_patch()
     if '--game' in sys.argv:
         full_build()
     print('all passed' if not failures else f'{len(failures)} failed')

@@ -67,18 +67,30 @@ class HpdFile:
 
 
 def parse(data: bytes) -> HpdFile:
-    if data[:12] != MAGIC:
+    """The file's header and sectors. Raises ValueError on a file that is not exactly what write() makes of them:
+    a truncated file, blocks that overlap, leave gaps or run past the end, or a sector mesh without its trailer."""
+    if data[:12] != MAGIC or len(data) < HEADER_SIZE:
         raise ValueError('not a Kynogon HPD file')
     header = struct.unpack_from(f'<{HEADER_WORDS}I', data, 12)
     count = header[2]
     blocks = HEADER_SIZE + count * TABLE_ENTRY.size
+    if blocks > len(data):
+        raise ValueError(f'truncated: {count} sector entries need {blocks} bytes, the file has {len(data)}')
     sectors = []
+    running = 0
     for i in range(count):
         e = TABLE_ENTRY.unpack_from(data, HEADER_SIZE + i * TABLE_ENTRY.size)
         sid, bounds, reserved, size, offset, date, time = e[0], e[1:7], e[7], e[8], e[9], e[10], e[11]
+        if offset != running:
+            raise ValueError(f'sector {i} ({sid:#x}): block at offset {offset}, expected {running} (blocks in table order)')
         start = blocks + offset
+        if size < 8 or start + size > len(data):
+            raise ValueError(f'sector {i} ({sid:#x}): block of {size} bytes at {start} runs past the end ({len(data)} bytes)')
+        running += size
         block = data[start:start + size]
         n_nodes, n_edges = struct.unpack_from('<2I', block, 0)
+        if 8 + n_nodes * NODE.size + n_edges * EDGE.size > size:
+            raise ValueError(f'sector {i} ({sid:#x}): {n_nodes} nodes and {n_edges} edges do not fit its {size}-byte block')
         pos = 8
         nodes = []
         for _ in range(n_nodes):
@@ -92,6 +104,9 @@ def parse(data: bytes) -> HpdFile:
         mesh = block[pos:]
         if not mesh.startswith(MESH_MARKER):
             raise ValueError(f'sector {i} ({sid:#x}): runtime mesh not where expected')
+        # the mesh ends with its trailer: its own offset, then 0 (mesh_layout)
+        if len(mesh) < len(MESH_MARKER) + 8 or struct.unpack_from('<2I', mesh, len(mesh) - 8) != (len(mesh) - 8, 0):
+            raise ValueError(f'sector {i} ({sid:#x}): runtime mesh has no trailer (truncated?)')
         sectors.append(Sector(sid, bounds, reserved, date, time, nodes, edges, mesh))
     if blocks + sum(len(_block(s)) for s in sectors) != len(data):
         raise ValueError('sector blocks do not cover the file')
@@ -227,7 +242,7 @@ def main(argv):
         mesh = sum(len(s.mesh) for s in f.sectors)
         dates = sorted({s.date for s in f.sectors})
         print(f'{len(f.sectors)} sectors, {nodes} graph nodes, {edges} edges, {mesh} bytes of runtime mesh; '
-              f'build dates {dates[0]}..{dates[-1]}')
+              + (f'build dates {dates[0]}..{dates[-1]}' if dates else 'no build dates (no sectors)'))
         return 0
     if cmd == 'sector':
         f = parse(open(argv[2], 'rb').read())
@@ -297,7 +312,7 @@ def main(argv):
             data = open(p, 'rb').read()
             try:
                 same = write(parse(data)) == data
-            except ValueError as ex:
+            except (ValueError, struct.error, IndexError) as ex:      # one damaged file must not end the batch
                 same = False
                 print(f'ERROR {p}: {ex}')
             ok += same

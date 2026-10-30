@@ -64,14 +64,15 @@ def main():
         'Bit 30/31 Xbox unwind semantics remain unresolved; full-body verification overrides only these exact records.',
         'Branch scan is static aligned opcode matching; candidate counts are not observed execution or complete xrefs.',
         'VMX128 words are validated by explicit encoding patterns, not proof of Ghidra semantic support.'])
-    (ROOT/'research/evidence/xex-helper-resolution.json').write_text(json.dumps(result,indent=2)+'\n')
-    with (ROOT/'work/xex-analysis/helpers.tsv').open('w') as f:
+    # CRLF, as recorded: evidence pins the bytes of the resolution, helpers.tsv and helper-entries.tsv
+    (ROOT/'research/evidence/xex-helper-resolution.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8', newline='\r\n')
+    with (ROOT/'work/xex-analysis/helpers.tsv').open('w',encoding='utf-8', newline='\r\n') as f:
         f.write('start\tend\tname\n')
         for b in blocks:f.write(f"{b['start']:08x}\t{b['end']:08x}\t{b['name']}\n")
-    with (ROOT/'work/xex-analysis/helper-entries.tsv').open('w') as f:
+    with (ROOT/'work/xex-analysis/helper-entries.tsv').open('w',encoding='utf-8', newline='\r\n') as f:
         f.write('address\tname\n')
         for e in targets.values():f.write(f"{e['address']:08x}\t{e['name']}\n")
-    with (ROOT/'work/xex-analysis/helper-branches.tsv').open('w') as f:
+    with (ROOT/'work/xex-analysis/helper-branches.tsv').open('w',encoding='utf-8', newline='\n') as f:
         f.write('address\ttarget\tlink\tname\n')
         for c in calls:f.write(f"{c['address']:08x}\t{c['target']:08x}\t{int(c['link'])}\t{c['name']}\n")
     print(result['summary'])

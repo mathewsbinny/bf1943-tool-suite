@@ -31,6 +31,8 @@ class App:
     def __init__(self, root):
         self.root = root
         self.proc = None
+        self.cleaning = False          # a cancelled step's clean-up (game, opfor.ini) still running
+        self.after_cleanup = None
         self.saved = []
         self.lines = queue.Queue()
         root.title('BC2 NavKit')
@@ -145,7 +147,7 @@ class App:
                 'check': os.path.isfile(os.path.join(out, 'check.txt'))}
         for k, m in self.marks.items():
             m['text'] = '✔' if done[k] else ''
-        inst = os.path.isfile(self.pr.pathdata(lv) + navkit.BACKUP_SUFFIX)
+        inst = self.pr.installed(lv)
         orig = self.pr.dice_pathdata(lv)
         self.installed['text'] = ('NavKit\'s path data is INSTALLED in the game for this level.' if inst else
                                   'The game uses the level\'s original path data.' if orig else
@@ -164,7 +166,7 @@ class App:
     # --- running steps ---------------------------------------------------------------------------------
     def run_step(self, cmd):
         lv = self.level.get()
-        if not lv or self.proc:
+        if not lv or self.proc or self.cleaning:
             return
         args = [PYTHON, '-u', os.path.join(HERE, 'navkit.py'), cmd, lv]
         try:
@@ -204,10 +206,19 @@ class App:
         try:
             while True:
                 item = self.lines.get_nowait()
-                if isinstance(item, tuple):
+                if isinstance(item, tuple) and item[0] == 'cleaned':
+                    self.cleaning = False
+                    self.set_busy(False, 'cancelled')
+                    self.refresh()
+                    if self.after_cleanup:
+                        self.after_cleanup()
+                        return                   # the window is gone
+                elif isinstance(item, tuple):
                     _, cmd, rc = item
                     cancelled, self.cancelled = getattr(self, 'cancelled', False), False
                     self.proc = None
+                    if self.cleaning:            # stays busy until the clean-up has finished
+                        continue
                     self.set_busy(False, f'{cmd}: ' + ('finished' if rc == 0 else 'failed - see the log above'))
                     self.refresh()
                     errors.logger().info(f'{cmd} {self.level.get()}: exit {rc}')
@@ -223,15 +234,28 @@ class App:
             pass
         self.root.after(100, self.pump)
 
-    def stop(self):
-        if not self.proc:
+    def stop(self, then=None):
+        # Cancels the running step without blocking the window: the step and everything it started (the game
+        # launcher, the game) are ended and opfor.ini restored in a worker thread; then (if given) runs after that
+        if not self.proc or self.cleaning:
             return
-        self.cancelled = True
-        self.proc.kill()
-        self.write('\ncancelled\n')
-        # a sampling run killed mid-way leaves the game open and opfor.ini changed
-        navkit.close_game()
-        navkit.recover_ini(self.pr, lambda m: self.write(m + '\n'))
+        self.cancelled, self.cleaning, self.after_cleanup = True, True, then
+        self.set_busy(True, 'Cancelling ...')
+        self.cancel['state'] = 'disabled'
+        self.write('\ncancelling ...\n')
+        threading.Thread(target=self.cleanup, args=(self.proc,), daemon=True).start()
+
+    def cleanup(self, proc):
+        try:
+            kill_tree(proc)
+            # a sampling run killed mid-way leaves the game open and opfor.ini changed
+            navkit.close_game()
+            navkit.recover_ini(self.pr, lambda m: self.lines.put(m + '\n'))
+            self.lines.put('cancelled\n')
+        except Exception as e:                   # noqa: BLE001 - said in the log; the window stays usable
+            self.lines.put(f'cancelling failed: {e}\n')
+        finally:
+            self.lines.put(('cleaned',))
 
     def set_busy(self, busy, text):
         for b in self.buttons:
@@ -253,10 +277,24 @@ class App:
         os.startfile(d)
 
     def close(self):
-        if self.proc and not messagebox.askyesno('NavKit', 'A step is still running. Cancel it and quit?'):
+        if self.cleaning:
+            self.after_cleanup = self.root.destroy
             return
-        self.stop()
+        if self.proc:
+            if not messagebox.askyesno('NavKit', 'A step is still running. Cancel it and quit?'):
+                return
+            self.stop(then=self.root.destroy)    # the window closes once the clean-up has finished
+            return
         self.root.destroy()
+
+
+def kill_tree(proc):
+    # ends a step and every process it started (taskkill /T), then the step itself if it is still there
+    if proc.poll() is None:
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if proc.poll() is None:
+        proc.kill()
 
 
 def main():

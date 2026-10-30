@@ -114,6 +114,31 @@ any other world: `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `
 checks). `tools\navexport_vehicles1943.py <level> [--sample] [--classes ...] [--check-only]` builds and checks them
 all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] hypothesis, [U] unknown.
 
+- **Stamps (2026-10-30).** The vehicle collision was made again only when its file was missing, the ground samples on
+  disk were reused whatever they were made from, the builders read the default game copy's spawns, a missing world
+  passed the check, and a level without water (sea level None) raised TypeError. Now every vehicle step stamps
+  `navkit.json` (`vehicles`: `collision`, `samples` and `worlds` per class; the preparation's digest, the game copy, the
+  class's parameters' digest, a world also the soldier world's SHA-256; `vehicleclasses1943.py`), samples or worlds
+  of another generation are made again or refused, the builders read the prepared copy, a class absent from the level
+  (its data: no spawns, no water) is stamped absent while a requested world missing fails the check, and a level
+  without water gets `soldier1943.sea_level` (10 m under its lowest terrain: no ground under water, as in its build)
+  for the ground and plane worlds and no landing-craft world. `navexport1943.py` exports only the checked build of
+  the current preparation and stamps the export (`exported`). After review: a build is told apart by its `.hpd`'s
+  SHA-256 (`build_from` `hpd_sha256`, also in `exported`; `built` keeps only the minute); the samples' parameter digest
+  covers only what the sampler reads; the soldier world and the game copy are compared by file identity; every step
+  writes `navkit.json` by a fresh read-modify-write of its own keys (`tools\navkitjson1943.py`), so the long soldier
+  steps keep the vehicle stamps written while they ran; jump links and the audit take `soldier1943.sea_level` too.
+  Second review (2026-10-30): `navkit.json` is written by replacing it whole (a temporary file) under
+  `navkit.json.lock` (30 s wait, then an error in words; a lock older than 120 s is removed as left behind), and a
+  missing or damaged file is an error in words; *prepare* empties `objects\` first; each sampling pass has an `id`
+  and the build records the ids it used (`build_from` `samples_08_id`, `samples_02_id`), so a 0.2 m pass made while
+  the build ran leaves it unstamped; the build's jump links read `samples_02.bin` only when the build uses that pass;
+  the audit (`navaudit1943.py masks` and `audit`) takes only the checked build of the current preparation and makes
+  again a mask of other samples or another build; `navexport1943.py` still exports a build whose check failed (to
+  look at) but does not stamp it as the soldier world and exits 1, and the vehicle builders refuse such a build;
+  `navkit.py` and `routecheck1943.py` parse their arguments with argparse (`--pitch=0.2`, options anywhere, unknown
+  arguments refused). Tests: `tests\test_vehicle_stages.py`, `tests\test_navkit_stages.py`, `tests\test_navkit_review.py`.
+
 - **Classes** (`tools\vehicleclasses1943.py`, which reads and prints the blueprints and collision): sizes [O] from each
   vehicle's `*_havok.res` box; slope from `WheelConfigData SlopeGripMaxAngle` (jeeps 25 deg [O]; tanks 25..52 [O],
   40 used [E]); top gear speed [O] (unit km/h [H]); entry radius and exit points [O]. Jeep: radius 1.5 m (half-width
@@ -210,7 +235,7 @@ are not checked on BF1943.
 `navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `jumplinks1943.py`,
 `navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `rsnvtool.py`, `enclosure_probe1943.py`,
 `vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`, `airnav1943.py`, `rsnvgrid1943.py`,
-`navexport_vehicles1943.py`
+`navexport_vehicles1943.py`, `navkitjson1943.py` (navkit.json and its stamps, shared by `navkit.py` and the tools)
 (`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a spot is cut off from the network). Removed from this variant:
 `graphstats`, `sample_all`, `navwater`, `navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navdiff`,
 `navparity`, `navregress`, `ordercheck` and `ladders.py`. They remain in `bf1943-auto-navkit-little-endian`, which
@@ -233,6 +258,7 @@ tools\               NavKit tools (Python 3 + numpy)
   detailed1943.py      BF1943: which sectors are built at 0.2 m (detailed.py's rule on BF1943 data)
   detailed.py          the detailed-sector rule
   soldier1943.py       BF1943's soldier and the NavKit settings that follow from it
+  navkitjson1943.py    a level's navkit.json (settings and stamps): read, fresh read-modify-write; SHA-256, file identity
   navwalk.py           walkability rules
   navbuild.py          the generator: samples + level objects -> a navigation file (pathdata.hpd layout)
   navedits.py          walkability edits as generator inputs

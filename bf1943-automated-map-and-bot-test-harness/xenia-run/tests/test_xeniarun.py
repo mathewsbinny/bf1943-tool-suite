@@ -43,6 +43,47 @@ i> F80000C0 (DbgPrint) rs-bots: host d997e0b0 soldier position {bits(134.33, 218
 i> 0000733C Cheap-skate exit!
 """
 
+def crash_attribution(d):
+    """Which crash records are this session's, and an event log that cannot be read (PowerShell stood in for)."""
+    import contextlib
+    import datetime
+    import io
+    import json
+    import types
+    p = os.path.join(d, 'xenia.log')
+    real_run = xeniarun.subprocess.run
+
+    def run(log_text, stdout='', code=0, started=None):
+        open(p, 'w', encoding='utf-8').write(log_text)
+        session = os.path.join(d, 'session.json')
+        if started:
+            json.dump(dict(started=started), open(session, 'w', encoding='utf-8'))
+        elif os.path.exists(session):
+            os.remove(session)
+        xeniarun.subprocess.run = lambda *a, **k: types.SimpleNamespace(stdout=stdout, stderr='boom', returncode=code)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = xeniarun.main(['xeniarun.py', '--log', p])
+            return rc, out.getvalue()
+        finally:
+            xeniarun.subprocess.run = real_run
+    open(p, 'w', encoding='utf-8').write(LOG)
+    end = datetime.datetime.fromtimestamp(os.path.getmtime(p))
+    at = lambda minutes: (end + datetime.timedelta(minutes=minutes)).strftime('%Y-%m-%dT%H:%M:%S')
+    crash = lambda minutes: f'{at(minutes)}|xenia_canary_netfix.exe|xenia_canary_netfix.exe|0x25338a|0xc0000005\n'
+    crashed_log = LOG.replace('i> 0000733C Cheap-skate exit!\n', '')
+    rc, text = run(LOG, crash(-3))
+    check(rc == 0 and 'CRASH' not in text and "another session's crash" in text,
+          'a crash 3 minutes before a session that exited normally is another session\'s (exit 0)')
+    rc, text = run(crashed_log, crash(0))
+    check(rc == 1 and 'CRASH' in text, 'a session without the normal exit and a crash at its end: exit 1')
+    rc, text = run(crashed_log, crash(-3), started=at(-1))
+    check(rc == 0 and 'CRASH' not in text, 'a crash before the session\'s start (session.json) is not counted')
+    rc, text = run(LOG, '', code=3)
+    check(rc == 2 and 'UNKNOWN' in text, 'an event log that cannot be read: crash status unknown, exit 2 (not 0)')
+
+
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'xenia.log')
@@ -77,5 +118,6 @@ if __name__ == '__main__':
                       f'({r.get("malformed", r.get("error"))})')
         r.update(log_time='-', crashes=[], normal_exit=False)
         check('cut short or garbled (skipped): 1' in xeniarun.report(r), 'the report counts the malformed reports')
+        crash_attribution(d)
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

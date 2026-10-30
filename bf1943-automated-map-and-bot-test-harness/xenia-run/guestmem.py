@@ -26,7 +26,8 @@ addresses Xenia reserves at (1 << n for n = 32..46) and then every mapped region
 guest's 0x82000000 starts with MZ. Guest memory is big-endian.
 
 Mailbox v2 (bf1943-xenia-kit/bots.py, its MBOX_MAGIC ... BLOCK_SIZE names): the bot code allocates one block per
-match and puts its address in its data area. Each bot has a state record the guest writes every tick and a command
+match and puts its address in its data area. Each bot has a state record the guest writes every tick (read whole
+under its two-word lock: the closing tick, the record, the opening tick, taken when the two agree) and a command
 record the host writes under a sequence lock (C_SEQ odd while it is written, even and new once it is whole; the
 guest takes only a whole record). A command counts only while its stamp (the tick it answered) is at most STALE
 ticks old, so `input` and `throttle` keep rewriting it while they hold, and the bots stand once they stop; they
@@ -201,26 +202,49 @@ def words(g, address, count):
     return struct.unpack(f'>{count}I', g.read(address, 4 * count))
 
 
+def record_words(g, address, first, last, count):
+    """A state or flag record's count words, read whole under its two-word lock (bots.py; bots.host_record): the
+    closing tick (last), the words, then the opening tick (first), each read after the one before; whole when the two
+    ticks are the same, else tried again, bots.TRIES times in all. (words, torn): torn when no read was whole (the
+    last read's words, which may mix two ticks). The two ticks of one copy are not compared: a copy can take the old
+    opening tick, new fields and the old closing tick."""
+    for _ in range(bots.TRIES):
+        end = g.u32(address + last)
+        w = words(g, address, count)
+        if g.u32(address + first) == end:
+            return w, False
+    return w, True
+
+
 def bot_record(g, block, k):
-    """Slot k's state and command records (None fields while the guest was writing it: a torn read)."""
-    w = words(g, block + bots.BOT0 + bots.BOT_SIZE * k, bots.BOT_SIZE // 4)
+    """Slot k's state record (read whole, record_words: torn when it could not be) and command record."""
+    at = block + bots.BOT0 + bots.BOT_SIZE * k
+    w, torn = record_words(g, at, bots.R_SEQ, bots.R_SEQ_END, bots.R_SEQ_END // 4 + 1)
+    w += words(g, at + bots.C_STAMP, (bots.BOT_SIZE - bots.C_STAMP) // 4)
     r = {name: w[getattr(bots, name) // 4] for name in ('R_SEQ', 'R_PLAYER', 'R_SOLDIER', 'R_TEAM', 'R_X', 'R_Y', 'R_Z',
                                                         'R_SEQ_END', 'C_STAMP', 'C_THROTTLE', 'C_STRAFE', 'C_YAW',
                                                         'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO')}
-    r['torn'] = r['R_SEQ'] != r['R_SEQ_END']
+    r['torn'] = torn
     return r
 
 
 def flag_records(g, block):
+    """The capture points' records, each read whole under its own two ticks. The header's count (H_FLAGS) is not
+    locked with them: a record whose tick is older than the newest one read is left from a tick that found more capture
+    points (or the count was read mid-update), and is marked stale."""
     n = min(g.u32(block + bots.H_FLAGS), bots.MAX_FLAGS)
     out = []
     for f in range(n):
-        w = words(g, block + bots.FLAG0 + bots.FLAG_SIZE * f, bots.FLAG_SIZE // 4)
+        w, torn = record_words(g, block + bots.FLAG0 + bots.FLAG_SIZE * f, bots.F_SEQ, bots.F_SEQ_END,
+                               bots.FLAG_SIZE // 4)
         get = lambda name: w[getattr(bots, name) // 4]
         out.append(dict(index=f, entity=f'{get("F_ENTITY"):08x}', owner=get('F_OWNER'),
                         control=round(f32(get('F_CONTROL')), 1), enabled=get('F_ENABLED'),
                         radius=round(f32(get('F_RADIUS')), 2), position=[round(f32(get(n)), 2) for n in ('F_X', 'F_Y', 'F_Z')],
-                        torn=get('F_SEQ') != get('F_SEQ_END')))
+                        tick=get('F_SEQ'), torn=torn))
+    newest = max((r['tick'] for r in out if not r['torn']), default=0)
+    for r in out:
+        r['stale'] = not r['torn'] and r['tick'] < newest
     return out
 
 
@@ -276,7 +300,7 @@ def show(s, only=None):
     for f in s['flags'] if only is None else []:
         x, y, z = f['position']
         print(f'  flag {f["index"]}  owner {f["owner"]}  control {f["control"]:5.1f}  radius {f["radius"]:g}  '
-              f'enabled {f["enabled"]}  at {x:9.2f} {y:8.2f} {z:9.2f}{"  (torn)" if f["torn"] else ""}')
+              f'enabled {f["enabled"]}  at {x:9.2f} {y:8.2f} {z:9.2f}{"  (torn)" if f["torn"] else "  (stale)" if f.get("stale") else ""}')
     for b in s['bots']:
         if only is not None and b['slot'] != only:
             continue
@@ -366,7 +390,7 @@ def main(argv, guest=None, sleep=time.sleep):
                 break
             sleep(every)
         if '--json' in opts:
-            with open(opts['--json'], 'w', encoding='utf-8') as f:
+            with open(opts['--json'], 'w', encoding='utf-8', newline='\n') as f:
                 json.dump(dict(pid=getattr(g, 'pid', None), exe=getattr(g, 'exe', None), base=f'{g.base:#x}',
                                snapshots=shots), f, indent=1)
         return 0

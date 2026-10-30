@@ -46,7 +46,7 @@ def main():
           'Raw memory image import does not yet model PE section permissions, imports, relocations or VMX128.',
           'ASCII hits are leads, not implemented-feature evidence.'])
     output = ROOT / 'research/evidence/decoded-xex-pilot.json'
-    output.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+    output.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8', newline='\n')
     print(json.dumps({k:report[k] for k in ('image_sha256','original_decode_identical','pe_machine')}))
     print(f'{len(sections)} sections; {len(leads)} ASCII leads; {output}')
 

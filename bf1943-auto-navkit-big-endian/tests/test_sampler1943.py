@@ -61,7 +61,8 @@ def level(d):
     ramp = np.array([[c[0], c[1], c[2]], [c[0], c[2], c[3]]], np.float32)
     buried = box(50.0, 54.0, GROUND - 2.3, GROUND - 2.0, 10.0, 14.0)      # a slab 2 m under the terrain (foundations)
     np.save(os.path.join(d, 'all_tris.npy'), np.concatenate([wall, platform, ramp, buried]))
-    json.dump([[20.0, GROUND, 20.0]], open(os.path.join(d, 'soldier_spawns.json'), 'w'))
+    with open(os.path.join(d, 'soldier_spawns.json'), 'w', encoding='utf-8', newline='\n') as f:
+        json.dump([[20.0, GROUND, 20.0]], f)
     heightfield(os.path.join(d, 'hf.res'))
 
 

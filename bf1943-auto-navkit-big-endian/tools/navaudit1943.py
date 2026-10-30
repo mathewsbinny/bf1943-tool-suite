@@ -5,7 +5,10 @@ samples it was built from. Nothing here changes a build; every input is hashed i
   navaudit1943.py masks <level> [--variants base,headroom,lips,water,ladders] [--stage normal|detailed|both]
       the build's walkable surfaces, recomputed exactly as navbuild.stage computes them (the check: the base run's
       count equals build.log's "walkable kept"), and once per rule with that rule turned off - the surfaces each rule
-      changed. Written to work/levels/<level>/audit/masks/<stage>_<variant>.npz. One variant (both stages, most of it
+      changed. Written to work/levels/<level>/audit/masks/<stage>_<variant>.npz, with the SHA-256 of the samples and
+      the build they were made from: a mask of other samples or another build is made again (and the audit refuses
+      it), and only the checked build of the level's current preparation is audited (navkitjson1943.build_refusal).
+      The detailed stage only when the build used a current 0.2 m pass. One variant (both stages, most of it
       the detailed stage) takes about 6 min on Wake Island and 2-3 GB of memory, all five about 30 min per level:
       run them one at a time.
   navaudit1943.py audit <level> [--json out.json]
@@ -16,7 +19,6 @@ Settings the audit adds (not in the game's data, not in NavKit): OBJECTIVE_REACH
 and navaudit1943_checks.py's BOAT_REACH, VEHICLE_REACH, MOUNT_DROP, AIRBORNE and USABLE_SHARE.
 """
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -28,6 +30,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-spawn-map'), os.path.join(SUITE, 'bf1943-fbrb-tool')]
+import navkitjson1943 as nj  # noqa: E402
 import navsample  # noqa: E402
 import soldier1943  # noqa: E402
 from bfbc2core import game1943  # noqa: E402
@@ -46,15 +49,7 @@ VARIANTS = {
 }
 
 
-def sha256(path, block=1 << 22):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        while True:
-            b = f.read(block)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
+sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
 
 
 def load_samples(path):
@@ -97,6 +92,50 @@ def load_samples(path):
                              normal, flags, None)
 
 
+def current_build(lv):
+    """navkit.json, refused (NavKitError) unless the build on disk is the checked build of the current preparation
+    (2026-10-30 review: the audit and its masks read whatever <level>.hpd was on disk)."""
+    st = nj.read(lv)
+    why = nj.build_refusal(st, lv, level_paths(lv)['hpd'] if os.path.isfile(level_paths(lv)['hpd']) else None)
+    if why:
+        raise nj.NavKitError(why)
+    if not os.path.isfile(level_paths(lv)['hpd']):
+        raise nj.NavKitError(f'{lv}: no build (missing {level_paths(lv)["hpd"]}): navkit.py build {lv}')
+    return st
+
+
+def detailed_current(st):
+    """Whether the build was made from a current 0.2 m pass (navkit.json's build_from names one)."""
+    return bool((st.get('build_from') or {}).get('samples_02_id') or (st.get('build_from') or {}).get('samples_02'))
+
+
+class Hashes:
+    """The SHA-256 of a level's samples and build, each read once."""
+
+    def __init__(self, lv):
+        self.p, self.done = level_paths(lv), {}
+
+    def __call__(self, name):
+        path = self.p['hpd'] if name == 'hpd' else os.path.join(self.p['samples'], name)
+        if path not in self.done:
+            self.done[path] = sha256(path)
+        return self.done[path]
+
+
+def mask_stale(path, src, hashes):
+    """Why a mask file is not of the current samples and build (None when it is)."""
+    try:
+        z = np.load(path)
+        have = (str(z['samples_sha256']), str(z['hpd_sha256']))
+    except (OSError, KeyError, ValueError) as e:
+        return f'{path}: unreadable ({e})'
+    if have[0] != hashes(src):
+        return f'{path}: made from other samples than {src}'
+    if have[1] != hashes('hpd'):
+        return f'{path}: made for another build'
+    return None
+
+
 def level_paths(lv):
     root = game1943.level_work(lv)
     return {'root': root, 'objects': os.path.join(root, 'objects'), 'samples': os.path.join(root, 'samples'),
@@ -122,7 +161,7 @@ def stage_keep(lv, which, variant='base', normal_keep=None, log=print):
     import navwalk
     from bfbc2core import water as water_mod
     p = level_paths(lv)
-    st = json.load(open(p['settings'], encoding='utf-8'))
+    st = nj.read(lv)
     o, sm = p['objects'], p['samples']
     soldier1943.configure()
     saved = []
@@ -135,15 +174,18 @@ def stage_keep(lv, which, variant='base', normal_keep=None, log=print):
         navbuild.set_pitch(0.8 if which == 'normal' else navbuild.DETAILED_PITCH)
         s = load_samples(os.path.join(sm, 'samples.bin' if which == 'normal' else 'samples_02.bin'))
         hi = load_samples(os.path.join(sm, 'samples_high.bin' if which == 'normal' else 'samples_02_high.bin'))
-        seeds = json.load(open(os.path.join(o, 'soldier_spawns.json')))
-        ladders = json.load(open(os.path.join(o, 'ladders.json')))
+        with open(os.path.join(o, 'soldier_spawns.json'), encoding='utf-8') as f:
+            seeds = json.load(f)
+        with open(os.path.join(o, 'ladders.json'), encoding='utf-8') as f:
+            ladders = json.load(f)
         jp = os.path.join(p['navkit'], 'jump_links.json')            # navkit.py build adds them (jumplinks1943)
         if os.path.isfile(jp):
-            ladders += json.load(open(jp, encoding='utf-8'))
+            with open(jp, encoding='utf-8') as f:
+                ladders += json.load(f)
         if 'ladders' in opts:
             ladders = opts['ladders']
         wpath = os.path.join(o, 'water_mesh.res')
-        mesh = water_mod.read_mesh(wpath) if os.path.isfile(wpath) else None
+        mesh = water_mod.read_mesh(wpath) if soldier1943.has_water(st) and os.path.isfile(wpath) else None
         if 'water' in opts:
             mesh = None
         hand = {}
@@ -179,21 +221,34 @@ def stage_keep(lv, which, variant='base', normal_keep=None, log=print):
 
 
 def masks(lv, variants, stages, log=print):
+    """The masks of the checked build of the current preparation; a mask file there of other samples or another build
+    is made again (2026-10-30 review: any file there was kept)."""
+    st = current_build(lv)
     p = level_paths(lv)
     out = os.path.join(p['audit'], 'masks')
     os.makedirs(out, exist_ok=True)
     sm = p['samples']
+    hashes = Hashes(lv)
+    if 'detailed' in stages and not detailed_current(st):
+        log(f'{lv}: the build has no 0.2 m samples of this preparation (its detailed sectors are built at 0.8 m): no '
+            f'detailed masks')
+        stages = [w for w in stages if w != 'detailed']
     normal_base = None
     for which in stages:
+        src = 'samples.bin' if which == 'normal' else 'samples_02.bin'
         for v in variants:
             path = os.path.join(out, f'{which}_{v}.npz')
             if os.path.isfile(path):
-                log(f'{path}: kept from an earlier run')
-                continue
+                why = mask_stale(path, src, hashes)
+                if why is None:
+                    log(f'{path}: kept from an earlier run (of these samples and this build)')
+                    continue
+                log(f'{why}: made again')
             normal = None
             if which == 'detailed':
                 if normal_base is None:
-                    z = np.load(os.path.join(out, 'normal_base.npz')) if os.path.isfile(os.path.join(out, 'normal_base.npz')) else None
+                    bp = os.path.join(out, 'normal_base.npz')
+                    z = np.load(bp) if os.path.isfile(bp) and mask_stale(bp, 'samples.bin', hashes) is None else None
                     sa = load_samples(os.path.join(sm, 'samples.bin'))
                     ka = z['keep'] if z is not None else stage_keep(lv, 'normal', 'base', log=log)[1]
                     normal_base = (sa, ka)
@@ -201,9 +256,8 @@ def masks(lv, variants, stages, log=print):
             s, keep = stage_keep(lv, which, v, normal_keep=normal, log=log)
             if which == 'normal' and v == 'base':
                 normal_base = (s, keep)
-            src = 'samples.bin' if which == 'normal' else 'samples_02.bin'
             np.savez_compressed(path, keep=keep, surfaces=len(s.y), samples=src,
-                                samples_sha256=sha256(os.path.join(sm, src)), hpd_sha256=sha256(p['hpd']))
+                                samples_sha256=hashes(src), hpd_sha256=hashes('hpd'))
             log(f'wrote {path}')
             del s, keep
 

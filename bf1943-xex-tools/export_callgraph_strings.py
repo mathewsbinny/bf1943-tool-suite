@@ -41,7 +41,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
-VERSION = '1.1'
+VERSION = '1.2'   # 1.2 (2026-10-30): float stores, dcbz and VMX128 stores drop the remembered slots they may overwrite
 ROOT = research_root()
 WORK = ROOT / 'work/xex-analysis'
 OUT = WORK / 'callgraph'
@@ -94,10 +94,16 @@ def simm16(w):
 
 
 LOGICAL31 = {28, 60, 124, 284, 316, 412, 444, 476, 24, 536, 792, 824, 27, 539, 794, 26, 58, 954, 922, 986, 413}
-STORE31 = {151, 215, 407, 149, 662, 918, 660, 150, 214, 663, 727, 983, 231, 487, 135, 167, 199, 647, 679, 903, 935, 725, 661}
+# stores (and dcbz / dcbz128, 1014, which zero a cache block): remembered slots are dropped
+STORE31 = {151, 215, 407, 149, 662, 918, 660, 150, 214, 663, 727, 983, 231, 487, 135, 167, 199, 647, 679, 903, 935, 725, 661,
+           1014}
 STORE31_UPDATE = {183, 247, 439, 181, 695, 759}
-NOWRITE31 = {0, 32, 4, 68, 86, 54, 278, 246, 1014, 470, 982, 598, 854, 144, 146, 178, 467, 342, 374, 822,
+NOWRITE31 = {0, 32, 4, 68, 86, 54, 278, 246, 470, 982, 598, 854, 144, 146, 178, 467, 342, 374, 822,
              535, 599, 103, 359, 7, 39, 71, 6, 38, 519, 551, 775, 807}
+# VMX128 stores (opcode 4, VX128_1 under mask 0xfc0007f3: stvewx128, stvx128, stvxl128, stvlx128, stvrx128, stvlxl128,
+# stvrxl128): they write memory through rA + rB, so remembered slots are dropped
+VX128_STORE_MASK = 0xfc0007f3
+VX128_STORES = {0x10000183, 0x100001c3, 0x100003c3, 0x10000503, 0x10000543, 0x10000703, 0x10000743}
 LOAD31_UPDATE = {55, 119, 311, 375, 53, 373, 567, 631}
 LOAD31_WORD = {23: 4, 87: 1, 279: 2, 343: 2, 21: 8, 341: 4, 55: 4, 119: 1, 311: 2, 375: 2, 53: 8, 373: 4}
 DLOAD = {32: 4, 33: 4, 34: 1, 35: 1, 40: 2, 41: 2, 42: 2, 43: 2}
@@ -359,12 +365,16 @@ class Analysis:
                 st['mem'] = {}
             elif op in FPLOADSTORE:
                 base = 0 if ra == 0 else regs[ra]
-                if isinstance(base, int) and emit:
-                    a = (base + simm16(w)) & M32
-                    if BASE <= a < self.img.end:
-                        self.refs.append((pc, fn.start, a, 'read' if op < 52 else 'write'))
-                if op >= 52:
-                    st['mem'] = {k: v for k, v in st['mem'].items() if k[0] == (base[0] if isinstance(base, tuple) else 'abs')}
+                if op < 52:
+                    if isinstance(base, int) and emit:
+                        a = (base + simm16(w)) & M32
+                        if BASE <= a < self.img.end:
+                            self.refs.append((pc, fn.start, a, 'read'))
+                else:       # a float store: no value we follow, but it overwrites (and may alias) remembered slots
+                    r = len(self.refs)
+                    self.store(st, base, simm16(w), 4 if op in (52, 53) else 8, None, pc, fn, emit)
+                    if not emit:
+                        del self.refs[r:]
                 if op & 1 and ra:
                     bv = regs[ra]
                     regs[ra] = (bv + simm16(w)) & M32 if isinstance(bv, int) else (bv[0], bv[1] + simm16(w))
@@ -480,6 +490,8 @@ class Analysis:
                         if always:
                             falls = False
                             break
+            elif op == 4 and (w & VX128_STORE_MASK) in VX128_STORES:      # a VMX128 store: memory changed
+                st['mem'] = {}
             # opcodes 4/5/6 (vector), 59/63 (FP), 17 (sc), 2/3 (traps), 10/11 (compares) write no GPR we follow.
         if falls and e < len(words):
             succs.append(e)

@@ -12,8 +12,12 @@ the suite's `tests\test_bf1943_tools.py dbxedit` repeats it on 1,133 of them):
   and with `--bundle` on each of them every reference into its bundles holds its declared class and the static cull
   trees match the level (`check --bundle`);
 - broken copies of Wake Island (25 of the level partition, 5 of its exclusive cull tree) fail with their rule's
-  message, one rule each; `fixslots` repairs swapped cull slots byte for byte (2026-10-26,
-  `tests\test_levelcheck1943.py`).
+  message and nothing unrelated: a break that necessarily breaks another rule too (a member's `FirstPhysicsPart` moves
+  its `PhysicsPartCount` span; a removed terrain is unlisted) reports both, and the test names each such second rule
+  (2026-10-30; until then the test checked only that the rule's line was there); `fixslots` repairs swapped cull
+  slots byte for byte (`tests\test_levelcheck1943.py`);
+- after the reader was made as strict as core `dbx.py` (2026-10-30): all 5,518 distinct partitions of the five
+  levels' bundles convert to the same XML as `dbx.py` and as the earlier DbxEdit, and round-trip byte for byte.
 
 **What a clean check means:** the level breaks none of the rules that every shipped BF1943 level keeps. The rules
 come from the game's data, not from crashes. No broken level has been run in the game, so what the game does with a
@@ -25,6 +29,13 @@ level unlike every shipped one.
 2. Edit them with DbxEdit (commands or the window), or convert to XML and back.
 3. Put them back into a copy of the bundle: `python ..\bf1943-fbrb-tool\fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> ...`.
    The game folder is only read; the copy goes elsewhere.
+
+**The game folder is never written.** DbxEdit, DbxEditGUI and LevelDiff refuse to write into the BF1943 game folder
+(`BF1943_GAME`, else the Xenia kit's `dist\xenon`, as core `game1943.find_game` finds it), however the path is cased
+and through any link or junction, as `fbrb1943.py` does: `xml` of a partition still in the game folder fails (its
+`.xml` would go beside it), and an output there is refused. Every file is written beside its target and moved into
+place, so a failed write leaves the old file and a hard link at the output is replaced, never written through
+(writing over the input is safe: it was read whole).
 
 DbxEdit runs on .NET Framework, which cannot open paths longer than 260 characters. BF1943's partition names are
 long: extract into a short folder (for example `C:\dbx`).
@@ -93,8 +104,11 @@ Start `DbxEditGUI.exe` and open a `.dbx` file (File > Open, drop it on the windo
   results appear in the bottom pane; double-click a line to go to its instance. The window's check has no
   `--bundle` folders: the checks of references into other files and of the cull trees need the command line.
 - **Help menu:** FORMAT.md (F1) and this README.
-- **File menu:** save (the first save keeps the original as `<name>.dbx.bak`), export or import XML, and
-  **Save edit script**, which writes your edits as DbxEdit commands to replay on another file.
+- **File menu:** save (the first save over the opened file, however its path is spelled, keeps the original as
+  `<name>.dbx.bak`; nothing is saved into the game folder), export or import XML, and **Save edit script**, which
+  writes your edits as DbxEdit commands to replay on another file: a value or a reference of an instance's own field
+  becomes `setfield`, any other edit a `#` comment saying it has no command form.
+- **Undo** past a save marks the document modified again, so closing asks to save it.
 
 ## Convert to XML and back
 
@@ -103,11 +117,13 @@ DbxEdit xml <file.dbx | folder> [more ...]
 DbxEdit import <file.xml> <out.dbx> [--like <original.dbx>] [--types <file.dbx | folder>]...
 ```
 
-`xml` converts every binary `.dbx` file it finds (folders are searched recursively) and skips plain-XML
-ones. Empty files are skipped and counted, not reported as errors: they are bundles' `*deleted*` entries,
-which OPFOR's BFBC2 FbrbTool versions before 2026-10-16 unpacked as zero-byte files (current ones list them in
-`fbrb.manifest` only). `roundtrip` counts them the same way. A file that cannot be converted (damaged) is named
-on stderr and counted as FAILED; the exit code is then 1 (0 when every binary file converted).
+`xml` converts every binary `.dbx` file it finds (folders are searched recursively, for the extension `.dbx`
+exactly) and skips plain-XML ones. Empty files are skipped and counted, not reported as errors: they are bundles'
+`*deleted*` entries, which OPFOR's BFBC2 FbrbTool versions before 2026-10-16 unpacked as zero-byte files (current ones
+list them in `fbrb.manifest` only). `roundtrip` counts them the same way. A file that cannot be converted is named
+on stderr and counted as FAILED; the exit code is then 1 (0 when every binary file converted). DbxEdit refuses
+exactly the files core `dbx.py` refuses (FORMAT.md section 2: a string, a number list or a container running past
+its end, numbers 0 or 1 byte wide, ...), and gives the same XML on every other one.
 
 The XML doesn't record every type. For example, `1` may be the integer 1 or the decimal 1.0. So `import`
 takes the types from **the original file**: `--like`, or `<name>.dbx` next to the XML.
@@ -268,7 +284,8 @@ Two options add more checks (both rule sets):
   class, and the level against its static cull trees: unpack the level's own bundle too). BF1943's shipped levels name a few partitions that are in none of their bundles (Wake Island: two minimap
   meshes); they are warnings.
 
-The exit code is 1 if there are errors.
+The exit code is 0 with no errors, 1 with errors, 2 when the check could not run (bad usage, a file damaged, missing
+or not binary).
 
 ```
 DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>
@@ -278,7 +295,8 @@ DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>
 to. Objects are matched by GUID, else by blueprint and position, else by the nearest unused object of the
 same blueprint within 50 m. Objects with no match get slot 0 (outside the tree). It works on BF1943 levels as on
 BFBC2's: on a copy of Wake Island with two placed objects' slots swapped it gives the original back byte for byte.
-It changes placed objects only; the model groups' instance slots are left as they are.
+It changes placed objects only; the model groups' instance slots are left as they are. Each object of the cull trees'
+level gives its slot once: a copy of an object at the same place under another GUID gets slot 0, not the original's.
 
 ## Edit with commands
 
@@ -292,23 +310,24 @@ Commands (a `@file` argument reads more commands from a file, one per line; `#` 
 | Command | What it does |
 |---|---|
 | `replace=<old>\|<new>` | every string exactly `<old>` becomes `<new>` (re-points references) |
-| `replaceprefix=<old>\|<new>[\|<except>...]` | strings starting with `<old>` get `<new>` as prefix |
-| `drop=<guid>` | removes that instance; array items pointing to it go, other references become `null` |
+| `replaceprefix=<old>\|<new>[\|<except>...]` | strings starting with `<old>` get `<new>` as prefix (fails when none does) |
+| `drop=<guid>` | removes that instance; array items pointing to it go, other references to it become `null` (references `<partition>/<guid>` into other files are left) |
 | `dropfield=<name>` | removes every field called `<name>` |
 | `graft=<src.dbx>\|<guid>[\|<before guid>]` | copies an instance from another file, with every instance of that file it references |
 | `copyfield=<src.dbx>\|<src guid>\|<field>\|<guid>` | copies one field (arrays included) from another file's instance |
 | `additem=<guid>\|<array>\|<ref>[\|<before ref>]` | adds a reference to an array field of an instance |
-| `setfield=<guid>\|<field>\|<value>` | sets a text field or a single 4-byte number of an instance (not a reference - see below) |
+| `setfield=<guid>\|<field>\|<value>` | sets a field of an instance, typed as the stored value (text, numbers, an integer or a decimal, bool / byte), or a reference field's reference |
 | `set=<field>\|<true\|false\|0-255>` | sets every bool / byte field called `<field>` |
 | `partguid=<guid>` | sets the partition's own GUID (for a copy under a new name) |
 
-The exact rules for each command are in [FORMAT.md](FORMAT.md).
+The exact rules for each command are in [FORMAT.md](FORMAT.md). Exit codes: 0 written; 1 a command found nothing to
+change (nothing is written); 2 a command without its arguments (its usage is printed) or an edit that could not run.
+An empty `<old>` in `replace` or `replaceprefix` is refused.
 
-**Known limitation - `setfield` on a reference field.** It reports `setfield: 1 field(s)` but writes the value as
-the element's text and leaves the reference unchanged: after
-`DbxEdit edit in.dbx out.dbx "setfield=<guid>|Template|objects/x/y/<guid>"`, `DbxEdit xml out.dbx` shows
-`<field name="Template" ref="<old ref>">objects/x/y/<guid></field>`. To change a reference, use
-`copyfield=<src.dbx>|<src guid>|<field>|<guid>` from an instance that already holds the wanted one.
+**`setfield` before 2026-10-30** wrote any value without a `.` as an integer: `setfield=<guid>|Scale|2` stored the
+integer 2 (a denormal 2.8e-45 as a decimal), which the XML shows as `2` like the decimal 2.0, and DbxEditGUI's edit
+scripts record whole decimals that way. It also wrote a reference field's value as text and left the reference.
+Both now follow the stored value; a script made earlier can be replayed with the current DbxEdit.
 
 **Known limitation - `import` gives new fields no type from `--types`.** A field the reference does not match
 (for example in an instance with a new guid) is typed by guess even when the same field exists in the `--types`
@@ -323,16 +342,30 @@ now-unused strings stay in the file.
 
 DbxEdit, DbxEditGUI and LevelDiff (which builds on `DbxEdit.cs`) keep a log in
 `%LOCALAPPDATA%\bf1943-tool-suite\logs\` (`ToolLog` in `DbxEdit.cs`), as all the suite's tools do. An unexpected
-error is explained - the likely cause (a file in use, read-only, missing, not a binary .dbx or damaged, out of
-memory) and what to do - with the log's path: on the command line with exit code 1, in DbxEditGUI in a window
-(the window keeps running). Files skipped in a folder conversion are logged as warnings.
+error is explained - the likely cause (a file in use, read-only, missing, not a binary .dbx or damaged, a write into
+the game folder refused, out of memory) and what to do - with the log's path: on the command line with exit code 2
+(1 is a result: a failed edit, a level's errors, LevelDiff's differences), in DbxEditGUI in a window (the window
+keeps running). Files skipped in a folder conversion are logged as warnings.
+
+The commands that walk the tree recursively (`edit`, `import`, `check`, `fixslots`, the window, LevelDiff) take files
+nested up to 1,000 containers deep and refuse deeper ones by name; `xml` and `roundtrip` take any nesting. Every game
+file is far below the limit.
 
 ## Tests
 
 `python -B tests\test_csharp_tools.py` (quick tier, no game data): core `csbuild.py` rebuilds a (fake) exe older than
-a compiled-in source or built from other sources, and the hub builds through it; DbxEdit.exe and LevelDiff.exe are
-built from the current sources; `xml` exits 0 on sound files and 1 with a damaged one; LevelDiff reports a list
-only reordered even when an earlier list of the same instance gained an entry.
+a compiled-in source or built from other sources, and the hub builds through it; DbxEdit.exe, DbxEditGUI.exe and
+LevelDiff.exe are built from the current sources; `xml` exits 0 on sound files and 1 with a damaged one; LevelDiff
+reports a list only reordered even when an earlier list of the same instance gained an entry. Then the regression
+checks of `tests\csharp_regressions.py` (its docstring lists them; each failed on the code before 2026-10-30):
+- the reader against core `dbx.py`'s on its own made-up file (every truncated copy, every damage it refuses) and
+  deep nesting;
+- the write guards with a made-up game folder (`BF1943_GAME`): cased otherwise, through a junction, a hard link, a
+  failed write, `.dbxold`;
+- the edit commands (`setfield` types, empty or missing arguments, `drop`);
+- the level check (a 100,000-node cull tree, the tiling without `ReferencedObject`, `--slots-from`) and `fixslots`;
+- LevelDiff (partition and instance attributes, an integer turned decimal, exit codes, GUID pairing, a linear `--all`);
+- DbxEditGUI through reflection (no window is shown): open, save, undo, the game folder, the edit script's commands.
 
 `python -B ..\tests\test_bf1943_tools.py dbxedit` (in the `bf1943` tier of `run_tests.py`; it builds through
 `csbuild.py`): DbxEdit on Wake Island's partitions, as above, and LevelDiff on a partition against
@@ -341,7 +374,8 @@ itself. BF1943's `.dbx` partitions are also checked by the Python reader (the su
 `python -B tests\test_levelcheck1943.py` (also in the `bf1943` tier; it builds `DbxEdit.exe` through `csbuild.py`
 when it is not from the current code): the level check on all five shipped level partitions (BF1943's rules from the file, nothing
 reported), each with `--bundle`, and 25 broken copies of Wake Island (plus 5 of its exclusive cull tree) - made with `xml`, a text change and
-`import` in a temporary folder - each failing with its rule's message (errors exit 1, warnings 0); `--rules bfbc2` and
+`import` in a temporary folder - each failing with its rule's message and no other line but the second rules the break
+necessarily breaks, which the test names (errors exit 1, warnings 0); `--rules bfbc2` and
 a LevelData with BFBC2's fields choosing BFBC2's rules; `--slots-from` and `fixslots` on swapped cull slots.
 DbxEdit's own tests were BFBC2's (its unit tests, the PC game's files and their fingerprints) and were removed with
 the suite's other BFBC2 tests; they are in OPFOR's `bfbc2-tool-suite` and in this repository's history.

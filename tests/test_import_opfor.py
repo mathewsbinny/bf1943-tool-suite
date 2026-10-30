@@ -2,7 +2,8 @@ r"""tools\import_opfor.py --update on made-up trees only: a temporary git reposi
 a temporary folder for this suite (the module's SOURCE_SUITE, SUITE and MANIFEST are pointed at them; the real
 suites are never read or written). An updated single-file import (run_tests.py, and a renamed one) replaces that
 file, not <file>\<file>; a folder import updates the changed file in the folder; a file changed here too is left
-as a conflict.
+as a conflict. The command line on runs that cannot finish (partial_runs): checked before anything is written, and
+what a run stopped part-way wrote is recorded (marked incomplete).
 
   python -B tests\test_import_opfor.py
 """
@@ -40,6 +41,81 @@ def write(path, data):
 
 def record(rel, data):
     return {'path': rel, 'bytes': len(data), 'git_blob': import_opfor.blob_id(data), 'sha256': hashlib.sha256(data).hexdigest()}
+
+
+def partial_runs(tmp, src):
+    """The tool's command line (a copy of it in a made-up suite, so its SUITE and MANIFEST are there) on runs that
+    cannot finish: a plan whose later item has no source, and an --update naming a destination never imported, write
+    nothing; an update stopped part-way records what it wrote, marked incomplete (2026-10-30: such files were left
+    without a record, and the next update took them for local edits)."""
+    import importlib.util
+    import json
+    suite = os.path.join(tmp, 'cli-suite')
+    os.makedirs(os.path.join(suite, 'tools'))
+    os.makedirs(os.path.join(suite, 'provenance'))
+    tool = os.path.join(suite, 'tools', 'import_opfor.py')
+    shutil.copy(os.path.join(SUITE, 'tools', 'import_opfor.py'), tool)
+    manifest = os.path.join(suite, 'provenance', 'opfor-imports.json')
+    with open(manifest, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump({'imports': []}, f)
+    env = {**os.environ, 'BFBC2_TOOL_SUITE': src}
+
+    def run(*args):
+        r = subprocess.run([sys.executable, '-B', tool, *args], capture_output=True, text=True, env=env)
+        return r.returncode, (r.stdout + r.stderr).strip()
+
+    def imports():
+        with open(manifest, encoding='utf-8') as f:
+            return json.load(f)['imports']
+    plan = os.path.join(tmp, 'plan.json')
+    with open(plan, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump([{'source': 'tool', 'destination': 'copied-tool'}, {'source': 'no-such-folder', 'destination': 'other'}], f)
+    code, out = run('--plan', plan)
+    check(code != 0 and not os.path.exists(os.path.join(suite, 'copied-tool')) and imports() == [],
+          f'a plan whose later item has no source writes nothing (exit {code}: {out[-70:]})')
+    code, out = run('tool', 'copied-tool')
+    check(code == 0 and len(imports()) == 1, f'an import is copied and recorded (exit {code})')
+    write(os.path.join(src, 'tool', 'a.py'), b'third a\n')
+    git(src, 'commit', '-q', '-am', 'third')
+    code, out = run('--update', 'copied-tool', 'never-imported')
+    with open(os.path.join(suite, 'copied-tool', 'a.py'), 'rb') as f:
+        kept = f.read()
+    check(code != 0 and kept == b'new a\n' and len(imports()) == 1,
+          f'an --update naming a destination never imported writes nothing (exit {code}, a.py {kept!r})')
+    code, out = run('--update', 'copied-tool')
+    last = imports()[-1]['items'][0]
+    check(code == 0 and [f['path'] for f in last['files']] == ['a.py'] and not last['conflicts'],
+          f'the update then brings the file and records it, no conflict (exit {code}: {out[-70:]})')
+    # stopped part-way: the second blob read back wrong, after the first file was written
+    write(os.path.join(src, 'tool', 'a.py'), b'fourth a\n')
+    write(os.path.join(src, 'tool', 'c.py'), b'new c\n')
+    git(src, 'add', '-A')
+    git(src, 'commit', '-q', '-m', 'fourth')
+    spec = importlib.util.spec_from_file_location('import_opfor_copy', tool)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.SOURCE_SUITE = src
+    real_git, reads = mod.git, []
+
+    def failing_git(*args):
+        out_ = real_git(*args)
+        if args[:2] == ('cat-file', 'blob'):
+            reads.append(args)
+            if len(reads) == 2:
+                return out_ + b'damaged'
+        return out_
+    mod.git = failing_git
+    saved_argv, sys.argv = sys.argv, ['import_opfor.py', '--update', 'copied-tool']
+    try:
+        mod.main()
+        stopped = False
+    except SystemExit:
+        stopped = True
+    finally:
+        sys.argv = saved_argv
+    last = imports()[-1]
+    check(stopped and bool(last.get('incomplete')) and [f['path'] for f in last['items'][0]['files']] == ['a.py'],
+          f'an update stopped part-way records the file it wrote, marked incomplete ({last.get("incomplete")!r})')
 
 
 def main():
@@ -88,6 +164,7 @@ def main():
               and open(os.path.join(dst, 'tool', 'b.py'), 'rb').read() == b'changed here\n',
               f'update of a folder import: the file changed only there is replaced, the one changed here too is a conflict')
         check(sorted(os.listdir(dst)) == ['New Suite.pyw', 'run_tests.py', 'tool'], f'nothing else written ({sorted(os.listdir(dst))})')
+        partial_runs(tmp, src)
     finally:
         import_opfor.SOURCE_SUITE, import_opfor.SUITE, import_opfor.MANIFEST = saved
         shutil.rmtree(tmp, ignore_errors=True)

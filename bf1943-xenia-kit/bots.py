@@ -73,8 +73,8 @@ HANDLE = SLOTS + 4 * MAX_BOTS + 4
 #   header (H_*): magic, version, bot count, bot record size, flag record count and size, the match's player manager,
 #     the tick (written last each tick, after the bots and flags) and how many flags the tick found
 #   per bot slot k at BOT0 + BOT_SIZE * k: a state record the guest writes every tick (R_*: the tick, then player,
-#     soldier (0: dead or not spawned), team, position x y z as float bits, then the tick again; a reader that sees
-#     the two ticks differ read it while it was written), and a command record the host writes (C_*: the stamp,
+#     soldier (0: dead or not spawned), team, position x y z as float bits, then the tick again), and a command
+#     record the host writes (C_*: the stamp,
 #     the tick it answered; throttle, strafe (actions 0 and 1), absolute yaw and pitch (frame + 0x88 / + 0x8c, used
 #     with button bit 40), the button u64 at frame + 0x78 as high and low words; then a sequence word, C_SEQ). The
 #     sequence is a lock: the host makes it odd, writes the stamp and fields, then makes it even and new
@@ -87,18 +87,37 @@ HANDLE = SLOTS + 4 * MAX_BOTS + 4
 #   per capture point f (FLAG0 + FLAG_SIZE * f, up to MAX_FLAGS, in the game's own iteration order): the tick, the
 #     entity, owner team (+0x80), control 0-100 (+0xa0, float bits), enabled (+0xad), radius (data + 0x114, float
 #     bits), position x y z, then the tick again.
+#   State and flag records are under a two-word sequence lock: the guest writes the opening tick (R_SEQ, F_SEQ), lwsync,
+#     the fields, lwsync, the closing tick (R_SEQ_END, F_SEQ_END). While it writes, the opening tick is the new one and
+#     the closing the old: they differ. A host reads the closing tick, then the fields, then the opening tick, each
+#     read after the one before, and takes the fields only when the two ticks are the same (then no write had begun
+#     after the one it closed: the ticks only grow), else tries again a few times (host_record is the read in Python).
+#     Comparing the two ticks of one copy is not enough: a copy can take the old opening tick, then some new fields,
+#     then the old closing tick (a review found it, 2026-10-30; the tests reproduce it). The write order was already
+#     this one, so the version stays 2: only the readers and the lwsyncs changed. A tick of 0: never written.
+#   The header's flag count and tick (H_FLAGS, H_TICK) are written after the flag records, the count first (lwsync
+#     between), but they are not a locked pair: a reader takes each flag record by its own two ticks, and a record
+#     whose tick is older than the newest one it read is left from a tick that found more capture points (guestmem
+#     marks it stale).
 MBOX_MAGIC = HANDLE + 16
 MBOX = MBOX_MAGIC + 4
 MAILBOX_END = MBOX + 4
+# The match the bots were made in: its player manager (MANAGER) and its first player (HOST_PLAYER, the host's), stored
+# when the bots are made. The bots are forgotten when either differs, when the manager is gone or the player list is
+# empty: before 2026-10-30 only the manager was compared, and a new match whose manager reused the old one's address
+# would have taken the old match's freed bot players as its own. Not part of the mailbox (navhost does not read it).
+HOST_PLAYER = MAILBOX_END
+DATA_USED = HOST_PLAYER + 4
 MAGIC = 0x52534D32           # 'RSM2', in the data area and the block's header
 VERSION = 2
-STALE = 10                   # ticks: an older command gives a neutral frame
+STALE = 10                   # ticks: an older command gives a neutral frame; a stamp of 0 (never answered) gives one too
 MAX_FLAGS = 8
 H_MAGIC, H_VERSION, H_BOTS, H_BOT_SIZE, H_FLAGS_MAX, H_FLAG_SIZE, H_MANAGER, H_TICK, H_FLAGS = (4 * k for k in range(9))
 BOT0, BOT_SIZE = 0x40, 0x40
 R_SEQ, R_PLAYER, R_SOLDIER, R_TEAM, R_X, R_Y, R_Z, R_SEQ_END = (4 * k for k in range(8))
 C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO, C_SEQ = (0x20 + 4 * k for k in range(8))
-TRIES = 4                    # reads of a command record before a neutral frame (the guest's own; not in rsmbox.h)
+TRIES = 4                    # reads of a command record before a neutral frame (the guest's own; not in rsmbox.h),
+                             # and of a state or flag record by host_record
 LWSYNC = 0x7C2004AC          # lwsync (ppcasm has no mnemonic for it; the game's own code uses it)
 FLAG0 = BOT0 + BOT_SIZE * MAX_BOTS
 FLAG_SIZE = 0x30
@@ -145,7 +164,7 @@ hook:
     bl 0x82349d78            # server context
     lwz r30, 0x28(r3)        # player manager
     cmpwi r30, 0
-    beq out
+    beq forget               # none (between matches): the bots are gone
     lwz r4, 0x54(r30)        # players: begin, end
     lwz r5, 0x58(r30)
     cmplw r4, r5
@@ -155,7 +174,13 @@ hook:
     bne forget               # another match's player manager
     lwz r3, STATE(r31)
     cmpwi r3, 0
-    bne respawn
+    beq make
+    lwz r6, 0(r4)            # bots made: still their match only while its first player is the host they were made
+    lwz r7, HOST_PLAYER(r31) # with (a new match can reuse the manager's address; the manager and its first player
+    cmplw r6, r7             # both, far less likely)
+    beq respawn
+    b forget
+make:
     lwz r4, 0(r4)            # the first player (the host's own) has a soldier: the match is running
     lwz r5, 0x120(r4)
     cmpwi r5, 0
@@ -194,6 +219,7 @@ clear_mailbox:               # the allocator need not clear it
     bl 0x829fa7ec
     lwz r4, 0x54(r30)        # the host's player again (the calls above used the volatile registers)
     lwz r4, 0(r4)
+    stw r4, HOST_PLAYER(r31) # the match's key, with the manager
     lwz r25, 0x30(r4)        # the host's team: bots are friendly (the same) or enemy (3 - it)
     mr r5, r4                # report: the host's player and team (Xenia logs DbgPrint)
     lwz r6, 0x30(r4)
@@ -301,8 +327,9 @@ spawn:
     lwz r27, 0(r28)
     cmpwi r27, 0
     beq skip
-    lwz r5, TICK(r31)        # its state record: the tick first, the fields, then the tick again (record_end)
-    stw r5, R_SEQ(r22)
+    lwz r5, TICK(r31)        # its state record: the tick first, the fields, then the tick again (record_end),
+    stw r5, R_SEQ(r22)       # lwsync between (a two-word sequence lock: R_SEQ new and R_SEQ_END old while it is
+    .long LWSYNC             # written; a host reads R_SEQ_END, the fields, R_SEQ, and takes them when the two agree)
     lwz r3, 0x118(r27)       # its input state: one neutral frame per tick, as the server makes for a
     cmpwi r3, 0              # connection with no input queued (823af4a0 -> 822bd4a8, 823a1f80, 822c15d0)
     beq record
@@ -342,8 +369,10 @@ command_again:
     bne command
     b push                   # no whole command: a neutral frame this tick
 command_whole:
+    cmpwi r6, 0              # a stamp of 0 answered nothing (a new or zeroed record): neutral, even while the tick,
+    beq push                 # which counts from 1 and is never reset, is still at most STALE
     lwz r5, TICK(r31)        # used if it answered a tick at most STALE ticks ago (tick - stamp, unsigned: a stamp
-    subf r5, r6, r5          # of 0 or one ahead is as old)
+    subf r5, r6, r5          # ahead is as old)
     cmplwi r5, STALE
     bgt push                 # else a neutral frame: the bot stands
     stw r9, BUF_THROTTLE(r1)     # EIAThrottle (action 0, an analog float at frame + 8)
@@ -398,6 +427,7 @@ report:
     bl 0x829fa7ec
 record_end:
     lwz r5, TICK(r31)
+    .long LWSYNC             # the fields before the closing tick
     stw r5, R_SEQ_END(r22)
 spawn_it:
     lwz r4, 0x120(r27)       # no soldier yet (or dead): ask to spawn at its team's base
@@ -469,8 +499,9 @@ flag_next:
     cmpwi r3, 0
     beq flags_done
     mr r27, r3
-    lwz r5, TICK(r31)        # its record: the tick, the fields, the tick again
+    lwz r5, TICK(r31)        # its record: the tick, the fields, the tick again (lwsync between: as the state record)
     stw r5, F_SEQ(r29)
+    .long LWSYNC
     stw r27, F_ENTITY(r29)
     lwz r5, 0x80(r27)        # owner team
     stw r5, F_OWNER(r29)
@@ -478,13 +509,13 @@ flag_next:
     stw r5, F_CONTROL(r29)
     lbz r5, 0xad(r27)        # enabled
     stw r5, F_ENABLED(r29)
-    lwz r5, 0x14(r27)        # its data's capture radius (+0x114, float)
-    cmpwi r5, 0
-    beq flag_where
+    lwz r5, 0x14(r27)        # its data's capture radius (+0x114, float); without data r5 is 0 and so is the radius
+    cmpwi r5, 0              # (before 2026-10-30 the record kept an earlier tick's radius)
+    beq flag_radius
     lwz r5, 0x114(r5)
+flag_radius:
     stw r5, F_RADIUS(r29)
-flag_where:
-    mr r3, r27               # its position, as the game's capture scan reads it (82361f14)
+    mr r3, r27              # its position, as the game's capture scan reads it (82361f14)
     bl 0x822a7bb0
     lwz r5, 0x30(r3)
     stw r5, F_X(r29)
@@ -493,6 +524,7 @@ flag_where:
     lwz r5, 0x38(r3)
     stw r5, F_Z(r29)
     lwz r5, TICK(r31)
+    .long LWSYNC
     stw r5, F_SEQ_END(r29)
     addi r29, r29, FLAG_SIZE
     addi r28, r28, 1
@@ -500,15 +532,18 @@ flag_where:
     blt flag_next
 flags_done:
     lwz r3, MBOX(r31)        # the flag count, then the tick: this tick's records are all written
+    .long LWSYNC
     stw r28, H_FLAGS(r3)
+    .long LWSYNC             # the count before the tick (not a locked pair: readers go by each record's own ticks)
     lwz r5, TICK(r31)
     stw r5, H_TICK(r3)
     b out
-forget:                      # no bots this match yet: clear the state, mailbox and slots, remember this manager
-    li r3, 0
+forget:                      # no bots this match yet: clear the state, mailbox, key and slots, remember this manager
+    li r3, 0                 # (0 when there is none)
     stw r3, MBOX_MAGIC(r31)
     stw r3, MBOX(r31)
     stw r3, STATE(r31)
+    stw r3, HOST_PLAYER(r31)
     stw r30, MANAGER(r31)
     la r28, SLOTS_ADDR
     li r29, MAX_BOTS
@@ -562,7 +597,7 @@ def assembler_symbols(table=0):
                'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
                'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'BUF_STRAFE': BUF + 0x0C,
                'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table,
-               'TRIES': TRIES, 'LWSYNC': LWSYNC}
+               'TRIES': TRIES, 'LWSYNC': LWSYNC, 'HOST_PLAYER': HOST_PLAYER}
     symbols.update({name: globals()[name] for name in MAILBOX_NAMES})
     return symbols
 
@@ -576,7 +611,25 @@ def guest_command(word, tick):
         seq = word(C_SEQ)
         record = tuple(word(o) for o in fields)
         if word(C_SEQ) == seq and not seq & 1:
-            return record if (tick - record[0]) & 0xFFFFFFFF <= STALE else None
+            return record if record[0] and (tick - record[0]) & 0xFFFFFFFF <= STALE else None
+    return None
+
+
+def guest_record(first, last, tick, fields):
+    """The bot code's writes of a state or flag record, in Python, for the hosts' tests (tests/test_bots.py checks them
+    against the code): [(offset, word)] in its order, the tick at first, the fields ({offset: word}), the tick at last."""
+    return [(first, tick)] + sorted(fields.items()) + [(last, tick)]
+
+
+def host_record(word, first, last, offsets):
+    """A host's read of a state or flag record under its two-word lock: word(offset) gives a word of the record, each
+    read after the one before. The closing tick (last), the fields, the opening tick (first), TRIES times in all:
+    {offset: word} with both ticks, or None when no read was whole."""
+    for _ in range(TRIES):
+        end = word(last)
+        record = {o: word(o) for o in offsets}
+        if word(first) == end:
+            return {**record, first: end, last: end}
     return None
 
 
@@ -607,8 +660,8 @@ def build(bots=DEFAULT_BOTS):
     if CODE + len(code) != table_at:
         raise AssertionError('code size changed between passes')
     blob = code + table + strings
-    if DATA + MAILBOX_END > DATA_END:
-        raise AssertionError('the host mailbox does not fit the data area')
+    if DATA + DATA_USED > DATA_END:
+        raise AssertionError('the host mailbox and the match key do not fit the data area')
     if CODE + len(blob) > CODE_END:
         raise ValueError(f'the bot code needs {len(blob):#x} bytes, the cave has {CODE_END - CODE:#x}')
     hook, _ = ppcasm.assemble(f'bl {CODE:#x}', HOOK)

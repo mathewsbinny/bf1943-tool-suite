@@ -370,7 +370,7 @@ def cmd_tight(w, a, path):
         meta = {'file': os.path.abspath(path), 'pairs': len(rows)}
         if bs is not None:
             meta['masks_hpd_sha256'] = [h for _w, _s, _k, h in bs.grids]
-        with open(a.json, 'w', encoding='utf-8') as f:
+        with open(a.json, 'w', encoding='utf-8', newline='\n') as f:
             json.dump({'meta': meta, 'pairs': rows}, f, indent=1)
         print(f'wrote {a.json}')
     return 0

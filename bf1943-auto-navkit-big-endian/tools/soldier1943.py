@@ -18,6 +18,28 @@ STEP = STEP_HEIGHT + STEP_TOLERANCE
 HEIGHT = 1.8                    # Height (Stand; Crouch 1.15)
 SLOPE_MAX = 45.0                # MaxAscendAngle (deg)
 WATER_DEPTH = 1.4               # WaterDepthLimit (m): pass as navbuild.build(max_water_depth=...), a default argument
+NO_WATER_BELOW = 10.0           # m: a level without water gets its sea this far under its lowest terrain (sea_level)
+
+
+def has_water(settings):
+    """Whether navkit.py prepare found water on the level (navkit.json's sea_level is None without)."""
+    return settings.get('sea_level') is not None
+
+
+def sea_level(settings, heightfield):
+    """The water height every tool computes with (navexport1943, jumplinks1943, groundnav1943, airnav1943, seanav1943,
+    navaudit1943_checks): navkit.json's sea_level, or for a level without water (navkit.py prepare found no water mesh:
+    None) NO_WATER_BELOW under the lowest terrain, so no ground counts as under water and the build, which had no water
+    either, agrees. (Before 2026-10-30 the soldier export took 0, which puts water over any ground below 0 m, the
+    vehicle builders and the jump links raised TypeError on None, and the audit took -1e9.)"""
+    if has_water(settings):
+        return float(settings['sea_level'])
+    return float(heightfield.heights.min()) - NO_WATER_BELOW
+
+
+def sea_level_args(settings):
+    """navsample1943's --sea-level (it bounds the sampled box by the land); none without water: the whole height field."""
+    return ['--sea-level', str(settings['sea_level'])] if has_water(settings) else []
 
 
 def configure():

@@ -124,16 +124,24 @@ ISLAND_FOOTPRINT = 100.0          # m2: an object rising above the sea and at le
 def box_from_level(level_dir, hf, sea_level, log=print):
     """(min (x, z), max (x, z)) of what can be walked on: the land (terrain above sea_level - 1.5 m, every islet
     included), the whole collision box of each object holding a soldier spawn (the carriers, whatever their length),
-    and objects rising above the sea with a footprint of at least ISLAND_FOOTPRINT."""
+    and objects rising above the sea with a footprint of at least ISLAND_FOOTPRINT. None when there is none of these
+    (2026-10-30 review: no terrain above the sea raised ValueError on an empty array)."""
     import json
     land = hf.heights > sea_level - 1.5
-    jj, ii = np.nonzero(land)
     cx, cz = hf.cell
-    lo = np.array([hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
-    hi = np.array([hf.min[0] + (ii.max() + 1) * cx, hf.min[2] + (jj.max() + 1) * cz])
-    log(f'box: land x {lo[0]:.0f}..{hi[0]:.0f}, z {lo[1]:.0f}..{hi[1]:.0f}')
-    spawns = json.load(open(os.path.join(level_dir, 'soldier_spawns.json')))
-    for b in json.load(open(os.path.join(level_dir, 'object_boxes.json'))):
+    if land.any():
+        jj, ii = np.nonzero(land)
+        lo = np.array([hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
+        hi = np.array([hf.min[0] + (ii.max() + 1) * cx, hf.min[2] + (jj.max() + 1) * cz])
+        log(f'box: land x {lo[0]:.0f}..{hi[0]:.0f}, z {lo[1]:.0f}..{hi[1]:.0f}')
+    else:
+        lo, hi = np.array([np.inf, np.inf]), np.array([-np.inf, -np.inf])
+        log(f'box: no terrain above the sea ({sea_level:g} m)')
+    with open(os.path.join(level_dir, 'soldier_spawns.json'), encoding='utf-8') as f:
+        spawns = json.load(f)
+    with open(os.path.join(level_dir, 'object_boxes.json'), encoding='utf-8') as f:
+        boxes = json.load(f)
+    for b in boxes:
         bmin, bmax = np.array(b['min'])[[0, 2]], np.array(b['max'])[[0, 2]]
         holds = any(bmin[0] - 5 <= s[0] <= bmax[0] + 5 and bmin[1] - 5 <= s[2] <= bmax[1] + 5 for s in spawns)
         islet = b['max'][1] > sea_level + 0.5 and b['footprint'] >= ISLAND_FOOTPRINT
@@ -141,6 +149,24 @@ def box_from_level(level_dir, hf, sea_level, log=print):
             log(f'box: + {b["bp"].rsplit("/", 1)[-1]} ({"holds a spawn" if holds else "islet"}, '
                 f'x {bmin[0]:.0f}..{bmax[0]:.0f}, z {bmin[1]:.0f}..{bmax[1]:.0f})')
             lo, hi = np.minimum(lo, bmin), np.maximum(hi, bmax)
+    return (lo, hi) if (lo <= hi).all() else None
+
+
+def extent_box(T, hf):
+    """(min (x, z), max (x, z)): the collision's extent and the land (terrain above the lowest collision; all of it
+    without collision). ValueError when there is neither (2026-10-30 review: an empty collision raised on an empty
+    array)."""
+    lo, hi = np.array([np.inf, np.inf]), np.array([-np.inf, -np.inf])
+    if len(T):
+        lo, hi = T[:, :, [0, 2]].reshape(-1, 2).min(0), T[:, :, [0, 2]].reshape(-1, 2).max(0)
+    land = hf.heights > T[:, :, 1].min() if len(T) else np.ones_like(hf.heights, bool)
+    if land.any():
+        jj, ii = np.nonzero(land)
+        cx, cz = hf.cell
+        lo = np.minimum(lo, [hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
+        hi = np.maximum(hi, [hf.min[0] + ii.max() * cx, hf.min[2] + jj.max() * cz])
+    if not (lo <= hi).all():
+        raise ValueError('nothing to sample: no collision and no terrain')
     return lo, hi
 
 
@@ -157,18 +183,13 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
     hf = terrain.read(hf_path)
     N, ok = normals(T)
     T, N = T[ok], N[ok]
+    box = None
     if sea_level is not None and os.path.isfile(os.path.join(level_dir, 'object_boxes.json')):
-        lo, hi = box_from_level(level_dir, hf, sea_level, log)
-    else:
+        box = box_from_level(level_dir, hf, sea_level, log)
+    if box is None:
         # the collision's extent, and the land (terrain above the lowest collision)
-        lo, hi = T[:, :, [0, 2]].reshape(-1, 2).min(0), T[:, :, [0, 2]].reshape(-1, 2).max(0)
-        floor = T[:, :, 1].min()
-        land = hf.heights > floor
-        if land.any():
-            jj, ii = np.nonzero(land)
-            cx, cz = hf.cell
-            lo = np.minimum(lo, [hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
-            hi = np.maximum(hi, [hf.min[0] + ii.max() * cx, hf.min[2] + jj.max() * cz])
+        box = extent_box(T, hf)
+    lo, hi = box
     lo = np.maximum(lo - margin, [hf.min[0], hf.min[2]])
     hi = np.minimum(hi + margin, [hf.max[0] - pitch, hf.max[2] - pitch])
     x0, z0 = math.floor(lo[0] / pitch) * pitch, math.floor(lo[1] / pitch) * pitch

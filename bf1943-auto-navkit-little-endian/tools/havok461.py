@@ -77,7 +77,7 @@ def triangles(pf, off):
     vertices = [v[:3] for v in o['vertices']]
     if o['indices16']:
         i = o['indices16']
-        tris = [tuple(i[k:k + 3]) for k in range(0, len(i) - 3, 4)]
+        tris = [tuple(i[k:k + 3]) for k in range(0, len(i) - 2, 4)]     # a last triangle without padding is kept
     else:
         i = o['indices32']
         tris = [tuple(i[k:k + 3]) for k in range(0, len(i) - 2, 3)]

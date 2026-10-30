@@ -2,7 +2,8 @@ r"""NavKit (big-endian): navigation for BF1943's ground vehicles - a build per c
 clearance, exported to RSNV as its own world (<level>.jeep.rsnv, <level>.tank.rsnv) for the navigation runtime
 (project-opfor-bf1943 rsnav).
 
-  groundnav1943.py prepare <level>            the vehicles' collision (sample runs it when it is missing)
+  groundnav1943.py prepare <level>            the vehicles' collision (sample runs it when it is missing or of
+                                              another preparation: navkit.json's stamps, vehicleclasses1943.py)
   groundnav1943.py sample <level> <class>     the collision samples with the class's clearance (navsample1943.py)
   groundnav1943.py build  <level> <class>     the drivable grid, its route graph, the RSNV world
   groundnav1943.py all    <level> [class]     both (classes: jeep, tank; default both)
@@ -30,8 +31,6 @@ Steps:
     and the transfers (OFFM): boarding at each spawn of the class (the soldier-side point: the entry point).
 """
 import argparse
-import hashlib
-import json
 import math
 import os
 import subprocess
@@ -43,8 +42,10 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
+import navkitjson1943 as nj  # noqa: E402
+import soldier1943  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
-from bfbc2core import game1943  # noqa: E402
+from bfbc2core import game1943, terrain  # noqa: E402
 
 GROUND_CLASSES = ('jeep', 'tank')
 GROUND_LIKE_SLOPE = 10.0     # deg over the class's slope: ground under the disc may be this much steeper than drivable
@@ -59,12 +60,7 @@ def paths(lv):
             'rsnv': lambda cls: os.path.join(W, 'navkit', f'{lv}.{cls}.rsnv')}
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for b in iter(lambda: f.read(1 << 22), b''):
-            h.update(b)
-    return h.hexdigest()
+sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
 
 
 def _rows(a):
@@ -74,12 +70,15 @@ def _rows(a):
 
 def prepare(lv, log=print):
     """work\\levels\\<lv>\\vehicles\\objects\\: all_tris.npy without excluded objects and dynamic props, and the box
-    files the sampler reads. Returns the triangle counts."""
+    files the sampler reads. Returns the triangle counts. Stamped in navkit.json (vehicleclasses1943: 'collision',
+    the preparation it was made from)."""
     p = paths(lv)
     o, vo = p['objects'], p['vobjects']
     if not os.path.isfile(os.path.join(o, 'all_tris.npy')):
         raise FileNotFoundError(f'{lv}: the level is not prepared (missing {os.path.join(o, "all_tris.npy")}): '
                                 f'run navkit.py prepare {lv}')
+    want = vc.inputs(nj.read(lv), lv)
+    vc.drop(lv, 'collision')
     os.makedirs(vo, exist_ok=True)
     T = np.load(os.path.join(o, 'all_tris.npy'))
     drop = []
@@ -96,33 +95,45 @@ def prepare(lv, log=print):
     for name in ('soldier_spawns.json', 'object_boxes.json'):
         with open(os.path.join(o, name), 'rb') as f, open(os.path.join(vo, name), 'wb') as g:
             g.write(f.read())
+    vc.record(lv, 'collision', want)
     log(f'{lv}: vehicle collision {int(keep.sum())} of {len(T)} triangles (excluded objects and dynamic props left out)')
     return int(keep.sum()), len(T)
 
 
 def sample_command(lv, cls):
     p = paths(lv)
-    st = json.load(open(os.path.join(p['navkit'], 'navkit.json'), encoding='utf-8'))
+    st = nj.read(lv)
     args = [sys.executable, '-B', '-u', os.path.join(HERE, 'navsample1943.py'), p['vobjects'],
-            os.path.join(p['objects'], 'heightfield.res'), p['samples'](cls),
-            '--radius', str(vc.value(cls, 'radius')), '--step', str(vc.value(cls, 'step')),
-            '--height', str(vc.value(cls, 'height')), '--pitch', str(vc.value(cls, 'pitch'))]
-    if st.get('sea_level') is not None:
-        args += ['--sea-level', str(st['sea_level'])]
-    return args
+            os.path.join(p['objects'], 'heightfield.res'), p['samples'](cls)]
+    args += [a for k in vc.SAMPLING_PARAMS for a in (f'--{k}', str(vc.value(cls, k)))]   # the samples' stamp hashes these
+    return args + soldier1943.sea_level_args(st)
+
+
+def samples_current(lv, cls, st=None):
+    """Whether the class's samples on disk are of the current preparation and class parameters (their stamp)."""
+    st = st or nj.read(lv)
+    return os.path.isfile(paths(lv)['samples'](cls)) and vc.current(st, 'samples', vc.inputs(st, lv, cls, sampling=True),
+                                                                      cls)
 
 
 def sample(lv, cls, log=print):
+    """The class's samples, on the vehicle collision of the current preparation (made again when it is of another:
+    2026-10-30, it was made only when its file was missing). Stamped 'samples' / cls; the class's world loses its."""
     p = paths(lv)
-    if not os.path.isfile(os.path.join(p['vobjects'], 'all_tris.npy')):
+    st = nj.read(lv)
+    want = vc.inputs(st, lv, cls, sampling=True)
+    if not os.path.isfile(os.path.join(p['vobjects'], 'all_tris.npy')) or not vc.current(st, 'collision', vc.inputs(st, lv)):
         prepare(lv, log)
+    vc.drop(lv, 'samples', cls)
+    vc.drop(lv, 'worlds', cls)
     args = sample_command(lv, cls)
     logf = os.path.join(p['vehicles'], f'sample_{cls}.log')
     t0 = time.time()
-    with open(logf, 'w', encoding='utf-8') as f:
+    with open(logf, 'w', encoding='utf-8', newline='\n') as f:
         r = subprocess.run(args, stdout=f, stderr=subprocess.STDOUT)
     if r.returncode:
         raise RuntimeError(f'{lv} {cls}: the sampler failed (exit {r.returncode}); see {logf}')
+    vc.record(lv, 'samples', want, cls)
     log(f'{lv} {cls}: sampled in {(time.time() - t0) / 60:.1f} min ({p["samples"](cls)})')
 
 
@@ -518,14 +529,25 @@ def spawn_seeds(lv, cls, game=None):
 
 
 def build(lv, cls, log=print, game=None):
-    """The class's world: returns (rsnv path, stats)."""
+    """The class's world: returns (rsnv path, stats). Needs samples of the current preparation and class parameters
+    and the export of the current soldier build; reads the level from the game copy it was prepared from (2026-10-30:
+    game=None read the default copy's spawns). Stamped 'worlds' / cls."""
     import rsnvgrid1943
     p = paths(lv)
     sp = p['samples'](cls)
     if not os.path.isfile(sp):
         raise FileNotFoundError(f'{lv} {cls}: not sampled yet (missing {sp}): run groundnav1943.py sample {lv} {cls}')
-    st = json.load(open(os.path.join(p['navkit'], 'navkit.json'), encoding='utf-8'))
-    sea = float(st.get('sea_level', 0.0))
+    st = nj.read(lv)
+    game = vc.prepared_game(st, game, lv)
+    if not vc.current(st, 'samples', vc.inputs(st, lv, cls, sampling=True), cls):
+        raise vc.StaleError(f'{lv} {cls}: the samples on disk are not of the current preparation and {cls} parameters: '
+                            f'sample again (groundnav1943.py sample {lv} {cls})')
+    # the export of the current soldier build, as the air and sea builders (2026-10-30: without the file the world was
+    # built and stamped on no soldier world)
+    soldier = os.path.join(p['navkit'], f'{lv}.rsnv')
+    want = vc.inputs(st, lv, cls, soldier=vc.soldier_world(st, lv, soldier))
+    vc.drop(lv, 'worlds', cls)
+    sea = soldier1943.sea_level(st, terrain.read(os.path.join(p['objects'], 'heightfield.res')))   # no water: under all
     t0 = time.time()
     g = Grid(sp)
     log(f'{lv} {cls}: {g.nx} x {g.nz} columns, {g.n} surfaces (radius {g.radius}, step {g.step}, height {g.height})')
@@ -553,10 +575,10 @@ def build(lv, cls, log=print, game=None):
     hf = os.path.join(p['objects'], 'heightfield.res')
     meta_sources = {'samples': sp, 'vehicle all_tris.npy': os.path.join(p['vobjects'], 'all_tris.npy'),
                     'forbid_tris.npy': forbid, 'navkit.json': os.path.join(p['navkit'], 'navkit.json'), 'heightfield.res': hf}
-    soldier = os.path.join(p['navkit'], f'{lv}.rsnv')
     meta_sources['soldier rsnv'] = soldier
     stats = rsnvgrid1943.export_surfaces(lv, cls, g, kept, table, nodes, edges, seeds, out, st, meta_sources, sea, log,
                                          soldier=soldier, objectives=spawn_seeds.objectives)
+    vc.record(lv, 'worlds', want, cls)
     stats['seconds'] = round(time.time() - t0, 1)
     log(f'{lv} {cls}: wrote {out} in {stats["seconds"]:.0f} s')
     return out, stats

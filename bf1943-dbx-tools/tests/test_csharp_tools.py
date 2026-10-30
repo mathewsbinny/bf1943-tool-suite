@@ -5,7 +5,9 @@ r"""The C# tools on made-up files (no game data):
   the hub's tool() goes through it; then DbxEdit.exe and LevelDiff.exe are built from the current sources;
 - DbxEdit xml: a folder of sound partitions exits 0; one with a damaged partition names it and exits 1;
 - LevelDiff: a list whose entries were only reordered is reported even when an earlier list of the same instance
-  gained an entry.
+  gained an entry;
+- the regression checks of csharp_regressions.py (DbxEdit's reader against core dbx.py's, nesting, write guards, edit
+  commands, the level check, LevelDiff, DbxEditGUI through reflection): see its docstring.
 
   python -B bf1943-dbx-tools\tests\test_csharp_tools.py
 """
@@ -23,6 +25,9 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUITE = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(SUITE, 'core'))
 from bfbc2core import csbuild  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import csharp_regressions  # noqa: E402
 
 failures = []
 
@@ -131,9 +136,9 @@ def main():
     tmp = tempfile.mkdtemp(prefix='csharp_tools_')
     try:
         build_checks(tmp)
-        exe, ldiff = csbuild.ensure('dbxedit'), csbuild.ensure('leveldiff')
-        check(all(csbuild.stale(*csbuild.tools()[n]) is None for n in ('dbxedit', 'leveldiff')),
-              'DbxEdit.exe and LevelDiff.exe built from the current sources')
+        exe, ldiff, gui = csbuild.ensure('dbxedit'), csbuild.ensure('leveldiff'), csbuild.ensure('dbxgui')
+        check(all(csbuild.stale(*csbuild.tools()[n]) is None for n in ('dbxedit', 'leveldiff', 'dbxgui')),
+              'DbxEdit.exe, DbxEditGUI.exe and LevelDiff.exe built from the current sources')
         env = {**os.environ, 'LOCALAPPDATA': tmp}
 
         # DbxEdit xml: exit code
@@ -163,6 +168,11 @@ def main():
         check(r.returncode == 1 and 'Second: same 2 entries  ->  in another order' in r.stdout, 'LevelDiff: a reorder alone')
         r = subprocess.run([ldiff, a, a, '--summary'], capture_output=True, text=True, errors='replace', env=env)
         check(r.returncode == 0 and 'changed: 0' in r.stdout, 'LevelDiff: a file against itself has no change')
+
+        tools = csharp_regressions.Tools(exe, ldiff, gui, os.path.join(tmp, 'reg'), check)
+        os.makedirs(tools.tmp)
+        for group in csharp_regressions.ALL:
+            group(tools)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('all passed' if not failures else f'{len(failures)} failed')

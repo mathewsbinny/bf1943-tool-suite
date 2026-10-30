@@ -91,16 +91,16 @@ pseudocode, not original source.
 | `inspect_decoded.py` | the decoded image's provenance, PE layout and bounded ASCII leads |
 | `map_functions.py`, `map_imports.py`, `resolve_helpers.py` | functions (`.pdata`), imports, register helpers |
 | `xenonrecomp_reference.py` | hash-checked access to the XenonRecomp reference (archive or extracted folder) |
-| `map_project.ps1`, `MapXex.java`, `ValidateXex.java`, `ApplyHelpers.java`, `InspectHelpers.java` | apply and check the tables in the Ghidra project |
+| `map_project.ps1`, `MapXex.java`, `ValidateXex.java`, `ApplyHelpers.java`, `InspectHelpers.java` | apply and check the tables in the Ghidra project. Ghidra's headless analyzer exits 0 when a post-script throws, so the step also requires the script's own result from this run (`-ValidateOnly`: `saved-validation.txt` starting `PASS`; `MapXex.java`: `mapping-report.txt`), and removes the old one first (before 2026-10-30 a failed validation left the previous PASS for `record_batch_decompile.py`). `BF1943_JAVA` / `BF1943_GHIDRA` name other installs (the tests' stand-ins) |
 | `verify_xex_image.py` | the XEX page-digest chain over the decoded image (each digest covers the next page and its descriptor), the `.reloc` extent; `research\evidence\xex-image-integrity.json` |
 | `build_vmx_language.py`, `classify_vmx.py`, `inventory_vmx.py` | the Xenon language and the image's VX128 words |
 | `xenon_vector_semantics.py`, `xenon_splice.py` | our own p-code for AltiVec, VMX128 and the scalar FP conversions, spliced into the language by `build_vmx_language.py` |
 | `run_vmx.ps1`, `TestVmx.java`, `TestLogical.java`, `TestPermutation.java`, `TestRlimi.java`, `TestUnaligned.java`, `TestDecodeCoverage.java`, `TestVectorSemantics.java`, `TestScalarFp.java`, `InspectVmxCaller.java`, `record_vmx_validation.py` | the language's test suites and their evidence (`run_vmx.ps1 -Only @('TestVectorSemantics.java')` runs a subset; `-CallerOnly` runs only the two caller probes) |
-| `vmx_inputs.py` | the fingerprint of everything a VMX128 run tests (tools, test scripts, the compiled language, its tables, the image): `run_vmx.ps1` stamps it into each result it produces, and `record_vmx_validation.py` refuses results from other inputs or from a partial (`-Only`) run |
-| `export_callgraph_strings.py` | call graph (direct, tail, import and indirect calls, resolved or classified unresolved; leaf functions without `.pdata` inferred), address references, strings with encodings and referencing functions; `work\xex-analysis\callgraph\` |
+| `vmx_inputs.py` | the fingerprint of everything a VMX128 run tests (tools, test scripts, the compiled language, its tables, the image): `run_vmx.ps1` stamps it into each result it produces, and `record_vmx_validation.py` refuses results from other inputs or from a partial (`-Only`) run. What the fingerprint does not cover is handled by the recorder, not by changing the fingerprint (it stays `465a75c8...`; `run_vmx.ps1` is one of its inputs, so that script is unchanged): the tested program must be the image (the caller probes' `image_sha256`, since `run_vmx.ps1` re-uses the Ghidra project's saved program once it exists), no file of the language module (the copied Ghidra pspec/cspec, includes, ldefs) may be newer than the run's results, and every module file's hash, Ghidra's version and Java's hash go into the evidence as `environment` |
+| `export_callgraph_strings.py` | call graph (direct, tail, import and indirect calls, resolved or classified unresolved; leaf functions without `.pdata` inferred), address references, strings with encodings and referencing functions; `work\xex-analysis\callgraph\`. Version 1.2 (2026-10-30): float stores, `dcbz` and VMX128 stores drop the remembered stores they may overwrite (before, a float store kept exactly the slots it could alias, so a reloaded slot could resolve an indirect call wrongly) |
 | `run_batch_decompile.ps1`, `export_all_decompiled.java`, `record_batch_decompile.py` | decompile all functions; evidence |
 | `DumpCode.java`, `EntryPilot.java`, `InspectMainFunctions.java`, `ExperimentDecompile.java` | Ghidra inspection scripts (run through `map_project.ps1 -Script <name>`) |
-| `xexrefs.py` | static reference scanning over the image (no Ghidra): words, strings, `lis` pairs; used by operation-rising-sun's investigations |
+| `xexrefs.py` | static reference scanning over the image (no Ghidra): words, strings, `lis` pairs; used by operation-rising-sun's investigations. A `lis` value pairs only until its register is written by anything (2026-10-30; before, only at branches and a few forms, so 212 of 55,036 references came from overwritten registers) |
 | `ppcdis.py` | `python -B <suite>\bf1943-xex-tools\ppcdis.py <hex address> [count]`: disassembly of the image (capstone, PowerPC 64 big-endian) |
 | `bfbc2dis.py` | two images (BF1943's and BFBC2 Xbox 360's): functions, normalized fingerprints, disassembly |
 | `parse_function_trace.py` | a Xenia function trace (`run_xenia_probe.ps1 -FunctionTrace` in the test harness) mapped onto the image's functions |
@@ -117,6 +117,14 @@ record forms; fctiw rounds, fctiwz truncates); and it splices without touching d
 The emulated semantics tests are Ghidra scripts run by `run_vmx.ps1`. The `bf1943` tier also runs
 `ppcdis.py` from the research workspace (`BF1943_RESEARCH`, else operation-rising-sun next to the suite) on the
 decoded image; it is skipped without one.
+
+Added 2026-10-30, not in `run_tests.py` yet: `tests\test_callgraph_memory.py` (no game data: float stores, `dcbz` and
+VMX128 stores end a remembered store), `tests\test_map_project.py` (Windows; a stand-in java: a post-script that
+threw fails the step, an old PASS is gone), and, reading the research workspace (only the image is copied into a
+temporary folder; nothing is written there): `tests\test_xexrefs.py` (overwritten registers end a `lis` pairing),
+`tests\test_record_vmx.py` (the recorder's environment and its refusals) and `tests\test_output_bytes.py` (map_functions,
+classify_vmx, inventory_vmx and resolve_helpers write the outputs that evidence pins by hash byte for byte: CRLF,
+as recorded; an LF change on 2026-10-30 was reverted for them and kept for outputs nothing pins).
 
 ## Checked
 

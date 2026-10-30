@@ -42,6 +42,7 @@ MAIN, NORMAL, DETAILED = (0.35, 0.75, 0.35), (0.30, 0.60, 0.80), (1.0, 0.60, 0.1
 DIMMED, WARNING, MISSING = (0.45, 0.48, 0.45), (0.95, 0.25, 0.85), (0.9, 0.15, 0.15)
 LADDER = (0.62, 0.35, 1.0)                               # ground reached only by ladder links, and the links
 PATH = (1.0, 0.85, 0.1)
+NO_ISLAND = (0.15, 0.15, 0.15)                           # ground whose area has no route node: on no island
 LIFT = 0.06                                              # ground cells drawn just above the surface
 SMALL = 25                                               # nodes: an island this small is a pocket, not a network
 POINT_LAYERS = [('soldier spawns, team 1 (US)', (0.2, 0.55, 1.0)), ('soldier spawns, team 2 (Japan)', (1.0, 0.3, 0.25)),
@@ -180,18 +181,24 @@ class Studio:
         if self.color == 'sector':
             sec = np.array([x.sector for x in nav.areas])[a]
             uniq, inv = np.unique(sec, return_inverse=True)
-            return np.array([hue(k * 7 + 3, 0.5, 0.85) for k in range(len(uniq))])[inv]
+            return np.array([hue(k * 7 + 3, 0.5, 0.85) for k in range(len(uniq))]).reshape(-1, 3)[inv.ravel()]
         if self.color == 'pitch':
-            det = np.array([x.detailed for x in nav.areas])[a]
-            return np.where(det[:, None], np.array(DETAILED), np.array(NORMAL))
+            det = np.array([x.detailed for x in nav.areas], dtype=bool)[a]
+            return np.where(det[:, None], np.array(DETAILED), np.array(NORMAL)).reshape(-1, 3)
+        # an area with no route node in its sector has no island (navdata: island -1): NO_ISLAND, never the main
+        # network's green - that is the ground no route reaches
+        none = (isl < 0) | (isl >= max(len(nav.islands), 1))
         if self.color == 'small islands':
             size = np.array([i.nodes for i in nav.islands] or [0])
             n = size[np.clip(isl, 0, len(size) - 1)]
-            col = np.where((n >= SMALL)[:, None], np.array(DIMMED), np.array(WARNING))
+            col = np.where((n >= SMALL)[:, None], np.array(DIMMED), np.array(WARNING)).reshape(-1, 3)
             col[isl == 0] = MAIN
+            col[none] = NO_ISLAND
             return col
         table = np.array([MAIN] + [hue(k) for k in range(1, max(len(nav.islands), 1))]).reshape(-1, 3)
-        return table[np.clip(isl, 0, len(table) - 1)]
+        col = table[np.clip(isl, 0, len(table) - 1)].reshape(-1, 3)
+        col[none] = NO_ISLAND
+        return col
 
     def apply_colors(self, v=None):
         c = np.repeat(self.cell_colors(), 2, axis=0)
@@ -379,6 +386,12 @@ def main(argv):
         else:
             args.append(argv[k])
             k += 1
+    if '--path' in opts:                                    # a bad --path is said before the level loads
+        try:
+            path_points(opts['--path'])
+        except ValueError as e:
+            print('error:', e)
+            return 2
     if not args:                                            # started without a level: ask for one
         from bfbc2core import pick
         lv = pick.pick_level('BF1943 Navigation Studio')
@@ -403,12 +416,12 @@ def main(argv):
     for name, i in st.layers.items():
         if name in hide:
             v.set_layer_visible(i, False)
-    if '--island' in opts and int(opts['--island']) < len(nav.islands):
+    if '--island' in opts and 0 <= int(opts['--island']) < len(nav.islands):
         v.camera.focus(nav.islands[int(opts['--island'])].centre, 60.0)
     if '--path' in opts:                                    # tests: a path test between two points
         st.set_path_mode(v, True)
-        for p in opts['--path'].split(';'):
-            st.path_point(v, [float(c) for c in p.split(',')])
+        for p in path_points(opts['--path']):
+            st.path_point(v, p)
         r = st.route
         print('path: ' + (f'cost {r.cost:.1f} m, {len(r.nodes)} nodes' if r.found else f'none - {r.reason}'))
     if '--focus' in opts:                                   # tests: the camera on a point
@@ -420,10 +433,27 @@ def main(argv):
     if '--screenshot' in opts:
         v.exit_after = int(opts.get('--frames', 40))
     v.run()
-    if '--screenshot' in opts and v.screenshot is not None:
-        import matplotlib.pyplot as plt
-        plt.imsave(opts['--screenshot'], np.asarray(v.screenshot))
-        print('screenshot:', opts['--screenshot'])
+    if '--screenshot' in opts:
+        return save_screenshot(opts['--screenshot'], v.screenshot)
+    return 0
+
+
+def path_points(text):
+    """--path "x,y,z;x,y,z": exactly two points (the start and the end); ValueError otherwise."""
+    pts = [[float(c) for c in p.split(',')] for p in text.split(';') if p.strip()]
+    if len(pts) != 2 or any(len(p) != 3 for p in pts):
+        raise ValueError(f'--path {text!r}: give two points, "x,y,z;x,y,z"')
+    return pts
+
+
+def save_screenshot(path, shot):
+    """Writes the viewer's screenshot to path: exit code 0, or 1 when the viewer took none (nothing written)."""
+    if shot is None:
+        print(f'error: no screenshot was taken - {path} not written')
+        return 1
+    import matplotlib.pyplot as plt
+    plt.imsave(path, np.asarray(shot))
+    print('screenshot:', path)
     return 0
 
 

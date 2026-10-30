@@ -31,6 +31,7 @@ SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-spawn-map'), os.path.join(SUITE, 'bf1943-fbrb-tool'),
                 os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tools')]
 import navaudit1943 as A  # noqa: E402
+import navkitjson1943 as nj  # noqa: E402
 import navbuild  # noqa: E402  (this variant's: core navdata puts the little-endian tools first on sys.path)
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, materialmap1943, terrain  # noqa: E402
@@ -372,7 +373,7 @@ def load(lv, log=print):
     from bfbc2core import level1943
     from bfbc2core import water as water_mod
     p = A.level_paths(lv)
-    st = json.load(open(p['settings'], encoding='utf-8'))
+    st = A.current_build(lv)       # the checked build of the current preparation only (2026-10-30 review)
     game = game1943.find_game(st.get('game'))         # the copy the level was prepared from (2026-10-30: the default)
     g = game1943.Game(game, lv)
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
@@ -389,24 +390,39 @@ def load(lv, log=print):
     lvl = level1943.load(lv, game=game, log=lambda *a: None)
     m = spawnmap.spawn_map(game, lv)
     wpath = os.path.join(p['objects'], 'water_mesh.res')
-    water = water_mod.read_mesh(wpath) if os.path.isfile(wpath) else None
+    water = water_mod.read_mesh(wpath) if soldier1943.has_water(st) and os.path.isfile(wpath) else None
     masks = os.path.join(p['audit'], 'masks')
     grids = {}
+    hashes = A.Hashes(lv)
+    # every mask must be of the samples and build on disk (their SHA-256, stored in it): 2026-10-30 review, a base mask
+    # was checked only by its surface count and the rule-off masks not at all
     for which, src in (('normal', 'samples.bin'), ('detailed', 'samples_02.bin')):
+        if which == 'detailed' and not A.detailed_current(st):
+            log(f'{lv}: the build has no 0.2 m samples of this preparation: no detailed grid')
+            continue
         path = os.path.join(masks, f'{which}_base.npz')
         if not os.path.isfile(path):
             log(f'{lv}: no {which} base mask ({path}): navaudit1943.py masks {lv}')
             continue
+        why = A.mask_stale(path, src, hashes)
+        if why:
+            raise nj.NavKitError(f'{why}: make the masks again (navaudit1943.py masks {lv})')
         z = np.load(path)
         s = A.load_samples(os.path.join(p['samples'], src))
         if int(z['surfaces']) != len(s.y):
-            raise SystemExit(f'{path}: made from another sampling run ({int(z["surfaces"])} surfaces, now {len(s.y)})')
+            raise nj.NavKitError(f'{path}: made from another sampling run ({int(z["surfaces"])} surfaces, now {len(s.y)})')
         G = Grid(s, z['keep'], hf, water, '0.2 m' if which == 'detailed' else '0.8 m')
         for v in A.VARIANTS:
             vp = os.path.join(masks, f'{which}_{v}.npz')
             if v != 'base' and os.path.isfile(vp):
+                why = A.mask_stale(vp, src, hashes)
+                if why:
+                    log(f'{why}: left out (navaudit1943.py masks {lv} --variants {v})')
+                    continue
                 G.variants[v] = np.load(vp)['keep']
         grids[which] = G
+    if 'normal' not in grids:
+        raise nj.NavKitError(f'{lv}: no normal base mask of this build: navaudit1943.py masks {lv}')
     xoff, zoff = st['sector_offsets']
     dset = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()}
     built = {a.sector for a in nav.areas if a.detailed}
@@ -801,7 +817,9 @@ def landmass(C, cell=4.0):
 def sea_level(C):
     w = C['water']
     if w is None or not len(w[0]):
-        return float(C['st'].get('sea_level', -1e9))
+        # no water mesh: navkit.json's sea level, or without water the exporters' (2026-10-30: float(None) raised, then
+        # -1e9 put the audit's sea elsewhere than the export's)
+        return soldier1943.sea_level(C['st'], C['hf'])
     return float(np.median(w[0][:, 1]))
 
 
@@ -1480,10 +1498,11 @@ def run(lv, json_out=None, log=print):
               '4 resolution': resol, '6 water': water, '7 rules': rl, '8 playable area': play}
     path = json_out or os.path.join(C['p']['audit'], 'audit.json')
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(report, f, indent=1, default=_json)
     md = os.path.splitext(path)[0] + '.md'
-    open(md, 'w', encoding='utf-8').write(markdown(json.loads(json.dumps(report, default=_json))))
+    with open(md, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(markdown(json.loads(json.dumps(report, default=_json))))
     log(f'{lv}: wrote {path} and {md} ({time.time() - t0:.0f} s)')
     return report
 

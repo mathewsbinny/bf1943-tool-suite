@@ -6,24 +6,28 @@
 //        DbxEdit roundtrip <file.dbx|folder>               read + write every file, report any that change
 //        DbxEdit edit <in.dbx> <out.dbx> <command> ...      apply commands in order (FORMAT.md section 5):
 //            replace=<old>|<new>     every string exactly <old> becomes <new> (re-points references)
-//            drop=<guid>             removes the instance with that guid; array items referring to it are
+//            drop=<guid>             removes the instance with that guid; array items referring to it (locally) are
 //                                    removed, single references to it become "null"
 //            replaceprefix=<old>|<new>[|<except>...]  strings starting with <old> get <new> as prefix
 //            partguid=<guid>         sets the partition's own guid (a copy under a new name gets a new one)
 //            copyfield=<src.dbx>|<src guid>|<field>|<guid>  copies a field (with arrays) from another file's instance
 //            set=<field>|<true|false|0-255>  sets a bool / byte field
-//            setfield=<guid>|<field>|<value>  sets a field of that instance (text, or one 4-byte number)
+//            setfield=<guid>|<field>|<value>  sets a field of that instance, typed as stored (text, numbers, bool /
+//                                    byte), or a reference field's reference
 //            additem=<guid>|<array>|<ref>[|<before ref>]  adds an item referring to <ref> to array <array> of
 //                                    instance <guid> (at the end, or before the item referring to <before ref>)
 //            dropfield=<name>        removes every field named <name> (fields the PC build does not have)
 //            graft=<src.dbx>|<guid>[|<before guid>]  copies (inserted before that instance if given) that instance of another file, with every instance of that file it
 //                                    references in-partition (members), strings remapped
 //        a command argument "@file" reads commands from a file (one per line, # comments)
+// Files are read as core dbx.py reads them (a damaged one is refused) and never written into the game folder
+// (SafeWrite); exit 2 = bad usage or the command could not run (FORMAT.md sections 2, 3 and 5).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Bfbc2Dbx
@@ -31,14 +35,32 @@ namespace Bfbc2Dbx
     // Varints: 7 bits per byte, low group first, high bit = more bytes follow.
     static class Varint
     {
+        // A varint of a value the file has already been checked to hold (a string index, a count, a size). Values
+        // that do not fit an int, and varints running past the data, are refused, never wrapped.
         public static int Read(byte[] data, ref int pos)
         {
-            int value = 0;
+            long value = ReadLong(data, ref pos, data.Length);
+            if (value > int.MaxValue) throw new InvalidDataException("damaged .dbx: a number too large (" + value + ") before 0x" + pos.ToString("x"));
+            return (int)value;
+        }
+
+        // As core dbx.py reads them: a varint running past end is truncated; one longer than 64 bits is damaged.
+        // Values past long.MaxValue come back as long.MaxValue (too large for anything a file can hold).
+        public static long ReadLong(byte[] data, ref int pos, int end)
+        {
+            ulong value = 0;
+            bool over = false;
             for (int shift = 0; ; shift += 7)
             {
+                if (pos >= end)
+                    throw new InvalidDataException("truncated .dbx: a number runs past the end of the file (" + end + " bytes)");
+                if (shift > 63)
+                    throw new InvalidDataException("damaged .dbx: a number longer than 64 bits at 0x" + pos.ToString("x"));
                 byte b = data[pos++];
-                value |= (b & 0x7F) << shift;
-                if (b < 0x80) return value;
+                ulong bits = (ulong)(b & 0x7F);
+                if (shift > 57 && (bits >> (64 - shift)) != 0) over = true;
+                value |= bits << shift;
+                if (b < 0x80) return over || value > long.MaxValue ? long.MaxValue : (long)value;
             }
         }
 
@@ -92,6 +114,17 @@ namespace Bfbc2Dbx
         public byte[] Payload;
 
         public bool IsContainer { get { return Children != null; } }
+
+        // A numbers payload's count and value size, and where its values start. A size past int (possible only
+        // with no values: the reader checks count x size against the file) comes back as int.MaxValue.
+        public static int NumbersHeader(byte[] payload, out int count, out int size)
+        {
+            int pos = 0;
+            long c = Varint.ReadLong(payload, ref pos, payload.Length), s = Varint.ReadLong(payload, ref pos, payload.Length);
+            count = (int)Math.Min(c, int.MaxValue);
+            size = (int)Math.Min(s, int.MaxValue);
+            return pos;
+        }
     }
 
     // A parsed binary .dbx file.
@@ -130,62 +163,129 @@ namespace Bfbc2Dbx
             Original = data;
             IsBinary = data.Length > 24 && Encoding.ASCII.GetString(data, 0, 8) == Magic;
             if (!IsBinary) return;
-            uint areaSize = BigEndian.U32(data, 16), count = BigEndian.U32(data, 20);
+            // The checks of core dbx.py (_strings, parse), in its order: a file it refuses is refused here.
+            long areaSize = BigEndian.U32(data, 16), count = BigEndian.U32(data, 20);
             KeptHeaderValue = BigEndian.U32(data, 12);
-            int stringsAt = 24 + 4 * (int)count, payloadAt = 24 + (int)areaSize;
-            originalOffsets = new List<int>();
-            for (int i = 0; i < count; i++) originalOffsets.Add((int)BigEndian.U32(data, 24 + 4 * i));
-            Table = new List<string>(originalOffsets.Count);
-            foreach (int offset in originalOffsets)
+            int n = data.Length;
+            if (24 + 4 * count > n)
+                throw Damaged("truncated .dbx: a table of " + count + " string offsets at 0x18 needs " + 4 * count + " bytes, the file ends at 0x" + n.ToString("x"));
+            long stop = 24 + areaSize;                      // the string area: the offset table, then the strings
+            if (stop > n)
+                throw Damaged("truncated .dbx: the string area ends at 0x" + stop.ToString("x") + ", past the file (0x" + n.ToString("x") + ")");
+            long stringsAt = 24 + 4 * count;
+            if (stringsAt > stop)
+                throw Damaged("damaged .dbx: " + count + " string offsets do not fit in the string area of " + areaSize + " bytes");
+            originalOffsets = new List<int>((int)count);
+            Table = new List<string>((int)count);
+            for (int i = 0; i < count; i++)
             {
-                int from = stringsAt + offset, to = from;
-                while (data[to] != 0) to++;
-                Table.Add(Encoding.UTF8.GetString(data, from, to - from));
+                long from = stringsAt + BigEndian.U32(data, 24 + 4 * i);
+                int to = from < stop ? Array.IndexOf(data, (byte)0, (int)from, (int)(stop - from)) : -1;
+                if (to < 0)
+                    throw Damaged("damaged .dbx: string " + i + " at 0x" + from.ToString("x") + " does not end inside the string area (which ends at 0x" + stop.ToString("x") + ")");
+                originalOffsets.Add((int)(from - stringsAt));
+                Table.Add(Encoding.UTF8.GetString(data, (int)from, to - (int)from));
             }
-            originalStringArea = new byte[payloadAt - stringsAt];
+            originalStringArea = new byte[stop - stringsAt];
             Array.Copy(data, stringsAt, originalStringArea, 0, originalStringArea.Length);
 
+            // the tree, read with a stack (no recursion: any nesting the format allows is read)
             TopLevel = new List<Element>();
-            int pos = payloadAt;
-            while (pos < data.Length)
+            var open = new List<Element>();
+            int pos = (int)stop;
+            while (pos < n)
             {
-                int tag = Varint.Read(data, ref pos);
-                if (tag == 0) { pos--; break; }
-                TopLevel.Add(ReadElement(data, ref pos, tag));
+                int tagAt = pos;
+                long tag = Varint.ReadLong(data, ref pos, n);
+                if (tag == 0)
+                {
+                    if (open.Count == 0) { pos = tagAt; break; }      // the end of the tree: the trailer starts here
+                    open.RemoveAt(open.Count - 1);
+                    continue;
+                }
+                Need(data, pos, 1, "an element header");
+                byte head = data[pos++];
+                var e = new Element { Tag = StringIndex(tag, pos), Kind = head >> 4 };
+                for (int k = head & 0xF; k > 0; k--)
+                {
+                    long name = Varint.ReadLong(data, ref pos, n), value = Varint.ReadLong(data, ref pos, n);
+                    e.Attributes.Add(new Attribute(StringIndex(name, pos), StringIndex(value, pos)));
+                }
+                var siblings = open.Count > 0 ? open[open.Count - 1].Children : TopLevel;
+                if (e.Kind == Element.Container)
+                {
+                    Need(data, pos, 1, "a container");
+                    e.ContainerByte = data[pos++];
+                    e.Children = new List<Element>();
+                    siblings.Add(e);
+                    open.Add(e);
+                    if (open.Count > Depth) Depth = open.Count;
+                    continue;
+                }
+                int valueAt = pos;
+                if (e.Kind == Element.Text) StringIndex(Varint.ReadLong(data, ref pos, n), pos);
+                else if (e.Kind == Element.Numbers)
+                {
+                    long values = Varint.ReadLong(data, ref pos, n), size = Varint.ReadLong(data, ref pos, n);
+                    if (values != 0 && size < 2)               // every value reads at least two bytes (FORMAT.md section 3)
+                        throw Damaged("damaged .dbx: " + values + " numbers of size " + size + " at 0x" + valueAt.ToString("x") + " (the smallest is 2 bytes)");
+                    if (values != 0 && values > (n - pos) / size)
+                        throw Damaged("truncated .dbx: " + values + " numbers of " + size + " bytes at 0x" + pos.ToString("x") + ", the file ends at 0x" + n.ToString("x"));
+                    pos += (int)(values * size);
+                }
+                else
+                {
+                    Need(data, pos, 2, "a value");
+                    pos += 2;
+                }
+                e.Payload = new byte[pos - valueAt];
+                Array.Copy(data, valueAt, e.Payload, 0, e.Payload.Length);
+                siblings.Add(e);
             }
-            Trailer = new byte[data.Length - pos];
+            if (TopLevel.Count == 0)
+                throw Damaged("damaged .dbx: no element after the string table (a partition has at least its root)");
+            if (open.Count > 0)
+                throw Damaged("truncated .dbx: " + open.Count + " container(s) not closed at the end of the file (innermost '" + TagOf(open[open.Count - 1]) + "')");
+            Trailer = new byte[n - pos];
             Array.Copy(data, pos, Trailer, 0, Trailer.Length);
         }
 
-        static Element ReadElement(byte[] data, ref int pos, int tag)
+        // The deepest nesting of containers (the partition is 1).
+        public int Depth;
+
+        // Editing, checking and comparing walk the tree recursively; they take files nested up to this deep (every
+        // game file is far below it). Reading, converting to XML and round-tripping take any nesting.
+        public const int MaxEditDepth = 1000;
+
+        // This file, when the recursive commands can take it (else InvalidDataException naming what).
+        public DbxFile Walkable(string what)
         {
-            var e = new Element { Tag = tag };
-            byte head = data[pos++];
-            e.Kind = head >> 4;
-            for (int count = head & 0xF; count > 0; count--)
-            {
-                int name = Varint.Read(data, ref pos);
-                e.Attributes.Add(new Attribute(name, Varint.Read(data, ref pos)));
-            }
-            if (e.Kind == Element.Container)
-            {
-                e.ContainerByte = data[pos++];
-                e.Children = new List<Element>();
-                for (int child = Varint.Read(data, ref pos); child != 0; child = Varint.Read(data, ref pos))
-                    e.Children.Add(ReadElement(data, ref pos, child));
-                return e;
-            }
-            int valueAt = pos;
-            if (e.Kind == Element.Text) Varint.Read(data, ref pos);
-            else if (e.Kind == Element.Numbers)
-            {
-                int n = Varint.Read(data, ref pos), size = Varint.Read(data, ref pos);
-                pos += n * size;
-            }
-            else pos += 2;
-            e.Payload = new byte[pos - valueAt];
-            Array.Copy(data, valueAt, e.Payload, 0, e.Payload.Length);
-            return e;
+            if (Depth > MaxEditDepth)
+                throw new InvalidDataException((what ?? "the file") + " nests containers " + Depth + " deep; DbxEdit edits, checks and compares files nested up to "
+                                               + MaxEditDepth + " deep (xml and roundtrip take any)");
+            return this;
+        }
+
+        // A .dbx file read from path: a damaged one is refused with its path in the message.
+        public static DbxFile Read(string path)
+        {
+            try { return new DbxFile(path); }
+            catch (InvalidDataException e) { throw new InvalidDataException(path + ": " + e.Message, e); }
+        }
+
+        static InvalidDataException Damaged(string message) { return new InvalidDataException(message); }
+
+        static void Need(byte[] data, int pos, int size, string what)
+        {
+            if ((long)pos + size > data.Length)
+                throw Damaged("truncated .dbx: " + what + " at 0x" + pos.ToString("x") + " needs " + size + " bytes, the file ends at 0x" + data.Length.ToString("x"));
+        }
+
+        int StringIndex(long index, int pos)
+        {
+            if (index >= Table.Count)
+                throw Damaged("damaged .dbx: string " + index + " at 0x" + pos.ToString("x") + ", the table has " + Table.Count);
+            return (int)index;
         }
 
         public byte[] Serialize()
@@ -220,7 +320,26 @@ namespace Bfbc2Dbx
             return output.ToArray();
         }
 
-        static void WriteElement(List<byte> output, Element e)
+        // An element and everything below it, written with a stack (no recursion).
+        static void WriteElement(List<byte> output, Element root)
+        {
+            WriteHead(output, root);
+            if (!root.IsContainer) return;
+            var open = new Stack<KeyValuePair<Element, int>>();     // a container and its next child
+            open.Push(new KeyValuePair<Element, int>(root, 0));
+            while (open.Count > 0)
+            {
+                var top = open.Pop();
+                if (top.Value >= top.Key.Children.Count) { output.Add(0); continue; }
+                open.Push(new KeyValuePair<Element, int>(top.Key, top.Value + 1));
+                var c = top.Key.Children[top.Value];
+                WriteHead(output, c);
+                if (c.IsContainer) open.Push(new KeyValuePair<Element, int>(c, 0));
+            }
+        }
+
+        // tag, head byte, attributes, then the value bytes or a container's byte
+        static void WriteHead(List<byte> output, Element e)
         {
             Varint.Write(output, e.Tag);
             output.Add((byte)(e.Kind << 4 | e.Attributes.Count));
@@ -229,14 +348,8 @@ namespace Bfbc2Dbx
                 Varint.Write(output, a.Name);
                 Varint.Write(output, a.Value);
             }
-            if (e.Kind != Element.Container)
-            {
-                output.AddRange(e.Payload);
-                return;
-            }
-            output.Add(e.ContainerByte);
-            foreach (var c in e.Children) WriteElement(output, c);
-            output.Add(0);
+            if (e.Kind != Element.Container) output.AddRange(e.Payload);
+            else output.Add(e.ContainerByte);
         }
 
         // The index of a string: the first identical table entry, or a new one at the end.
@@ -260,6 +373,7 @@ namespace Bfbc2Dbx
 
         public IEnumerable<Element> Instances()
         {
+            if (TopLevel.Count == 0 || !TopLevel[0].IsContainer) return Enumerable.Empty<Element>();
             return TopLevel[0].Children.Where(e => TagOf(e) == "instance");
         }
 
@@ -281,73 +395,66 @@ namespace Bfbc2Dbx
             "OriginalHashedWaveName", "HashedName", "HashedWaveName", "OnRoadMaterialNameHashes", "Hash", "Id",
             "CompositeMeshPartNames" };
 
+        // The XML of a binary file. The file is read (and checked) by DbxFile as core dbx.py reads it, so a file
+        // dbx.py refuses is refused here too (InvalidDataException) and every other file gives dbx.py's to_xml.
         public static string Convert(byte[] data)
         {
-            uint areaSize = BigEndian.U32(data, 16), count = BigEndian.U32(data, 20);
-            int stringsAt = 24 + 4 * (int)count;
-            var offsets = new uint[count];
-            for (int i = 0; i < count; i++) offsets[i] = BigEndian.U32(data, 24 + 4 * i);
-            var table = new string[count];
-            for (int i = 0; i < count; i++)
-            {
-                int from = stringsAt + (int)offsets[i], to = from;
-                while (to < data.Length && data[to] != 0) to++;
-                table[i] = Encoding.UTF8.GetString(data, from, to - from);
-            }
+            var f = new DbxFile(data);
+            if (!f.IsBinary) throw new InvalidDataException("not a binary .dbx file (no {binary} header of 24 bytes)");
+            return Convert(f);
+        }
 
-            var xml = new StringBuilder("<?xml version=\"1.0\"?>\r\n");
-            var open = new Stack<string>();
-            int pos = 24 + (int)areaSize;
-            while (pos < data.Length)
+        // indentation tabs an export may hold: past it only absurd nesting (each level adds a tab to every line below)
+        const long MaxIndent = 1L << 28;
+
+        sealed class Item
+        {
+            public Element E; public int Depth; public bool Close;
+            public Item(Element e, int depth, bool close) { E = e; Depth = depth; Close = close; }
+        }
+
+        // Written with a stack, not recursion: any nesting the reader takes is written.
+        public static string Convert(DbxFile f)
+        {
+            long tabs = 0;
+            var walk = new Stack<Item>();
+            foreach (var e in f.TopLevel) walk.Push(new Item(e, 0, false));
+            while (walk.Count > 0)
             {
-                int tag = Varint.Read(data, ref pos);
-                if (tag == 0)
+                var it = walk.Pop();
+                tabs += it.E.IsContainer ? 2L * it.Depth : it.Depth;
+                if (tabs > MaxIndent)
+                    throw new InvalidDataException("the XML would hold more than " + MaxIndent + " indentation tabs (containers nested " + f.Depth + " deep)");
+                if (it.E.IsContainer) foreach (var c in it.E.Children) walk.Push(new Item(c, it.Depth + 1, false));
+            }
+            var xml = new StringBuilder("<?xml version=\"1.0\"?>\r\n");
+            var todo = new Stack<Item>();
+            for (int i = f.TopLevel.Count - 1; i >= 0; i--) todo.Push(new Item(f.TopLevel[i], 0, false));
+            while (todo.Count > 0)
+            {
+                var it = todo.Pop();
+                var e = it.E;
+                string name = f.TagOf(e);
+                if (it.Close)
                 {
-                    if (open.Count == 0) break;
-                    string closing = open.Pop();
-                    xml.Append('\t', open.Count).Append("</").Append(closing).Append(">\r\n");
+                    xml.Append('\t', it.Depth).Append("</").Append(name).Append(">\r\n");
                     continue;
                 }
-                string name = table[tag];
-                byte head = data[pos++];
-                int kind = head >> 4;
-                xml.Append('\t', open.Count).Append('<').Append(name);
-                string firstValue = "";
-                for (int i = 0, n = head & 0xF; i < n; i++)
+                xml.Append('\t', it.Depth).Append('<').Append(name);
+                foreach (var a in e.Attributes)
+                    xml.Append(' ').Append(f.Table[a.Name]).Append("=\"").Append(Escape(f.Table[a.Value])).Append('"');
+                if (e.IsContainer)
                 {
-                    string key = table[Varint.Read(data, ref pos)], value = table[Varint.Read(data, ref pos)];
-                    if (i == 0) firstValue = value;
-                    xml.Append(' ').Append(key).Append("=\"").Append(Escape(value)).Append('"');
-                }
-                if (kind == Element.Container)
-                {
-                    pos++;
                     xml.Append(">\r\n");
-                    open.Push(name);
+                    todo.Push(new Item(e, it.Depth, true));
+                    for (int i = e.Children.Count - 1; i >= 0; i--) todo.Push(new Item(e.Children[i], it.Depth + 1, false));
                     continue;
                 }
-                string content;
-                if (kind == Element.Text)
+                string content = Escape(ValueText(f, e));
+                if (e.Kind == Element.Text && content.Length == 0)
                 {
-                    content = Escape(table[Varint.Read(data, ref pos)]);
-                    if (content.Length == 0)
-                    {
-                        xml.Append(" />\r\n");
-                        continue;
-                    }
-                }
-                else if (kind == Element.Numbers)
-                {
-                    int n = Varint.Read(data, ref pos), size = Varint.Read(data, ref pos);
-                    var values = new string[n];
-                    for (int i = 0; i < n; i++, pos += size) values[i] = Number(data, pos, size, firstValue);
-                    content = string.Join("/", values);
-                }
-                else
-                {
-                    byte v = data[pos + 1];
-                    pos += 2;
-                    content = v == 0 ? "false" : v == 1 ? "true" : v.ToString();
+                    xml.Append(" />\r\n");
+                    continue;
                 }
                 xml.Append('>').Append(content).Append("</").Append(name).Append(">\r\n");
             }
@@ -363,7 +470,8 @@ namespace Bfbc2Dbx
             if (e.Kind == Element.Text) return f.Table[Varint.Read(e.Payload, ref pos)];
             if (e.Kind == Element.Numbers)
             {
-                int n = Varint.Read(e.Payload, ref pos), size = Varint.Read(e.Payload, ref pos);
+                int n, size;
+                pos = Element.NumbersHeader(e.Payload, out n, out size);
                 var values = new string[n];
                 for (int i = 0; i < n; i++, pos += size) values[i] = Number(e.Payload, pos, size, field);
                 return string.Join("/", values);
@@ -443,8 +551,8 @@ namespace Bfbc2Dbx
             }
             if (e.Kind == Element.Numbers)
             {
-                int pos = 0;
-                int n = Varint.Read(e.Payload, ref pos), size = Varint.Read(e.Payload, ref pos);
+                int n, size;
+                int pos = Element.NumbersHeader(e.Payload, out n, out size);
                 if (n > 0 || t.Size == 0) t.Size = size;
                 if (size == 4)
                     for (int i = 0; i < n; i++, pos += 4)
@@ -524,7 +632,7 @@ namespace Bfbc2Dbx
         sealed class TextParser
         {
             readonly string s;
-            int pos, line = 1;
+            int pos, line = 1, depth;
             public TextParser(string text) { s = text; }
 
             public bool At(string t) { return string.CompareOrdinal(s, pos, t, 0, t.Length) == 0; }
@@ -589,7 +697,16 @@ namespace Bfbc2Dbx
                 return b.ToString();
             }
 
+            // an element and its children (recursive: nesting is limited as for the binary commands)
             public Node Element()
+            {
+                if (++depth > DbxFile.MaxEditDepth)
+                    throw Fail("elements nested more than " + DbxFile.MaxEditDepth + " deep (DbxEdit imports files nested up to " + DbxFile.MaxEditDepth + ")");
+                try { return ElementBody(); }
+                finally { depth--; }
+            }
+
+            Node ElementBody()
             {
                 Advance(1);   // '<'
                 var n = new Node { Line = line, Tag = Name() };
@@ -791,7 +908,14 @@ namespace Bfbc2Dbx
             var imp = new XmlImport(f, f, new TypeBook());
             var x = new Node { Tag = f.TagOf(e), Text = text };
             foreach (var a in e.Attributes) x.Attributes.Add(new KeyValuePair<string, string>(f.Table[a.Name], f.Table[a.Value]));
-            byte[] payload = imp.Encode(e.Kind, x, e, null, x.Tag + "[" + x.FirstValue + "]");
+            byte[] payload;
+            try { payload = imp.Encode(e.Kind, x, e, null, x.Tag + "[" + x.FirstValue + "]"); }
+            catch (InvalidDataException ex)
+            {
+                const string noLine = "line 0: ";                     // a value typed in, not read from an XML file
+                if (!ex.Message.StartsWith(noLine)) throw;
+                throw new InvalidDataException(ex.Message.Substring(noLine.Length), ex);
+            }
             rounded = imp.Rounded > 0;
             return payload;
         }
@@ -954,8 +1078,10 @@ namespace Bfbc2Dbx
                     removed++;
                     continue;
                 }
+                // a reference to the instance: a local one (its GUID). "<partition>/<guid>" names an instance of
+                // another partition, which may share the GUID (graft copies keep their source's).
                 string target = file.Get(e, "ref");
-                if (target != null && (Guid.Same(target, guid) || target.EndsWith("/" + guid, StringComparison.OrdinalIgnoreCase)))
+                if (target != null && Guid.Same(target, guid))
                 {
                     references++;
                     if (tag == "item")
@@ -1006,23 +1132,25 @@ namespace Bfbc2Dbx
             return set;
         }
 
-        public bool SetField(string guid, string field, string value)
+        // The first direct child of the instance named <field> that is not a container. A reference field (with a
+        // ref attribute) gets <value> as its reference; any other value is typed like the stored one, as the import
+        // types a changed value: text, numbers of the stored width ('/'-separated), integer or decimal as the stored
+        // value is, bool or byte. False when there is no such field; InvalidDataException when the value does not
+        // fit it. rounded: a decimal was rounded to the nearest 4-byte value.
+        public bool SetField(string guid, string field, string value, out bool rounded)
         {
+            rounded = false;
             var instance = file.Instance(guid);
             if (instance == null || !instance.IsContainer) return false;
-            var e = instance.Children.FirstOrDefault(c => file.Get(c, "name") == field && (c.Kind == Element.Text || c.Kind == Element.Numbers));
+            var e = instance.Children.FirstOrDefault(c => file.Get(c, "name") == field && !c.IsContainer);
             if (e == null) return false;
-            if (e.Kind == Element.Text)
+            var reference = e.Attributes.FirstOrDefault(a => file.Table[a.Name] == "ref");
+            if (reference != null)
             {
-                e.Payload = Varint.Bytes(file.Intern(value));
+                reference.Value = file.Intern(value);
                 return true;
             }
-            // one 4-byte number: count 1, size 4, big-endian value (float if the text has a '.')
-            if (e.Payload.Length != 6 || e.Payload[0] != 1 || e.Payload[1] != 4) return false;
-            uint bits = value.Contains(".")
-                ? BitConverter.ToUInt32(BitConverter.GetBytes(float.Parse(value, CultureInfo.InvariantCulture)), 0)
-                : (uint)int.Parse(value);
-            e.Payload = new byte[] { 1, 4, (byte)(bits >> 24), (byte)(bits >> 16), (byte)(bits >> 8), (byte)bits };
+            e.Payload = XmlImport.EncodeValue(file, e, value, out rounded);
             return true;
         }
 
@@ -1119,8 +1247,12 @@ namespace Bfbc2Dbx
                 if (i >= 0) at = i;
             }
             var available = new Dictionary<string, Element>();
-            foreach (var e in source.Instances()) available[source.Get(e, "guid").ToUpperInvariant()] = e;
-            var present = new HashSet<string>(file.Instances().Select(e => file.Get(e, "guid").ToUpperInvariant()));
+            foreach (var e in source.Instances())
+            {
+                string g = source.Get(e, "guid");
+                if (g != null && !available.ContainsKey(g.ToUpperInvariant())) available[g.ToUpperInvariant()] = e;
+            }
+            var present = new HashSet<string>(file.Instances().Select(e => file.Get(e, "guid")).Where(g => g != null).Select(g => g.ToUpperInvariant()));
             var pending = new Stack<string>();
             pending.Push(guid.ToUpperInvariant());
             int copied = 0;
@@ -1227,28 +1359,44 @@ namespace Bfbc2Dbx
             var mine = PlacedObject.All(file).Where(o => o.Slot != null).ToList();
             var theirs = PlacedObject.All(cullLevel).Where(o => o.Slot != null).ToList();
             var byGuid = new Dictionary<string, PlacedObject>(StringComparer.OrdinalIgnoreCase);
-            foreach (var o in theirs) byGuid[o.Guid] = o;
-            var byPosition = new Dictionary<string, PlacedObject>();
-            foreach (var o in theirs) if (!byPosition.ContainsKey(o.PositionKey)) byPosition[o.PositionKey] = o;
+            foreach (var o in theirs) if (o.Guid != null && !byGuid.ContainsKey(o.Guid)) byGuid[o.Guid] = o;
+            var byPosition = new Dictionary<string, List<PlacedObject>>();
+            foreach (var o in theirs)
+            {
+                List<PlacedObject> l;
+                if (!byPosition.TryGetValue(o.PositionKey, out l)) byPosition[o.PositionKey] = l = new List<PlacedObject>();
+                l.Add(o);
+            }
             var r = new Result();
             var assigned = new Dictionary<PlacedObject, int>();
-            var left = new List<PlacedObject>();
+            // each counterpart, and each non-zero slot, is given once: an object matched by guid takes its slot first,
+            // so a copy at the same place (another guid) cannot share it
+            var taken = new HashSet<PlacedObject>();
+            var used = new HashSet<int>();
+            Action<PlacedObject, PlacedObject> give = (o, t) => { assigned[o] = t.SlotValue; taken.Add(t); if (t.SlotValue != 0) used.Add(t.SlotValue); };
+            Func<PlacedObject, bool> free = t => !taken.Contains(t) && (t.SlotValue == 0 || !used.Contains(t.SlotValue));
+            var byPlace = new List<PlacedObject>();
             foreach (var o in mine)
             {
                 PlacedObject t;
-                if (byGuid.TryGetValue(o.Guid, out t)) { assigned[o] = t.SlotValue; r.ByGuid++; }
-                else if (byPosition.TryGetValue(o.PositionKey, out t)) { assigned[o] = t.SlotValue; r.ByPosition++; }
+                if (o.Guid != null && byGuid.TryGetValue(o.Guid, out t) && free(t)) { give(o, t); r.ByGuid++; }
+                else byPlace.Add(o);
+            }
+            var left = new List<PlacedObject>();
+            foreach (var o in byPlace)
+            {
+                List<PlacedObject> l;
+                var t = byPosition.TryGetValue(o.PositionKey, out l) ? l.FirstOrDefault(free) : null;
+                if (t != null) { give(o, t); r.ByPosition++; }
                 else left.Add(o);
             }
-            var used = new HashSet<int>(assigned.Values);
             foreach (var o in left)
             {
-                var best = theirs.Where(t => t.Blueprint == o.Blueprint && t.SlotValue != 0 && !used.Contains(t.SlotValue))
+                var best = theirs.Where(t => t.Blueprint == o.Blueprint && t.SlotValue != 0 && free(t))
                                  .OrderBy(t => t.Distance(o)).FirstOrDefault();
                 if (best != null && best.Distance(o) < 50)
                 {
-                    assigned[o] = best.SlotValue;
-                    used.Add(best.SlotValue);
+                    give(o, best);
                     r.ByNearest++;
                 }
                 else
@@ -2845,8 +2993,10 @@ namespace Bfbc2Dbx
             foreach (var g in objects.GroupBy(o => o.SlotValue).Where(g => g.Count() > 1).Take(20))
                 found.Add(new Finding { Error = false, Where = "cull slot " + g.Key, Message = "shared by " + g.Count() + " objects (" + string.Join(", ", g.Take(3).Select(o => o.Blueprint)) + "): they are shown and hidden together - see-through objects" });
             if (slotsFrom == null) return;
-            var theirs = PlacedObject.All(slotsFrom).Where(o => o.Slot != null).ToDictionary(o => o.Guid, o => o, StringComparer.OrdinalIgnoreCase);
-            var wrong = PlacedObject.All(f).Where(o => o.Slot != null).Where(o => { PlacedObject t; return theirs.TryGetValue(o.Guid, out t) && t.SlotValue != o.SlotValue; }).ToList();
+            var theirs = new Dictionary<string, PlacedObject>(StringComparer.OrdinalIgnoreCase);
+            foreach (var o in PlacedObject.All(slotsFrom).Where(o => o.Slot != null && o.Guid != null))
+                if (!theirs.ContainsKey(o.Guid)) theirs[o.Guid] = o;
+            var wrong = PlacedObject.All(f).Where(o => o.Slot != null && o.Guid != null).Where(o => { PlacedObject t; return theirs.TryGetValue(o.Guid, out t) && t.SlotValue != o.SlotValue; }).ToList();
             if (wrong.Count > 0)
                 found.Add(new Finding { Error = false, Where = "cull slots", Message = wrong.Count + " objects have another slot than the same object in the cull trees' level (e.g. " + string.Join(", ", wrong.Take(3).Select(o => o.Blueprint + " " + o.SlotValue)) + ") - see-through objects; fix with: DbxEdit fixslots" });
         }
@@ -2856,7 +3006,7 @@ namespace Bfbc2Dbx
         {
             var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string b in bundles)
-                foreach (string p in Directory.GetFiles(b, "*.dbx", SearchOption.AllDirectories))
+                foreach (string p in Program.DbxFiles(b))
                 {
                     string rel = p.Substring(b.Length).TrimStart('\\', '/').Replace('\\', '/');
                     rel = rel.Substring(0, rel.Length - 4);
@@ -2883,7 +3033,7 @@ namespace Bfbc2Dbx
                 Dictionary<string, string> g;
                 if (!loaded.TryGetValue(path, out g))
                 {
-                    var d = new DbxFile(path);
+                    var d = DbxFile.Read(path);
                     g = null;
                     if (d.IsBinary)
                     {
@@ -3231,7 +3381,7 @@ namespace Bfbc2Dbx
             if (r == null || r == "null" || r.IndexOf('/') < 0) return null;
             string part = r.Substring(0, r.LastIndexOf('/')), guid = r.Substring(r.LastIndexOf('/') + 1), path;
             if (!index.TryGetValue(part, out path)) return null;                        // reported as a missing file
-            var d = new DbxFile(path);
+            var d = DbxFile.Read(path);
             if (!d.IsBinary) return null;
             var t = d.Instance(guid);
             if (t == null) return null;                                                   // reported as a missing instance
@@ -3262,14 +3412,16 @@ namespace Bfbc2Dbx
         // the one more presumably from the centre's 1/16 m rounding).
         static void CheckTree(Ctx c, CullTree t, string which)
         {
-            int count = t.Right.Count, used = 0, badMax = 0, badRadius = 0;
+            int count = t.Right.Count, badMax = 0, badRadius = 0;
             bool broken = false;
-            // pre-order: returns the index after the subtree at i (indices only grow, so it ends)
-            Func<int, int> walk = null;
-            walk = i =>
+            // The pre-order walk from node 0, with a stack of the inner nodes being walked (no recursion: a tree of
+            // any depth is walked). enter(i) takes node i: a leaf, or a node that breaks the walk, gives the index
+            // after it; an inner node is pushed (-1) and its subtree's end comes back once both children are walked.
+            var frames = new List<int[]>();                     // { node, 0: left next / 1: right next / 2: done }
+            Func<long, int> enter = at =>
             {
-                if (i < 0 || i >= count || broken) { broken = true; return count; }
-                used++;
+                if (at < 0 || at >= count || broken) { broken = true; return count; }
+                int i = (int)at;
                 uint r = t.Right[i];
                 if ((r >> 31) != 0)
                 {
@@ -3278,13 +3430,32 @@ namespace Bfbc2Dbx
                     return i + 1;
                 }
                 if (r == 0) { broken = true; return count; }
-                int endLeft = walk(i + 1);
-                if (endLeft != i + (int)r) broken = true;
-                int end = walk(i + (int)r);
-                if (!broken && t.Max[i] != Math.Max(t.Max[i + 1], t.Max[i + (int)r])) badMax++;
-                return end;
+                frames.Add(new[] { i, 0 });
+                return -1;
             };
-            int last = count > 0 ? walk(0) : 0;
+            int end = count > 0 ? enter(0) : 0;
+            while (frames.Count > 0)
+            {
+                var fr = frames[frames.Count - 1];
+                int i = fr[0];
+                long right = (long)i + t.Right[i];
+                if (fr[1] == 0)
+                {
+                    fr[1] = 1;
+                    end = enter(i + 1);
+                    if (end < 0) continue;
+                }
+                if (fr[1] == 1)
+                {
+                    if (end != right) broken = true;           // the left subtree must end where the right one starts
+                    fr[1] = 2;
+                    end = enter(right);
+                    if (end < 0) continue;
+                }
+                if (!broken && t.Max[i] != Math.Max(t.Max[i + 1], t.Max[(int)right])) badMax++;
+                frames.RemoveAt(frames.Count - 1);                // end: the index after this subtree
+            }
+            int last = end;
             bool zeros = !broken && last == count - 256 && Enumerable.Range(last, 256).All(k => t.Right[k] == 0 && t.Max[k] == 0 && t.W[k] == 0);
             if (broken || !zeros)
                 c.Error(t.Partition, "the " + which + " cull tree's nodes are not one pre-order tree followed by 256 zero nodes (as in every shipped tree)");
@@ -3335,7 +3506,13 @@ namespace Bfbc2Dbx
             {
                 var refEl = Child(f, o.Instance, "ReferencedObject");
                 string r = refEl == null ? null : f.Get(refEl, "ref"), path;
-                if (r == null || r.IndexOf('/') < 0 || !index.TryGetValue(r.Substring(0, r.LastIndexOf('/')), out path)) { missingBlueprint = r; break; }
+                if (r == null || r.IndexOf('/') < 0 || !index.TryGetValue(r.Substring(0, r.LastIndexOf('/')), out path))
+                {
+                    missingBlueprint = r == null ? "placed object " + o.Guid + " has no ReferencedObject"
+                                     : r.IndexOf('/') < 0 ? "placed object " + o.Guid + " refers to " + r + ", not to a blueprint in another file"
+                                     : r + " is not in the given folders";
+                    break;
+                }
                 int width = Width(path);
                 int[] k1, k2;
                 if (width == 2 && tree.Leaves.TryGetValue(o.SlotValue - tree.EnumOffset, out k1) && tree.Leaves.TryGetValue(o.SlotValue - tree.EnumOffset + 1, out k2)
@@ -3346,7 +3523,7 @@ namespace Bfbc2Dbx
                 next = o.SlotValue + width;
             }
             if (missingBlueprint != null)
-                c.Warn("cull slots", "not checked against the exclusive cull tree's leaves: " + missingBlueprint + " is not in the given folders");
+                c.Warn("cull slots", "not checked against the exclusive cull tree's leaves: " + missingBlueprint);
             else if (gap != null || next != last + 1)
                 c.Warn("cull slots", "placed objects' slots do not cover the exclusive cull tree's leaves " + (tree.EnumOffset + 1) + ".." + last + " exactly ("
                        + (gap ?? "the last ends at " + (next - 1)) + "); in every shipped level each slotted object takes two leaves when its blueprint has a PhysicsEntityData, else one");
@@ -3372,7 +3549,7 @@ namespace Bfbc2Dbx
         {
             int w;
             if (widths.TryGetValue(path, out w)) return w;
-            var d = new DbxFile(path);
+            var d = DbxFile.Read(path);
             w = d.IsBinary && d.Instances().Any(i => (d.Get(i, "type") ?? "").EndsWith(".PhysicsEntityData")) ? 2 : 1;
             widths[path] = w;
             return w;
@@ -3429,11 +3606,13 @@ namespace Bfbc2Dbx
 
     static class Program
     {
+        // exit codes: each command's own (0 done; 1 failed or, for check, errors found; 3 import with guesses), 2 = bad
+        // usage, or the command could not run (a file damaged, missing or in use, a write refused): explained on stderr
         static int Main(string[] args)
         {
             ToolLog.Start("dbxedit");
             try { return Run(args); }
-            catch (Exception e) { return ToolLog.Fail(e); }       // unexpected: logged and explained, exit code 1
+            catch (Exception e) { return ToolLog.Fail(e); }       // unexpected: logged and explained, exit code 2
         }
 
         static int Run(string[] args)
@@ -3452,9 +3631,13 @@ namespace Bfbc2Dbx
             return 2;
         }
 
-        static string[] DbxFiles(string path)
+        // The .dbx files of a folder (recursively), or the file named. Only the extension .dbx: Windows' "*.dbx"
+        // pattern also matches longer extensions (.dbxold), whose XML would take the .dbx file's name.
+        internal static string[] DbxFiles(string path)
         {
-            return Directory.Exists(path) ? Directory.GetFiles(path, "*.dbx", SearchOption.AllDirectories) : new[] { path };
+            if (!Directory.Exists(path)) return new[] { path };
+            return Directory.GetFiles(path, "*.dbx", SearchOption.AllDirectories)
+                            .Where(p => string.Equals(Path.GetExtension(p), ".dbx", StringComparison.OrdinalIgnoreCase)).ToArray();
         }
 
         // A zero-byte file is a bundle's "*deleted*" entry, as older FbrbTool versions unpacked them (current
@@ -3464,6 +3647,14 @@ namespace Bfbc2Dbx
         static string DeletedNote(int n)
         {
             return n == 0 ? "" : ", skipped " + n + " empty file(s) (*deleted* bundle entries)";
+        }
+
+        // A binary .dbx file the recursive commands can take; null (and a message on stderr) when it is not binary.
+        static DbxFile Binary(string path)
+        {
+            var f = DbxFile.Read(path);
+            if (!f.IsBinary) { Console.Error.WriteLine("not a binary dbx: " + path); return null; }
+            return f.Walkable(path);
         }
 
         // exit 0 = every binary file converted, 1 = one or more failed (each named on stderr)
@@ -3477,7 +3668,7 @@ namespace Bfbc2Dbx
                     if (DeletedEntry(f)) { deleted++; continue; }
                     byte[] data = File.ReadAllBytes(f);
                     if (data.Length < 8 || Encoding.ASCII.GetString(data, 0, 8) != "{binary}") { notBinary++; continue; }
-                    File.WriteAllText(Path.ChangeExtension(f, ".xml"), XmlExport.Convert(data));
+                    SafeWrite.Text(Path.ChangeExtension(f, ".xml"), XmlExport.Convert(data));
                     converted++;
                 }
                 catch (Exception e)
@@ -3510,13 +3701,15 @@ namespace Bfbc2Dbx
                 DbxFile reference = null;
                 if (like != null)
                 {
-                    reference = new DbxFile(like);
+                    reference = DbxFile.Read(like);
                     if (!reference.IsBinary) { Console.Error.WriteLine("import: not a binary dbx: " + like); return 1; }
+                    reference.Walkable(like);
                 }
-                var typeFiles = typePaths.SelectMany(DbxFiles).Select(p => new DbxFile(p)).Where(d => d.IsBinary).ToList();
+                var typeFiles = typePaths.SelectMany(DbxFiles).Select(p => new KeyValuePair<string, DbxFile>(p, DbxFile.Read(p)))
+                                         .Where(d => d.Value.IsBinary).Select(d => d.Value.Walkable(d.Key)).ToList();
                 XmlImport report;
                 var result = XmlImport.Import(xml, reference, typeFiles, out report);
-                File.WriteAllBytes(output, result.Serialize());
+                SafeWrite.Bytes(output, result.Serialize());
                 Console.WriteLine("import " + xml + " -> " + output + (like != null ? " (types from " + like + ")" : "") + ": "
                                   + report.Kept + " unchanged, " + report.Changed + " changed, " + report.Added + " new, "
                                   + report.Removed + " removed"
@@ -3536,7 +3729,8 @@ namespace Bfbc2Dbx
         }
 
         // check <level.dbx> [--rules bf1943|bfbc2] [--slots-from <level.dbx>] [--bundle <folder>]...
-        // exit 0 = no errors, 1 = errors found. The rules are chosen from the file (LevelCheck.Detect) unless given.
+        // exit 0 = no errors, 1 = errors found, 2 = the check could not run (bad usage, a file damaged or missing).
+        // The rules are chosen from the file (LevelCheck.Detect) unless given.
         static int Check(string[] args)
         {
             DbxFile slotsFrom = null;
@@ -3544,13 +3738,21 @@ namespace Bfbc2Dbx
             var bundles = new List<string>();
             for (int i = 2; i < args.Length; i++)
             {
-                if (args[i] == "--slots-from" && i + 1 < args.Length) slotsFrom = new DbxFile(args[++i]);
-                else if (args[i] == "--bundle" && i + 1 < args.Length) bundles.Add(args[++i]);
+                if (args[i] == "--slots-from" && i + 1 < args.Length)
+                {
+                    slotsFrom = Binary(args[++i]);
+                    if (slotsFrom == null) return 2;
+                }
+                else if (args[i] == "--bundle" && i + 1 < args.Length)
+                {
+                    if (!Directory.Exists(args[i + 1])) { Console.Error.WriteLine("check: --bundle " + args[i + 1] + " is not a folder"); return 2; }
+                    bundles.Add(args[++i]);
+                }
                 else if (args[i] == "--rules" && i + 1 < args.Length && (args[i + 1] == LevelCheck.Bf1943 || args[i + 1] == LevelCheck.Bfbc2)) rules = args[++i];
                 else { Console.Error.WriteLine("check: unknown option " + args[i] + " (options: --rules bf1943|bfbc2, --slots-from <level.dbx>, --bundle <folder>)"); return 2; }
             }
-            var f = new DbxFile(args[1]);
-            if (!f.IsBinary) { Console.Error.WriteLine("not a binary dbx: " + args[1]); return 2; }
+            var f = Binary(args[1]);
+            if (f == null) return 2;
             string chosen = rules ?? LevelCheck.Detect(f);
             var found = LevelCheck.Run(f, slotsFrom, bundles, chosen);
             foreach (var x in found.OrderBy(x => x.Error ? 0 : 1)) Console.WriteLine(x);
@@ -3565,15 +3767,15 @@ namespace Bfbc2Dbx
         // fixslots <in.dbx> <out.dbx> --from <level.dbx>
         static int FixSlots(string[] args)
         {
-            if (args.Length < 5 || args[3] != "--from") { Console.Error.WriteLine("usage: DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>"); return 2; }
-            var f = new DbxFile(args[1]);
-            var from = new DbxFile(args[4]);
-            if (!f.IsBinary || !from.IsBinary) { Console.Error.WriteLine("not a binary dbx"); return 2; }
+            if (args.Length != 5 || args[3] != "--from") { Console.Error.WriteLine("usage: DbxEdit fixslots <in.dbx> <out.dbx> --from <level.dbx>"); return 2; }
+            var f = Binary(args[1]);
+            var from = f == null ? null : Binary(args[4]);
+            if (f == null || from == null) return 2;
             var r = SlotFixer.Fix(f, from);
             Console.WriteLine("fixslots: " + r.Changed + " slot(s) changed; matched by guid " + r.ByGuid + ", by blueprint and position "
                               + r.ByPosition + ", nearest within 50 m " + r.ByNearest + ", no counterpart (slot 0) " + r.NoCounterpart);
             foreach (string u in r.Unmatched.Take(30)) Console.WriteLine("  no counterpart: " + u);
-            File.WriteAllBytes(args[2], f.Serialize());
+            SafeWrite.Bytes(args[2], f.Serialize());
             return 0;
         }
 
@@ -3601,10 +3803,26 @@ namespace Bfbc2Dbx
             return different == 0 ? 0 : 1;
         }
 
+        // each command's arguments ('|'-separated after '='): how many it takes, and how many of the first must not be empty
+        static readonly Dictionary<string, string> Usage = new Dictionary<string, string> {
+            { "replace=", "replace=<old>|<new>" }, { "replaceprefix=", "replaceprefix=<old>|<new>[|<except>...]" },
+            { "drop=", "drop=<guid>" }, { "dropfield=", "dropfield=<name>" }, { "partguid=", "partguid=<guid>" },
+            { "copyfield=", "copyfield=<src.dbx>|<src guid>|<field>|<guid>" }, { "set=", "set=<field>|<true|false|0-255>" },
+            { "setfield=", "setfield=<guid>|<field>|<value>" }, { "additem=", "additem=<guid>|<array>|<ref>[|<before ref>]" },
+            { "graft=", "graft=<src.dbx>|<guid>[|<before guid>]" } };
+
+        static bool Arguments(string verb, string[] p, int min, int max, int nonEmpty)
+        {
+            if (p.Length >= min && p.Length <= max && p.Take(nonEmpty).All(x => x.Length > 0)) return true;
+            Console.Error.WriteLine("edit: " + verb + string.Join("|", p) + " - usage: " + Usage[verb]);
+            return false;
+        }
+
+        // exit 0 = written; 1 = a command found nothing to change (nothing written); 2 = bad usage, or the edit could not run
         static int Edit(string[] args)
         {
-            var file = new DbxFile(args[1]);
-            if (!file.IsBinary) { Console.Error.WriteLine("not a binary dbx: " + args[1]); return 2; }
+            var file = Binary(args[1]);
+            if (file == null) return 2;
             var commands = new List<string>();
             foreach (string a in args.Skip(3))
             {
@@ -3614,17 +3832,26 @@ namespace Bfbc2Dbx
             }
             var editor = new Editor(file);
             var sources = new Dictionary<string, DbxFile>();
-            Func<string, DbxFile> source = p => { DbxFile s; if (!sources.TryGetValue(p, out s)) sources[p] = s = new DbxFile(p); return s; };
+            Func<string, DbxFile> source = path =>
+            {
+                DbxFile s;
+                if (sources.TryGetValue(path, out s)) return s;
+                s = DbxFile.Read(path);
+                if (!s.IsBinary) throw new InvalidDataException("not a binary dbx: " + path);
+                return sources[path] = s.Walkable(path);
+            };
             int fieldsSet = 0;
             foreach (string c in commands)
             {
                 int eq = c.IndexOf('=');
                 string verb = eq < 0 ? c : c.Substring(0, eq + 1);
-                string[] p = eq < 0 ? new string[0] : c.Substring(eq + 1).Split('|');
+                string rest = eq < 0 ? "" : c.Substring(eq + 1);
+                string[] p = eq < 0 ? new string[0] : rest.Split('|');
                 switch (verb)
                 {
                     case "replace=":
                     {
+                        if (!Arguments(verb, p, 2, 2, 1)) return 2;
                         int hits = editor.Replace(p[0], p[1]);
                         Console.WriteLine("replace " + p[0] + " -> " + p[1] + ": " + hits + " string(s)");
                         if (hits == 0) { Console.Error.WriteLine("not found: " + p[0]); return 1; }
@@ -3632,22 +3859,29 @@ namespace Bfbc2Dbx
                     }
                     case "drop=":
                     {
+                        if (!Arguments(verb, new[] { rest }, 1, 1, 1)) return 2;
                         int references;
-                        string guid = c.Substring(eq + 1);
-                        int removed = editor.Drop(guid, out references);
-                        Console.WriteLine("drop " + guid + ": " + removed + " instance(s), " + references + " reference(s)");
-                        if (removed == 0) { Console.Error.WriteLine("no instance " + guid); return 1; }
+                        int removed = editor.Drop(rest, out references);
+                        Console.WriteLine("drop " + rest + ": " + removed + " instance(s), " + references + " reference(s)");
+                        if (removed == 0) { Console.Error.WriteLine("no instance " + rest); return 1; }
                         break;
                     }
                     case "replaceprefix=":
-                        Console.WriteLine("replaceprefix " + p[0] + " -> " + p[1] + ": " + editor.ReplacePrefix(p[0], p[1], p.Skip(2).ToList()) + " string(s)");
+                    {
+                        if (!Arguments(verb, p, 2, int.MaxValue, 1)) return 2;
+                        int hits = editor.ReplacePrefix(p[0], p[1], p.Skip(2).ToList());
+                        Console.WriteLine("replaceprefix " + p[0] + " -> " + p[1] + ": " + hits + " string(s)");
+                        if (hits == 0) { Console.Error.WriteLine("no string starts with " + p[0]); return 1; }
                         break;
+                    }
                     case "partguid=":
-                        editor.SetPartitionGuid(c.Substring(eq + 1));
-                        Console.WriteLine("partguid " + c.Substring(eq + 1));
+                        if (!Arguments(verb, new[] { rest }, 1, 1, 1)) return 2;
+                        editor.SetPartitionGuid(rest);
+                        Console.WriteLine("partguid " + rest);
                         break;
                     case "copyfield=":
                     {
+                        if (!Arguments(verb, p, 4, 4, 4)) return 2;
                         bool ok = editor.CopyField(source(p[0]), p[1], p[2], p[3]);
                         Console.WriteLine("copyfield " + p[2] + ": " + (ok ? "copied" : "NOT FOUND"));
                         if (!ok) return 1;
@@ -3655,29 +3889,47 @@ namespace Bfbc2Dbx
                     }
                     case "set=":
                     {
-                        byte v = p[1] == "true" ? (byte)1 : p[1] == "false" ? (byte)0 : byte.Parse(p[1]);
+                        if (!Arguments(verb, p, 2, 2, 2)) return 2;
+                        byte v;
+                        if (p[1] == "true") v = 1;
+                        else if (p[1] == "false") v = 0;
+                        else if (!byte.TryParse(p[1], NumberStyles.None, CultureInfo.InvariantCulture, out v))
+                        { Console.Error.WriteLine("set: " + p[1] + " is not true, false or 0-255"); return 2; }
                         int n = editor.SetByte(p[0], v);
                         Console.WriteLine("set " + p[0] + " = " + p[1] + ": " + n + " field(s)");
                         if (n == 0) { Console.Error.WriteLine("no bool/byte field " + p[0]); return 1; }
                         break;
                     }
                     case "setfield=":
-                        if (!editor.SetField(p[0], p[1], p[2])) { Console.Error.WriteLine("setfield: no settable field " + p[1] + " in " + p[0]); return 1; }
+                    {
+                        if (!Arguments(verb, p, 3, int.MaxValue, 2)) return 2;
+                        string value = string.Join("|", p.Skip(2));          // a value may hold '|'
+                        bool rounded;
+                        try
+                        {
+                            if (!editor.SetField(p[0], p[1], value, out rounded)) { Console.Error.WriteLine("setfield: no settable field " + p[1] + " in " + p[0]); return 1; }
+                        }
+                        catch (InvalidDataException e) { Console.Error.WriteLine("setfield " + p[0] + "|" + p[1] + ": " + e.Message); return 1; }
+                        if (rounded) Console.WriteLine("setfield " + p[1] + ": rounded to the nearest 4-byte value");
                         fieldsSet++;
                         break;
+                    }
                     case "additem=":
                     {
-                        bool ok = editor.AddItem(p[0], p[1], p[2], p.Length > 3 ? p[3] : null);
+                        if (!Arguments(verb, p, 3, 4, 3)) return 2;
+                        bool ok = editor.AddItem(p[0], p[1], p[2], p.Length > 3 && p[3].Length > 0 ? p[3] : null);
                         Console.WriteLine("additem " + p[2] + " -> " + p[1] + ": " + (ok ? "added" : "NOT FOUND"));
                         if (!ok) return 1;
                         break;
                     }
                     case "dropfield=":
-                        Console.WriteLine("dropfield " + c.Substring(eq + 1) + ": " + editor.DropField(c.Substring(eq + 1)) + " element(s)");
+                        if (!Arguments(verb, new[] { rest }, 1, 1, 1)) return 2;
+                        Console.WriteLine("dropfield " + rest + ": " + editor.DropField(rest) + " element(s)");
                         break;
                     case "graft=":
                     {
-                        int n = editor.Graft(source(p[0]), p[1], p.Length > 2 ? p[2] : null);
+                        if (!Arguments(verb, p, 2, 3, 2)) return 2;
+                        int n = editor.Graft(source(p[0]), p[1], p.Length > 2 && p[2].Length > 0 ? p[2] : null);
                         Console.WriteLine("graft " + p[1] + " from " + Path.GetFileName(p[0]) + ": " + n + " instance(s)");
                         if (n == 0 && file.Instance(p[1]) == null) { Console.Error.WriteLine("nothing grafted for " + p[1]); return 1; }
                         break;
@@ -3688,8 +3940,141 @@ namespace Bfbc2Dbx
                 }
             }
             if (fieldsSet > 0) Console.WriteLine("setfield: " + fieldsSet + " field(s)");
-            File.WriteAllBytes(args[2], file.Serialize());
+            SafeWrite.Bytes(args[2], file.Serialize());
             return 0;
+        }
+    }
+
+    // A write the tools refuse: into the game folder, which they only read.
+    public sealed class WriteRefusedException : IOException
+    {
+        public WriteRefusedException(string message) : base(message) { }
+    }
+
+    // Every file the C# tools write goes through here, as core fbrb1943.py's checked() and write_file() do:
+    // - never into the BF1943 game folder (core game1943.find_game: BF1943_GAME, else the Xenia kit's dist\xenon in
+    //   the suite; a folder counts when it has levels\), however the path is cased and through whatever link or
+    //   junction it leads there (both sides resolved as os.path.realpath + normcase do);
+    // - written to a temporary file beside the target and moved into its place (MoveFileEx, as os.replace): a write
+    //   that fails leaves the old file, and a hard link at the target only loses its name - the file it linked to,
+    //   in the game folder or anywhere, is left as it was. Writing over the input is therefore safe (it was read whole).
+    public static class SafeWrite
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool MoveFileEx(string from, string to, uint flags);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern uint GetFinalPathNameByHandle(IntPtr handle, StringBuilder path, uint size, uint flags);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool CloseHandle(IntPtr handle);
+
+        const uint MoveReplaceExisting = 1, MoveWriteThrough = 8, ShareAll = 7, OpenExisting = 3, BackupSemantics = 0x02000000;
+
+        public static void Bytes(string path, byte[] data) { Write(path, data); }
+
+        // UTF-8 without a byte-order mark (as File.WriteAllText)
+        public static void Text(string path, string text) { Write(path, new UTF8Encoding(false).GetBytes(text)); }
+
+        // The folder core game1943.find_game() finds, or null when there is none.
+        public static string GameFolder()
+        {
+            var candidates = new List<string>();
+            string env = Environment.GetEnvironmentVariable("BF1943_GAME");
+            if (!string.IsNullOrEmpty(env)) candidates.Add(env);
+            string suite = SuiteRoot();
+            if (suite != null) candidates.Add(Path.Combine(suite, "bf1943-xenia-kit", "output", "title", "dist", "xenon"));
+            foreach (string p in candidates)
+            {
+                try { if (Directory.Exists(Path.Combine(p, "levels"))) return Path.GetFullPath(p); }
+                catch (ArgumentException) { }
+                catch (NotSupportedException) { }
+            }
+            return null;
+        }
+
+        // the suite folder this exe was built in (the nearest folder above it with core\bfbc2core\game1943.py), or null
+        static string SuiteRoot()
+        {
+            for (string d = AppDomain.CurrentDomain.BaseDirectory; !string.IsNullOrEmpty(d); d = Path.GetDirectoryName(d))
+                if (File.Exists(Path.Combine(d, "core", "bfbc2core", "game1943.py"))) return d;
+            return null;
+        }
+
+        // path as Windows resolves it: links and junctions followed for the part that exists, case folded
+        public static string Canonical(string path)
+        {
+            string full = Path.GetFullPath(path);
+            var tail = new List<string>();
+            string cur = full;
+            while (cur != null && !File.Exists(cur) && !Directory.Exists(cur))
+            {
+                tail.Insert(0, Path.GetFileName(cur));
+                cur = Path.GetDirectoryName(cur);
+            }
+            string resolved = cur == null ? full : (Final(cur) ?? cur);
+            foreach (string t in tail) resolved = Path.Combine(resolved, t);
+            return resolved.TrimEnd('\\', '/').ToLowerInvariant();
+        }
+
+        static string Final(string path)
+        {
+            IntPtr h = CreateFile(path, 0, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero);
+            if (h == new IntPtr(-1)) return null;
+            try
+            {
+                var b = new StringBuilder(1024);
+                uint n = GetFinalPathNameByHandle(h, b, (uint)b.Capacity, 0);
+                if (n >= b.Capacity)
+                {
+                    b = new StringBuilder((int)n + 1);
+                    n = GetFinalPathNameByHandle(h, b, (uint)b.Capacity, 0);
+                }
+                if (n == 0 || n >= b.Capacity) return null;
+                string s = b.ToString();
+                if (s.StartsWith(@"\\?\UNC\")) return @"\\" + s.Substring(8);
+                if (s.StartsWith(@"\\?\")) return s.Substring(4);
+                return s;
+            }
+            finally { CloseHandle(h); }
+        }
+
+        // True when path is folder or lies in it (both resolved); false on another drive.
+        public static bool Contains(string folder, string path)
+        {
+            string f = Canonical(folder), p = Canonical(path);
+            return p == f || p.StartsWith(f + "\\", StringComparison.Ordinal);
+        }
+
+        static void Write(string path, byte[] data)
+        {
+            string full = Path.GetFullPath(path);
+            string game = GameFolder();
+            if (game != null && Contains(game, full))
+                throw new WriteRefusedException(full + " would be written in the game folder (" + game + ", also through a link or junction), "
+                                                + "which the tools only read; not written");
+            if (Directory.Exists(full)) throw new IOException(full + " is a folder; not written");
+            string tmp = Path.Combine(Path.GetDirectoryName(full), ".dbxedit-" + System.Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    fs.Write(data, 0, data.Length);
+                    fs.Flush(true);
+                }
+                if (!MoveFileEx(tmp, full, MoveReplaceExisting | MoveWriteThrough))
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    string why = new System.ComponentModel.Win32Exception(err).Message;
+                    if (err == 5) throw new UnauthorizedAccessException("cannot replace " + full + ": " + why);
+                    throw new IOException("cannot replace " + full + ": " + why, unchecked((int)0x80070000) | err);
+                }
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch (Exception) { }
+                throw;
+            }
         }
     }
 
@@ -3745,6 +4130,8 @@ namespace Bfbc2Dbx
         // { cause, what to do }
         public static string[] Explain(Exception e)
         {
+            if (e is WriteRefusedException)
+                return new[] { e.Message, "Write the output outside the game folder: the tools only read it (extract or copy what you edit elsewhere)." };
             var io = e as IOException;
             int code = io != null ? (io.HResult & 0xFFFF) : 0;
             if (io != null && (code == 32 || code == 33))
@@ -3768,7 +4155,8 @@ namespace Bfbc2Dbx
                    "Details were saved to:" + Environment.NewLine + (path ?? "(no log file)");
         }
 
-        // A command-line tool's last word on an unexpected error: logged, explained on stderr, exit code 1.
+        // A command-line tool's last word on an unexpected error: logged, explained on stderr, exit code 2 (DbxEdit's
+        // and LevelDiff's "could not run"; 1 is a result: failed edits, a level's errors, differences).
         public static int Fail(Exception e)
         {
             Error(e, null);
@@ -3776,7 +4164,7 @@ namespace Bfbc2Dbx
             Console.Error.WriteLine("error: " + ce[0]);
             Console.Error.WriteLine("  what to do: " + ce[1]);
             Console.Error.WriteLine("  details: " + (path ?? "(no log file)"));
-            return 1;
+            return 2;
         }
     }
 }

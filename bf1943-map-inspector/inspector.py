@@ -423,10 +423,19 @@ def main(argv):
     if '--screenshot' in opts:
         v.exit_after = int(opts.get('--frames', 40))
     v.run()
-    if '--screenshot' in opts and v.screenshot is not None:
-        import matplotlib.pyplot as plt
-        plt.imsave(opts['--screenshot'], np.asarray(v.screenshot))
-        print('screenshot:', opts['--screenshot'])
+    if '--screenshot' in opts:
+        return save_screenshot(opts['--screenshot'], v.screenshot)
+    return 0
+
+
+def save_screenshot(path, shot):
+    """Writes the viewer's screenshot to path: exit code 0, or 1 when the viewer took none (nothing written)."""
+    if shot is None:
+        print(f'error: no screenshot was taken - {path} not written')
+        return 1
+    import matplotlib.pyplot as plt
+    plt.imsave(path, np.asarray(shot))
+    print('screenshot:', path)
     return 0
 
 

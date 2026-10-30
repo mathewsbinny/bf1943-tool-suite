@@ -40,10 +40,10 @@ for start,r in sorted(records.items()):
     if ran and f:hit.add(f[0])
     rows.append(dict(start=f'{start:08x}',end=f'{r["end"]:08x}',pdata_function=f'{f[0]:08x}' if f else '',called=r['calls'],
         instructions=len(r['executed']),instructions_executed=ran,threads=bin(r['threads']).count('1'),callers=' '.join(f'{c:08x}' for c in sorted(r['callers']))))
-with (session/'function-coverage.tsv').open('w',newline='') as out:
-    w=csv.DictWriter(out,fieldnames=list(rows[0]) if rows else ['start'],delimiter='\t');w.writeheader();w.writerows(rows)
+with (session/'function-coverage.tsv').open('w',encoding='utf-8',newline='') as out:
+    w=csv.DictWriter(out,fieldnames=list(rows[0]) if rows else ['start'],delimiter='\t',lineterminator='\n');w.writeheader();w.writerows(rows)
 summary=dict(session=session.name,format_sha256=FORMAT_SHA256,trace_records=len(records),records_executed=sum(r['instructions_executed']>0 for r in rows),
     pdata_functions=len(functions),pdata_functions_executed=len(hit),pdata_coverage=round(len(hit)/len(functions),4),
     instructions_executed=sum(r['instructions_executed'] for r in rows))
-(session/'function-coverage.json').write_text(json.dumps(summary,indent=2)+'\n')
+(session/'function-coverage.json').write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8', newline='\n')
 print(summary)

@@ -47,8 +47,13 @@ def opfor_root(given=None):
 
 
 def reference_of(root, lv):
+    """DICE's path data for the level: the kept original while NavKit's file is installed. A level that had none
+    (navkit.py install left its .opfor-none marker) gives the backup's path, which does not exist: the installed
+    file is NavKit's own, not a reference."""
     p = os.path.join(root, 'game', 'Output', 'win32', 'ai', 'levels', lv, 'infantry', 'pathdata.hpd')
-    return p + '.opfor-orig' if os.path.isfile(p + '.opfor-orig') else p
+    if os.path.isfile(p + '.opfor-orig') or os.path.isfile(p + '.opfor-none'):
+        return p + '.opfor-orig'
+    return p
 
 
 def level_xml(root, lv):
@@ -280,7 +285,7 @@ def main(argv):
     print(f"parity run '{name}': {len(targets)} level(s)")
     rows = [run_level(root, lv, path, print) for lv, path in targets]
     run = {'name': name, 'date': time.strftime('%Y-%m-%d %H:%M'), 'levels': rows}
-    json.dump(run, open(save_path(root, name), 'w'), indent=1)
+    json.dump(run, open(save_path(root, name), 'w', encoding='utf-8', newline='\n'), indent=1)
     print()
     table(run)
     print(f"\nsaved: {save_path(root, name)}")

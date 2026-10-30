@@ -4,11 +4,18 @@
 
 1. Catchers listen on 0.0.0.0 at the ports the client could be sending to by mistake (the game's original
    1001/1003 and Xenia's +10000 remaps 11001/11003); anything received is logged with its source and bytes.
-2. When the game's server port 127.0.0.1:25003 becomes bound (detected by a failing test bind), the probe
-   sends test datagrams to it from its own socket and logs any reply.
-Results go to <session folder>/udp-join-probe.txt. Only loopback traffic; nothing leaves the PC.
+2. When the game's server port 25003 becomes bound (read from Windows' UDP table: no socket is opened on it), the
+   probe sends test datagrams to 127.0.0.1:25003 from its own socket and logs any reply.
+Results go to <session folder>/udp-join-probe.txt. Only loopback traffic; nothing leaves the PC. Windows only.
+
+Before 2026-10-30 the probe tested the port by binding 127.0.0.1:25003 itself. Windows lets that bind succeed next to
+a server bound to 0.0.0.0:25003, so a running server read as unbound, and for the moment the probe held the bind,
+datagrams to 127.0.0.1:25003 went to the probe instead of the server (tests/test_udp_join_probe.py).
 """
+import ctypes
+import os
 import socket
+import struct
 import sys
 import time
 from pathlib import Path
@@ -16,17 +23,29 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 SERVER = ('127.0.0.1', 25003)
 CATCH = [1001, 1003, 11001, 11003]
+UDP_TABLE_OWNER_PID, AF_INET, ERROR_INSUFFICIENT_BUFFER = 1, 2, 122
+
+
+def udp_endpoints():
+    """Every local IPv4 UDP endpoint, [(address, port, process id)], from Windows' UDP table (GetExtendedUdpTable)."""
+    get = ctypes.WinDLL('iphlpapi').GetExtendedUdpTable
+    size = ctypes.c_ulong(0)
+    for _ in range(5):
+        buf = ctypes.create_string_buffer(max(size.value, 4))
+        rc = get(buf, ctypes.byref(size), False, AF_INET, UDP_TABLE_OWNER_PID, 0)
+        if rc == 0:
+            n = struct.unpack_from('<I', buf.raw, 0)[0]
+            rows = [struct.unpack_from('<4sII', buf.raw, 4 + 12 * k) for k in range(n)]
+            return [(socket.inet_ntoa(addr), socket.ntohs(port & 0xFFFF), pid) for addr, port, pid in rows]
+        if rc != ERROR_INSUFFICIENT_BUFFER:
+            raise OSError(f'GetExtendedUdpTable failed: Windows error {rc}')
+    raise OSError('GetExtendedUdpTable: the table kept growing')
 
 
 def server_bound():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.bind(SERVER)
-        return False
-    except OSError:
-        return True
-    finally:
-        s.close()
+    """Whether another process has a UDP socket on the server's port at its address or the wildcard address."""
+    return any(port == SERVER[1] and addr in (SERVER[0], '0.0.0.0') and pid != os.getpid()
+               for addr, port, pid in udp_endpoints())
 
 
 def main():
@@ -35,7 +54,7 @@ def main():
         return 0 if len(sys.argv) > 1 else 1
     out = Path(sys.argv[1]) / 'udp-join-probe.txt'
     minutes = float(sys.argv[2]) if len(sys.argv) > 2 else 20
-    log = out.open('a', encoding='utf-8')
+    log = out.open('a', encoding='utf-8', newline='\n')
 
     def note(msg):
         line = f'{time.strftime("%H:%M:%S")} {msg}'

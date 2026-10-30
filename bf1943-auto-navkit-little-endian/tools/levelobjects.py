@@ -27,6 +27,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
+import havok461  # noqa: E402
 import hkpack  # noqa: E402
 from bfbc2core import xmlinst  # noqa: E402
 
@@ -95,24 +96,55 @@ def havok_index(bases):
     return out
 
 
+def triangles16(words):
+    """Triangles of 16-bit indices stored in groups of four (three corners + padding); a last triangle stored without
+    its padding word (a count of 4n + 3) is kept."""
+    words = np.asarray(words)
+    full = len(words) // 4 * 4
+    tris = words[:full].reshape(-1, 4)[:, :3]
+    if len(words) - full == 3:
+        tris = np.concatenate([tris, words[full:].reshape(1, 3)])
+    return tris
+
+
 def triangles(path):
-    """Collision triangles (local space) of a blueprint's Havok asset (storage extended mesh subparts;
-    16-bit indices in groups of four: three corners + padding)."""
+    """Collision triangles (local space) of a blueprint's Havok asset, or None: storage extended mesh subparts and
+    convex shapes' boxes. Havok 5.5 (BFBC2, hkp* classes, described in the file) and Havok 4.6.1 (BF1943, hk* classes,
+    layouts from havok461.py), in the file's own byte order."""
     try:
-        pf = hkpack.load(path)
-    except ValueError:
+        pf = hkpack.Packfile(open(path, 'rb').read(), classes=havok461.CLASSES)
+        return triangles_of(pf)
+    except (ValueError, struct.error, IndexError):
         return None
+
+
+def triangles_of(pf):
+    """triangles() of a loaded packfile."""
+    if pf.contents_version.startswith('Havok-4.'):
+        tris = []
+        for off in pf.objects_of('hkStorageExtendedMeshShapeMeshSubpartStorage'):
+            v, t = havok461.triangles(pf, off)
+            if v and t:
+                V, T = np.asarray(v, np.float32), np.asarray(t, np.int64)
+                if T.max() < len(V):
+                    tris.append(V[T])
+        for off in pf.objects_of('hkConvexVerticesShape'):
+            box, _half, _centre = havok461.convex_box(pf, off)
+            if box:
+                tris.append(np.asarray(box, np.float32))
+        return np.concatenate(tris).astype(np.float32) if tris else None
+    e = pf.e
     tris = []
     for off in pf.objects_of('hkpStorageExtendedMeshShapeMeshSubpartStorage'):
         p = pf.deref(off + 8)
-        n = struct.unpack_from('<i', pf.d, off + 12)[0]
+        n = struct.unpack_from(e + 'i', pf.d, off + 12)[0]
         ip = pf.deref(off + 0x14)
-        ni = struct.unpack_from('<i', pf.d, off + 0x18)[0]
+        ni = struct.unpack_from(e + 'i', pf.d, off + 0x18)[0]
         if not (p and n > 0 and ip and ni > 0):
             continue
-        v = np.frombuffer(pf.d, dtype='<f4', count=n * 4, offset=p).reshape(-1, 4)[:, :3]
-        idx = np.frombuffer(pf.d, dtype='<u2', count=ni, offset=ip).reshape(-1, 4)[:, :3]
-        if idx.max() < n:
+        v = np.frombuffer(pf.d, dtype=e + 'f4', count=n * 4, offset=p).reshape(-1, 4)[:, :3]
+        idx = triangles16(np.frombuffer(pf.d, dtype=e + 'u2', count=ni, offset=ip))
+        if len(idx) and idx.max() < n:
             tris.append(v[idx])
     # convex shapes (boxes, rails, doors): the 12 triangles of each shape's bounding box. Vertices are stored as
     # FourVectors (x0..3, y0..3, z0..3); the first array member of a plausible size holds them.
@@ -121,9 +153,9 @@ def triangles(path):
             p = pf.deref(off + k)
             if not p:
                 continue
-            n = struct.unpack_from('<i', pf.d, off + k + 4)[0]
+            n = struct.unpack_from(e + 'i', pf.d, off + k + 4)[0]
             if 0 < n < 10000:
-                fv = np.frombuffer(pf.d, dtype='<f4', count=n * 12, offset=p).reshape(n, 3, 4)
+                fv = np.frombuffer(pf.d, dtype=e + 'f4', count=n * 12, offset=p).reshape(n, 3, 4)
                 v = np.stack([fv[:, 0, :].ravel(), fv[:, 1, :].ravel(), fv[:, 2, :].ravel()], 1)
                 lo, hi = v.min(0), v.max(0)
                 c = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
@@ -169,10 +201,10 @@ def main(argv):
             v = [float(a) for a in t.group(1).split('/')]
             if any(abs(c) > 1e-3 for c in v[12:15]):
                 spawns.append(v[12:15])
-    json.dump(spawns, open(os.path.join(level_dir, 'soldier_spawns.json'), 'w'))
-    json.dump(order_points(x), open(os.path.join(level_dir, 'order_points.json'), 'w'))
-    json.dump(objs, open(os.path.join(level_dir, 'objects.json'), 'w'))
-    json.dump(groups, open(os.path.join(level_dir, 'group_instances.json'), 'w'))
+    json.dump(spawns, open(os.path.join(level_dir, 'soldier_spawns.json'), 'w', encoding='utf-8', newline='\n'))
+    json.dump(order_points(x), open(os.path.join(level_dir, 'order_points.json'), 'w', encoding='utf-8', newline='\n'))
+    json.dump(objs, open(os.path.join(level_dir, 'objects.json'), 'w', encoding='utf-8', newline='\n'))
+    json.dump(groups, open(os.path.join(level_dir, 'group_instances.json'), 'w', encoding='utf-8', newline='\n'))
 
     havok = havok_index(bases)
     # blueprints without their own collision asset use the one of the object their Mesh reference names

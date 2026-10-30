@@ -105,7 +105,13 @@ class App:
         if not lv:
             return
         p = navkit.paths(lv)
-        s = json.load(open(p['settings'], encoding='utf-8')) if os.path.isfile(p['settings']) else {}
+        s = navkit.stamps_of(lv)              # {} not prepared; {'unreadable': why} for a damaged navkit.json
+        if 'unreadable' in s:
+            for m in self.marks.values():
+                m['text'] = ''
+            self.info['text'] = s['unreadable']
+            self.view['state'] = 'normal' if os.path.isfile(p['hpd']) else 'disabled'
+            return
         for cmd, m in self.marks.items():
             v = s.get(DONE_KEY[cmd])
             m['text'] = ('✔' if 'FAILED' not in v else '✘') if v else ''

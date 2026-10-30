@@ -431,26 +431,40 @@ def ship_ledge_links(s, ships, terrain, usable=lambda x, z: True, taken=(), log=
     return out, report
 
 
-def level_links(lv, log=print, game=None):
+def current_detailed(st):
+    """Whether navkit.json stamps a 0.2 m pass of the current preparation over the current detailed sectors (what
+    navkit.py build builds the detailed sectors from)."""
+    s2 = (st.get('samples') or {}).get('0.2') or {}
+    return bool(st.get('preparation')) and s2.get('preparation') == st['preparation'] and \
+        s2.get('sectors') == st.get('detailed_sectors')
+
+
+def level_links(lv, log=print, game=None, detailed=None):
     """The jump links of a prepared and sampled level: from its 0.2 m samples where the gun's sector is detailed,
-    else its 0.8 m samples. game: the game folder (navkit.py's --game); None = game1943.find_game's default
-    (2026-10-26: it was always the default, so a build for another copy took that copy's spawns and terrain)."""
+    else its 0.8 m samples. game: the game folder (navkit.py's --game); None = the copy the level was prepared from
+    (2026-10-26: it was always the default, so a build for another copy took that copy's spawns and terrain).
+    detailed: whether the build uses the 0.2 m samples (navkit.py build says; None: when navkit.json stamps a current
+    0.2 m pass). Without them every sector is read at 0.8 m, as the build builds it (2026-10-30 review: samples_02.bin
+    was read whenever it was on disk, a pass of an earlier sampling or preparation)."""
     import navaudit1943
     import navbuild
+    import navkitjson1943 as nj
     import spawnmap
     from bfbc2core import game1943, terrain, water
     p = navaudit1943.level_paths(lv)
-    st = json.load(open(p['settings'], encoding='utf-8'))
-    game = game1943.find_game(game)
+    st = nj.read(lv)
+    if detailed is None:
+        detailed = current_detailed(st)
+    game = game1943.find_game(game or st.get('game'))
     g = game1943.Game(game, lv)
     hf = terrain.read(g.data(f'terrains/{lv}/{lv}.heightfield-000.res'))
     m = spawnmap.spawn_map(game, lv)
     guns = [(s['name'], s['position']) for o in m['objectives'] for s in o['spawns'] if s.get('vehicle') in GUNS]
     guns += [(s['name'], s['position']) for s in m.get('unowned_vehicle_spawns', []) if s.get('vehicle') in GUNS]
     wpath = os.path.join(p['objects'], 'water_mesh.res')
-    mesh = water.read_mesh(wpath) if os.path.isfile(wpath) else None
+    mesh = water.read_mesh(wpath) if soldier1943.has_water(st) and os.path.isfile(wpath) else None
     xoff, zoff = st['sector_offsets']
-    dset = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()}
+    dset = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()} if detailed else set()
     # objects whose blueprint says their tops are not floor are left out: ForbidPathfinding (Iwo Jima's jetties and
     # boardwalk, trees, razor wire), ExcludeFromPathfinding (vegetation), dynamic props - the build drops their surfaces
     placed = json.load(open(os.path.join(p['objects'], 'objects.json'), encoding='utf-8'))
@@ -465,7 +479,7 @@ def level_links(lv, log=print, game=None):
     out = []
     for which, src in (('detailed', 'samples_02.bin'), ('normal', 'samples.bin')):
         path = os.path.join(p['samples'], src)
-        if not os.path.isfile(path):
+        if not os.path.isfile(path) or (which == 'detailed' and not detailed):
             continue
         mine = [(n, q) for n, q in guns if detailed_at(q[0], q[2]) == (which == 'detailed')]
         my_boxes = [b for b in boxes if detailed_at((b['min'][0] + b['max'][0]) / 2, (b['min'][2] + b['max'][2]) / 2)
@@ -482,7 +496,8 @@ def level_links(lv, log=print, game=None):
             out += raised_floor_links(s, height, my_boxes, log)
             log(f'{lv}: {len(out) - n0} raised-floor jump link(s) on the {s.pitch:g} m samples')
         if SHIP_LEDGES:
-            ships = ship_boxes(boxes, height, float(st.get('sea_level', 0.0)))
+            # 2026-10-30: float(None) raised on a level without water (prepare writes sea_level None)
+            ships = ship_boxes(boxes, height, soldier1943.sea_level(st, hf))
             if ships:
                 taken = [tuple(r['platform']) for r in out if r.get('rule') != 'ship ledge']
                 log(f'{lv}: {len(ships)} ship(s), ledges on the {s.pitch:g} m samples')
@@ -498,12 +513,12 @@ def main(argv):
     ap = argparse.ArgumentParser(prog='jumplinks1943.py', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('level')
     ap.add_argument('--json')
-    ap.add_argument('--game', help='the game folder (default: BF1943_GAME, else the output of bf1943-xenia-kit)')
+    ap.add_argument('--game', help='the game folder (default: the copy the level was prepared from)')
     a = ap.parse_args(argv[1:])
     import navaudit1943
     links = level_links(a.level, game=a.game)
     path = a.json or os.path.join(navaudit1943.level_paths(a.level)['navkit'], 'jump_links.json')
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(links, f, indent=1)
     print(f'{a.level}: {len(links)} jump link(s) -> {path}')
     return 0

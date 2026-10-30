@@ -121,7 +121,7 @@ def main():
         'No signatures, calling conventions, runtime resolution, or API behavior are established.']
     require(before == [provenance(p) for p in (source, image)], 'Input changed during parsing')
     output = ROOT / 'research/evidence/xex-imports.json'
-    output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8', newline='\n')
     with (ROOT / 'work/xex-analysis/imports.tsv').open('w', encoding='utf-8', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=['library', 'ordinal', 'name', 'slot', 'thunk'],
                                 delimiter='\t', extrasaction='ignore', lineterminator='\n')

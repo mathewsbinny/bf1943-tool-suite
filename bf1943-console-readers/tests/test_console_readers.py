@@ -1,6 +1,7 @@
 r"""The STFS reader (stfs.py) on packages built here: both kinds (read-only: one hash table per level; others:
 two), with a consecutive file, a fragmented file (hash-entry chain), a folder; info, list and extract, with a
-filter. Your own BF1943 package is read by the Xenia kit's full build test (run_tests.py bf1943).
+filter; damaged packages (parent loops, short files, block chains that loop) refused, and a damaged file leaves
+an earlier extracted copy intact. Your own BF1943 package is read by the Xenia kit's full build test (run_tests.py bf1943).
 
   python test_console_readers.py
 """
@@ -12,7 +13,8 @@ import struct
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True                        # run_tests.py starts tests without -B
+HERE =os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..'))
 sys.path.insert(0, os.path.join(ROOT, 'stfs'))
 import stfs  # noqa: E402
@@ -148,6 +150,97 @@ def main(argv):
                 why = str(e)
             p.f.close()
             c.check('bytes' in why and 'returned' not in why, f'stfs: {label} is refused', why)
+        # a fragmented file's block chain that loops (b.bin: 5 -> 3 -> 4): refused, not the same block read twice
+        hashes = table - 0x1000                                         # the level-0 hash table of a read-only package
+        for label, links in (('loops on its first block', {5: 5}), ('comes back to its first block', {3: 5})):
+            path = os.path.join(work, 'loop')
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                for b, nxt in links.items():
+                    f.seek(hashes + b * 0x18 + 0x15)
+                    f.write(nxt.to_bytes(3, 'big'))
+            p = stfs.Package(path)
+            try:
+                got = p.read(next(e for e in p.entries if e['path'] == 'Content/b.bin'))
+                why = f'{len(got)} bytes returned'
+            except ValueError as e:
+                why = str(e)
+            p.f.close()
+            c.check('chain' in why and 'returned' not in why, f'stfs: a block chain that {label} is refused', why)
+        # a damaged file met by extract leaves the copy extracted earlier as it was (read before anything is written)
+        path = os.path.join(work, 'again')
+        build_stfs(path, True)
+        dest = os.path.join(work, 'again_out')
+        stfs_cli('extract', path, dest, 'top.txt')
+        with open(path, 'r+b') as f:
+            f.seek(table + 3 * 0x40 + 0x34)                             # top.txt: a size larger than its one block
+            f.write(struct.pack('>I', 0x1001))
+        try:
+            stfs_cli('extract', path, dest, 'top.txt')
+            why = 'extracted without an error'
+        except ValueError as e:
+            why = str(e)
+        kept = open(os.path.join(dest, 'top.txt'), 'rb').read()
+        c.check('damaged' in why and kept == b'top level' and os.listdir(dest) == ['top.txt'],
+                'stfs: a damaged file leaves its earlier extracted copy intact (no temporary file left)',
+                f'{why}; top.txt holds {kept!r}; folder {os.listdir(dest)}')
+        # 2026-10-30 review: the command line's exit codes; extract's collisions; damaged file tables; second copies
+        path = os.path.join(work, 'cli')
+        build_stfs(path, True)
+        code, out = stfs_cli('lsit', path)
+        c.check(code == 1 and 'Usage' in out, f'stfs: an unknown command prints the usage and exits 1 (exit {code})')
+        code, out = stfs_cli('extract', path)
+        c.check(code == 1 and 'Usage' in out, f'stfs: extract without a folder prints the usage and exits 1 (exit {code})')
+
+        def renamed(name, index, parent=None):
+            """The package with entry <index> renamed (and moved to <parent>)."""
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                f.seek(table + index * 0x40)
+                e = bytearray(f.read(0x40))
+                e[:0x28] = name.encode('latin-1').ljust(0x28, b'\0')
+                e[0x28] = (e[0x28] & 0xC0) | len(name)
+                if parent is not None:
+                    struct.pack_into('>H', e, 0x32, parent)
+                f.seek(table + index * 0x40)
+                f.write(e)
+        for label, args in (('two files whose names differ only in case', ('TOP.TXT', 1, 0xFFFF)),
+                            ('a file named as other files\' folder', ('content', 3))):
+            renamed(*args)
+            dest = os.path.join(work, 'collide_out')
+            shutil.rmtree(dest, ignore_errors=True)
+            try:
+                stfs_cli('extract', path, dest)
+                why = 'extracted without an error'
+            except ValueError as e:
+                why = str(e)
+            c.check('damaged' in why and not os.path.exists(dest), f'stfs: extract refuses {label}, nothing written', why)
+        for label, edit in (('a parent past the file table', lambda e: struct.pack_into('>H', e, 0x32, 0x0123)),
+                            ('a parent that is a file', lambda e: struct.pack_into('>H', e, 0x32, 1)),
+                            ('a name longer than its 40-byte field', lambda e: e.__setitem__(0x28, 0x40 | 0x30))):
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                f.seek(table + 2 * 0x40)                                # Content/b.bin
+                e = bytearray(f.read(0x40))
+                edit(e)
+                f.seek(table + 2 * 0x40)
+                f.write(e)
+            try:
+                stfs.Package(path).f.close()
+                why = 'read without an error'
+            except ValueError as e:
+                why = str(e)
+            c.check('damaged' in why, f'stfs: {label} is refused', why)
+        build_stfs(path, False)
+        with open(path, 'r+b') as f:
+            f.seek(0x37B)
+            f.write(bytes([2]))                                         # its hash tables' second copies are current
+        try:
+            stfs.Package(path).f.close()
+            why = 'read without an error'
+        except ValueError as e:
+            why = str(e)
+        c.check('second copies' in why, 'stfs: a package whose second hash-table copies are current is refused', why)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print('all passed' if not c.failed else f'{c.failed} check(s) failed')

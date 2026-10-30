@@ -52,4 +52,5 @@ layers.
 Window layout is kept in `%APPDATA%\bf1943-tool-suite\`.
 
 For tests: `inspector.py <level> --screenshot out.png [--frames N] [--select <guid>] [--measure "x,y,z;x,y,z"]`
-draws, saves a screenshot and exits.
+draws, saves a screenshot and exits (exit code 1, nothing written, when the viewer took no picture).
+`tests/test_inspector.py` checks that exit code without game data or a window.

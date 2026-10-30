@@ -89,9 +89,11 @@ PITCH = 0.8
 SECTOR = 100.0
 
 
-def coarse(f):
-    """Every (PITCH / f.pitch)-th column of a fine run, keeping all surfaces of the column."""
-    step = int(round(PITCH / f.pitch))
+def coarse(f, pitch=None):
+    """Every (pitch / f.pitch)-th column of a fine run, keeping all surfaces of the column (pitch: the target, by
+    default PITCH, 0.8 m; navbuild's detailed pass asks for 0.2)."""
+    pitch = pitch or PITCH
+    step = int(round(pitch / f.pitch))
     nx, nz = (f.nx - 1) // step + 1, (f.nz - 1) // step + 1
     start, idx = [0], []
     for j in range(nz):
@@ -101,7 +103,7 @@ def coarse(f):
             start.append(len(idx))
     idx = np.array(idx, dtype=np.int64)
     hit = f.hit[idx] if f.hit is not None and len(f.hit) else None
-    return navsample.Samples(PITCH, f.min_x, f.min_z, nx, nz, f.y_top, f.y_bottom, f.radius, f.cap_bottom,
+    return navsample.Samples(pitch, f.min_x, f.min_z, nx, nz, f.y_top, f.y_bottom, f.radius, f.cap_bottom,
                              f.cap_top, f.ray_radius, np.array(start), f.y[idx], f.normal[idx], f.flags[idx], hit)
 
 
@@ -693,7 +695,12 @@ def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k):
     if n < 2:
         return out
     col_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
-    lowest = np.minimum.reduceat(y, s.start[:-1].clip(max=len(y) - 1)) if len(y) else y
+    # each column's lowest surface, over the non-empty columns only (reduceat on an empty column's start would read
+    # the next column's first surface, and clipping the starts cut the last column short when empty ones follow it)
+    full = np.diff(s.start) > 0
+    lowest = np.full(s.nx * s.nz, np.inf)
+    if len(y):
+        lowest[full] = np.minimum.reduceat(y, s.start[:-1][full])
     lowest = lowest[col_of]
     raised = keep & ~terrain & (y - lowest >= ROOF_RAISE)
     kc = comp[keep]

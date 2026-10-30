@@ -168,38 +168,55 @@ def main():
         same = x.write('same', x.text)
         check(open(same, 'rb').read() == open(wake, 'rb').read(), 'xml and import without a change give the partition back byte for byte')
 
+        baseline = {}
+
         def broken(name, text, severity, says, also=(), args=()):
+            """The check of a broken copy reports its rule (says) and nothing else: every ERROR and WARN line is that
+            rule's, one of also's (the other rules the break necessarily breaks, each required), or one the shipped
+            level has with the same options (with --bundle: the partitions in none of its bundles)."""
+            args = tuple(args)
+            if args not in baseline:
+                baseline[args] = {ln for ln in run('check', wake, *args)[1].splitlines() if ln.startswith(('ERROR  ', 'WARN   '))}
             p = x.write(name, text)
             code, out = run('check', p, *args)
             want = 'ERROR  ' if severity == 'error' else 'WARN   '
             lines = [ln for ln in out.splitlines() if ln.startswith(want) and says in ln]
-            ok = lines and (code == 1) == (severity == 'error') and all(a in out for a in also)
-            check(bool(ok), f'{name}: {severity} "{says}" (exit {code})' + ('' if ok else '\n       ' + out.strip().replace('\n', '\n       ')[:900]))
+            other = [ln for ln in out.splitlines() if ln.startswith(('ERROR  ', 'WARN   ')) and ln not in baseline[args]
+                     and not any(s in ln for s in (says, *also))]
+            ok = lines and not other and (code == 1) == (severity == 'error') and all(a in out for a in also)
+            check(bool(ok), f'{name}: {severity} "{says}" and nothing else (exit {code})'
+                  + ('' if ok else '\n       ' + '\n       '.join(other or out.strip().splitlines())[:900]))
 
         s1, s2 = gid(soldier), gid(by_type['SoldierSpawnEntityData'][1])
         broken('typed-ref', x.edit(gid(spawner), f'ref="{marker}" name="MapMarker"', f'ref="{s1.lower()}" name="MapMarker"'),
                'error', "BF1943's schema declares this field a MapMarkerEntityData reference")
         broken('array-type', x.edit(gid(spawner), f'<item ref="{first_spawn}" />', f'<item ref="{gid(alternate).lower()}" />'),
                'error', 'in every shipped level these items are SpawnEntityDatas',
-               also=["BF1943's schema declares the elements of CapturePointEntityData.Spawners SpawnEntityDatas"])
+               also=["BF1943's schema declares the elements of CapturePointEntityData.Spawners SpawnEntityDatas",
+                     'no listed capture point has this soldier spawn'])            # the spawn it replaced lost its owner
         fp = field(member2, 'FirstPhysicsPart')
         broken('physics-chain', x.edit(gid(member2), f'<field name="FirstPhysicsPart">{fp}</field>', f'<field name="FirstPhysicsPart">{int(fp) + 1}</field>'),
-               'error', 'FirstPhysicsPart ' + str(int(fp) + 1) + ', expected ' + fp)
+               'error', 'FirstPhysicsPart ' + str(int(fp) + 1) + ', expected ' + fp, also=['PhysicsPartCount '])   # its part count too
         ic = field(member2, 'InstanceCount')
         broken('instance-count', x.edit(gid(member2), f'<field name="InstanceCount">{ic}</field>', f'<field name="InstanceCount">{int(ic) + 1}</field>'),
-               'error', f'InstanceCount {int(ic) + 1}, but {ic} SpawnDatas')
+               'error', f'InstanceCount {int(ic) + 1}, but {ic} SpawnDatas', also=['PhysicsPartCount '])   # count x parts per instance
         broken('member-kind', x.edit(gid(rigid), f'<item ref="{rmembers[0]}" />', f'<item ref="{gid(static_member).lower()}" />'),
-               'error', 'a RigidModelGroupEntityData holds RigidModelGroupMemberDatas, not a StaticModelGroupMemberData')
+               'error', 'a RigidModelGroupEntityData holds RigidModelGroupMemberDatas, not a StaticModelGroupMemberData',
+               also=['in every shipped level these items are RigidModelGroupMemberDatas',      # the array's item class
+                     'expected 0: a group\'s members\' physics parts follow each other'])     # the next member now starts the chain
         broken('duplicate-guid', x.text.replace(f'<instance guid="{s2}"', f'<instance guid="{s1}"', 1),
-               'error', 'another instance has the same GUID')
+               'error', 'another instance has the same GUID', also=['which is not in this file'])   # the renamed instance's references
         broken('unknown-class', x.text.replace(f'<instance guid="{s1}" type="GameSharedResources.SoldierSpawnEntityData"',
                                                f'<instance guid="{s1}" type="GameSharedResources.NoSuchEntityData"', 1),
-               'error', 'NoSuchEntityData is not a class of BF1943')
+               'error', 'NoSuchEntityData is not a class of BF1943',
+               also=['in every shipped level these items are GameObjectDatas', 'in every shipped level these items are SpawnEntityDatas',
+                     "BF1943's schema declares the elements of"])   # its referrers
         part_tag = re.search(r'<partition [^>]*>', x.text).group(0)
         broken('primary-instance', x.text.replace(part_tag, part_tag.replace(gid(level), s1), 1), 'error', 'primaryInstance is')
         first_obj = level.child('Objects').children[0].attr('ref')
         broken('null-object', x.edit(gid(level), f'<item ref="{first_obj}" />', '<item ref="null" />'),
-               'error', "empty entry in the level's object list")
+               'error', "empty entry in the level's object list",
+               also=["not in the level's object list", 'lists 0 TerrainEntityData'])         # the first object is the terrain
         broken('teams', x.edit(gid(team1), '<field name="Id">Team1</field>', '<field name="Id">Team2</field>'),
                'warning', 'every shipped level lists TeamNeutral, Team1 and Team2')
         broken('tickets', x.edit(gid(ticket2), '<field name="TeamId">Team2</field>', '<field name="TeamId">Team1</field>'),
@@ -228,7 +245,7 @@ def main():
         broken('unknown-field', x.edit(gid(level), '<field name="IsTutorial">', '<field name="IsTutorialX">'),
                'warning', 'LevelData has no member IsTutorialX in BF1943\'s executable')
         broken('enum-value', x.edit(gid(team1), '<field name="Id">Team1</field>', '<field name="Id">Team99</field>'),
-               'error', '"Team99" is not a value of TeamId')
+               'error', '"Team99" is not a value of TeamId', also=['every shipped level lists TeamNeutral, Team1 and Team2'])
         # the cull trees (--bundle)
         etree = os.path.join(bundle, 'levels', 'wake_island_s', 'staticculltree_exclusive.dbx')
         t = dbx.read(etree).instances[0]
@@ -238,9 +255,11 @@ def main():
         fe = field(first, 'Enumeration')
         bb = ['--bundle', bundle]
         broken('cull-slot-range', x.edit(gid(first), f'<field name="Enumeration">{fe}</field>', f'<field name="Enumeration">{eoff + leaves + 5}</field>'),
-               'error', 'placed objects have a slot outside the exclusive cull tree', args=bb)
+               'error', 'placed objects have a slot outside the exclusive cull tree', args=bb,
+               also=["placed objects' slots do not cover the exclusive cull tree's leaves"])   # its leaves are left uncovered
         broken('cull-slot-tiling', x.edit(gid(first), f'<field name="Enumeration">{fe}</field>', f'<field name="Enumeration">{int(fe) + 1}</field>'),
-               'warning', "placed objects' slots do not cover the exclusive cull tree's leaves", args=bb)
+               'warning', "placed objects' slots do not cover the exclusive cull tree's leaves", args=bb,
+               also=['objects with physics have two leaves that differ'])   # its two leaves are now another object's and its own
         tr = re.search(r'<complex name="Transform">([^<]*)</complex>', x.text[slice(*x.block(gid(first)))]).group(1)
         v = tr.split('/')
         v[12] = str(float(v[12]) + 500)
@@ -251,17 +270,25 @@ def main():
         b2 = os.path.join(work, 'b2', 'levels', 'wake_island_s')
         os.makedirs(b2)
 
-        def broken_tree(name, text, severity, says):
+        shipped = {ln for ln in run('check', wake, '--bundle', bundle)[1].splitlines() if ln.startswith(('ERROR  ', 'WARN   '))}
+
+        def broken_tree(name, text, severity, says, also=()):
+            """As broken(): the rule's line, and no line but also's that the level with its shipped trees does not have."""
             moved = tx.write(name, text)
             shutil.move(moved, os.path.join(b2, 'staticculltree_exclusive.dbx'))
             code, out = run('check', wake, '--bundle', os.path.join(work, 'b2'), '--bundle', bundle)
             want = 'ERROR  ' if severity == 'error' else 'WARN   '
-            ok = any(ln.startswith(want) and says in ln for ln in out.splitlines()) and (code == 1) == (severity == 'error')
-            check(ok, f'{name}: {severity} "{says}" in a broken exclusive cull tree (exit {code})'
-                  + ('' if ok else '\n       ' + out.strip().replace('\n', '\n       ')[:900]))
+            other = [ln for ln in out.splitlines() if ln.startswith(('ERROR  ', 'WARN   ')) and ln not in shipped
+                     and not any(s in ln for s in (says, *also))]
+            ok = (any(ln.startswith(want) and says in ln for ln in out.splitlines()) and not other and all(a in out for a in also)
+                  and (code == 1) == (severity == 'error'))
+            check(ok, f'{name}: {severity} "{says}" in a broken exclusive cull tree, and nothing else (exit {code})'
+                  + ('' if ok else '\n       ' + '\n       '.join(other or out.strip().splitlines())[:900]))
 
         broken_tree('exclusive-offset', tx.text.replace(f'<field name="EnumOffset">{eoff}</field>', f'<field name="EnumOffset">{eoff - 1}</field>', 1),
-                    'error', f"the exclusive cull tree's EnumOffset is {eoff - 1}, not the level's {eoff}")
+                    'error', f"the exclusive cull tree's EnumOffset is {eoff - 1}, not the level's {eoff}",
+                    also=["placed objects' slots do not cover", 'objects with physics have two leaves that differ',
+                          "placed objects are away from their slot's cull-tree leaf"])   # every slot now names the leaf after its own
         # the tree's nodes as text: every complex of the partition is a node, in order
         pieces = tx.text.split('<complex>')
         nodes = t.child('Nodes').children
@@ -278,9 +305,10 @@ def main():
         leaf = at[int(fe) - eoff + 1]                                        # the second leaf of the first (physics) object
         w = re.search(r'<field name="SphereKeyW">([^<]*)</field>', pieces[leaf + 1]).group(1)
         broken_tree('cull-leaf-pair', node_edit(leaf, r'<field name="SphereKeyW">[^<]*</field>', f'<field name="SphereKeyW">{int(w) + 3}</field>'),
-                    'warning', 'objects with physics have two leaves that differ')
+                    'warning', 'objects with physics have two leaves that differ', also=['have a SphereKeyW that is not'])   # W + 3 breaks the radius rule
         broken_tree('cull-leaf-radius', node_edit(leaf, r'<field name="SphereKeyW">[^<]*</field>', '<field name="SphereKeyW">0</field>'),
-                    'warning', 'have a SphereKeyW that is not max(5, ceil(4 x (Max + 1/8))) or one more')
+                    'warning', 'have a SphereKeyW that is not max(5, ceil(4 x (Max + 1/8))) or one more',
+                    also=['objects with physics have two leaves that differ'])   # the leaf differs from its pair
         broken_tree('cull-tree-shape', node_edit(0, r'<field name="Right">[^<]*</field>', '<field name="Right">3</field>'),
                     'error', 'are not one pre-order tree followed by 256 zero nodes')
         # a reference into another file with the wrong class (--bundle)

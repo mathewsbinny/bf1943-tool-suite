@@ -52,7 +52,12 @@ def read_mesh(path):
         v = np.frombuffer(d, e + 'f4', n * 3, o + 4).reshape(n, 3)
         o += 4 + 12 * n
         m = struct.unpack_from(e + 'I', d, o)[0]
+        if m % 3:
+            raise ValueError(f'{path}: a body of {m} indices, not whole triangles - not the WaterMesh layout')
         i = np.frombuffer(d, e + 'u4', m, o + 4).reshape(-1, 3)
+        if m and int(i.max()) >= n:
+            # 2026-10-30: read, then an IndexError far away (NavKit's water rule, the viewers)
+            raise ValueError(f'{path}: a triangle names vertex {int(i.max())} of a body of {n} - a damaged WaterMesh')
         o += 4 + 4 * m
         verts.append(v)
         tris.append(i.astype(np.uint32) + base)

@@ -79,6 +79,8 @@ def load(path):
     c = 0
     while c < cols and pos < len(data):
         n = data[pos]
+        if pos + 1 + n * rec > len(data):
+            break                     # the run stopped inside this column's records: keep the finished columns
         pos += 1
         for _ in range(n):
             y, a, b, d, f = struct.unpack_from('<f3bB', data, pos)

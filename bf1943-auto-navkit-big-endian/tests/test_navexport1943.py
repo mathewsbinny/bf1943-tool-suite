@@ -2,7 +2,8 @@
 Wake Island exported to a temporary folder in both byte orders - the two read back identical, the file validates, its
 graph equals the build's (nodes, edges, integer costs), every node lies in an area, tight walk edges are flagged
 (none with line of sight), 2,000 random walkable cells locate to their own area, and the 10 flag-pair routes of the build's check are found by the reference search. Other levels
-with an export in their navkit folder: graph parity and validation.
+with an export in their navkit folder (of the checked build of their current preparation): graph parity and
+validation, on the terrain of the game copy each was prepared from.
 
   python -B test_navexport1943.py
 """
@@ -19,6 +20,7 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'tools'))
 import navexport1943  # noqa: E402
+import navkitjson1943  # noqa: E402
 from bfbc2core import game1943, rsnv  # noqa: E402
 
 failures = []
@@ -35,6 +37,10 @@ if __name__ == '__main__':
     W = game1943.level_work(lv)
     if not os.path.isfile(os.path.join(W, 'navkit', f'{lv}.hpd')):
         print(f'skipped: no {lv} build (navkit.py all {lv})')
+        sys.exit(0)
+    why = navexport1943.build_refusal(navkitjson1943.read(lv), lv, os.path.join(W, 'navkit', f'{lv}.hpd'))
+    if why:                                   # a build the exporter refuses (made before the stamps, or not checked)
+        print(f'skipped: {why}')
         sys.exit(0)
     tmp = tempfile.mkdtemp(prefix='navexport_')
     try:
@@ -83,11 +89,26 @@ if __name__ == '__main__':
         for other in ('guadal_canal', 'iwo_jima_s', 'coral_sea'):
             p = os.path.join(game1943.level_work(other), 'navkit', f'{other}.rsnv')
             h = os.path.join(game1943.level_work(other), 'navkit', f'{other}.hpd')
-            if os.path.isfile(p) and os.path.isfile(h) and os.path.getmtime(p) >= os.path.getmtime(h):
-                from bfbc2core import navdata, terrain
-                g = game1943.Game(game1943.find_game(None), other)
+            if os.path.isfile(p) and os.path.isfile(h):
+                # an export and a build on disk that are not compared are said so (a "skip" line: run_tests shows the
+                # run as partly skipped; 2026-10-30 review: they were left out silently)
+                if os.path.getmtime(p) < os.path.getmtime(h):
+                    print(f'skip {other}: its export is older than its build (navexport1943.py {other})')
+                    continue
+                from bfbc2core import navdata
+                try:
+                    st = navkitjson1943.read(other)
+                except navkitjson1943.NavKitError as e:
+                    print(f'skip {other}: {e}')
+                    continue
+                why = navexport1943.build_refusal(st, other, h)
+                if why:
+                    print(f'skip {other}: {why}')
+                    continue
+                # the terrain of the copy that level was prepared from (2026-10-30: the default copy's was read)
+                _game, _g, _name, hf = navexport1943.prepared_terrain(other, st)
                 navdata.Y_OFFSET = 0.9
-                nv = navdata.load(h, terrain.read(g.data(f'terrains/{other}/{other}.heightfield-000.res')))
+                nv = navdata.load(h, hf)
                 probs, _ = navexport1943.check(p, nv, log=lambda *a: None)
                 check(not probs, f'{other}: its export validates and equals its build ({probs or "no problems"})')
     finally:

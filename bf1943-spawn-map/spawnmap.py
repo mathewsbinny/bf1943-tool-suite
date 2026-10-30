@@ -40,22 +40,48 @@ FLAGS_FORMAT = '''# rsflags 1 <level>: written by bf1943-spawn-map/spawnmap.py -
 TEAM_NUMBER = {'TeamNeutral': 0, 'Team1': 1, 'Team2': 2}
 
 
+def placeholder(o):
+    """Why an objective is not a real flag, or None: no Index or no position, or a point at the map origin that owns no
+    spawn (Coral Sea's three "Spawn" capture points, all Index 0)."""
+    if o['index'] in (None, '') or o['position'] is None:
+        return 'no index' if o['index'] in (None, '') else 'no position'
+    if all(c == 0 for c in o['position']) and not o['spawns']:
+        return 'at the map origin, owning no spawn'
+    return None
+
+
 def flags_text(m):
-    """The level's objectives and base spawns as FLAGS_FORMAT lines."""
+    """The level's objectives and base spawns as FLAGS_FORMAT lines: real objectives only (placeholder() ones are
+    named in a comment), each index once (a duplicate is an error: the C readers key flags by index)."""
     lines = FLAGS_FORMAT.replace('<level>', m['level'], 1).splitlines()
+    real, left_out = [], []
     for o in m['objectives']:
+        why = placeholder(o)
+        if why:
+            left_out.append(f'{o["name"] or o["location"] or "-"} (index {o["index"]}: {why})')
+        else:
+            real.append(o)
+    if left_out:
+        lines.append('# left out, not flags: ' + '; '.join(left_out))
+    seen = {}
+    for o in real:
+        k = int(o['index'])
+        if k in seen:
+            raise ValueError(f'{m["level"]}: objectives {seen[k]!r} and {o["name"] or o["location"]!r} share index {k}')
+        seen[k] = o['name'] or o['location']
         x, y, z = o['position']
         name = (o['name'] or o['location'] or '-').replace(' ', '_')
-        lines.append(f'flag {int(o["index"] or 0)} {o["role"]} {TEAM_NUMBER.get(o["initial_owner"], 0)} '
+        lines.append(f'flag {k} {o["role"]} {TEAM_NUMBER.get(o["initial_owner"], 0)} '
                      f'{x:.2f} {y:.2f} {z:.2f} {float(o["capture_radius"] or 0):.2f} {name}')
-    for o in m['objectives']:
+    for o in real:
         if o['role'] != 'base':
             continue
         for s in o['spawns']:
             if s['kind'] != 'soldier' or TEAM_NUMBER.get(s['team'], 0) == 0:
                 continue
             for p in [s['position']] + [a for a in s['alternates'] if isinstance(a, list)]:
-                lines.append(f'spawn {TEAM_NUMBER[s["team"]]} {int(o["index"] or 0)} {p[0]:.2f} {p[1]:.2f} {p[2]:.2f}')
+                if p is not None:
+                    lines.append(f'spawn {TEAM_NUMBER[s["team"]]} {int(o["index"])} {p[0]:.2f} {p[1]:.2f} {p[2]:.2f}')
     return '\n'.join(lines) + '\n'
 
 

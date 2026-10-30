@@ -193,6 +193,11 @@ DETAILED_LINK_STEP = 0.3        # LINK_STEP in detailed zones: DICE's one-cell h
                                 # ground into 3x DICE's areas (8,400 against 2,640; 2026-10-21)
 
 
+class BuildError(ValueError):
+    # a build that cannot be made from its inputs (e.g. no walkable ground at all)
+    pass
+
+
 def set_pitch(p):
     """Switch the grid settings for a build at pitch p: 0.8 (normal sectors) or 0.2 (detailed zones)."""
     global PITCH, SECTOR_SAMPLES, WINDOW, TILE, TILES, RESOLUTION, LINK_STEP
@@ -657,6 +662,25 @@ def build(samples_path, tris_path, xoff, zoff, out_path, step=0.28, log=print, d
     write_file(graphs, out_path, log, t0)
 
 
+def to_pitch(f, pitch, what):
+    # a sampling run on the build's grid: as it is at the build's pitch, coarsened from a finer one (navwalk.coarse),
+    # an error otherwise (a run coarser than the build, or one coarse() cannot bring to this pitch)
+    if abs(f.pitch - pitch) <= 1e-3:
+        return f
+    ratio = pitch / f.pitch
+    if ratio < 1 or abs(ratio - round(ratio)) > 1e-3:
+        raise BuildError(f"{what}: pitch {f.pitch:g} cannot be brought to the build's {pitch:g}")
+    return navwalk.coarse(f, pitch)
+
+
+def same_grid(s, f, what):
+    if (f.nx, f.nz) != (s.nx, s.nz) or abs(f.min_x - s.min_x) > 1e-3 or abs(f.min_z - s.min_z) > 1e-3 \
+            or abs(f.pitch - s.pitch) > 1e-6:
+        raise BuildError(f"{what}: grid {f.nx} x {f.nz} at ({f.min_x:g}, {f.min_z:g}) pitch {f.pitch:g} is not the main "
+                         f"run's {s.nx} x {s.nz} at ({s.min_x:g}, {s.min_z:g}) pitch {s.pitch:g} - sample both with one box")
+    return f
+
+
 def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=print, dynamic_path=None,
           narrow_path=None, stairs_path=None, exclude_path=None, exclude_foot_path=None, seeds=None, edits=None,
           water=None, max_water_depth=MAX_WATER_DEPTH, bounds=None, order_points=None, t0=None,
@@ -670,7 +694,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
     Returns {'level', 'info', 'graphs', 'border_nodes', 'next_id', 'dropped', 'pitch', 'meshes'}."""
     t0 = t0 or time.time()
     f, _ = navsample.load(samples_path)
-    s = navwalk.coarse(f) if abs(f.pitch - PITCH) > 1e-3 else f
+    s = to_pitch(f, PITCH, 'samples')
     hand = {}
     soldiers = list(seeds or [])                 # the level's soldier spawn points (navwalk.CHARACTERS_ABSENT)
     if edits:
@@ -699,8 +723,9 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             f'{int(outside.sum())} surfaces outside left out')
     tris = np.load(tris_path) if tris_path else None
     dyn = np.load(dynamic_path) if dynamic_path else None
-    hi = navsample.load(high_path)[0] if high_path else None
-    narrow = navsample.load(narrow_path)[0] if narrow_path else None
+    # the clearance runs are matched to the main run column by column (navwalk.matched_flags): same grid, or an error
+    hi = same_grid(s, to_pitch(navsample.load(high_path)[0], PITCH, 'high-capsule run'), 'high-capsule run') if high_path else None
+    narrow = same_grid(s, to_pitch(navsample.load(narrow_path)[0], PITCH, 'narrow run'), 'narrow run') if narrow_path else None
     st = np.load(stairs_path) if stairs_path else None
     ex = np.load(exclude_path) if exclude_path else None
     exf = np.load(exclude_foot_path) if exclude_foot_path else None
@@ -721,7 +746,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
     ladder_pairs = []
     for lad in (ladders or ()):
         f_, t_ = navwalk.ladder_ends(s, keep, keep, lad)
-        if f_ is not None and t_ is not None:
+        if f_ is not None and t_ is not None and f_ != t_:
             ladder_pairs.append((int(f_), int(t_)))
 
     # Sectors that contain kept surfaces.
@@ -732,6 +757,9 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         sectors.add((int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff))
     if sector_filter is not None:
         sectors &= set(sector_filter)
+    if not sectors and sector_filter is None:
+        raise BuildError(f'no walkable ground kept ({len(s.y)} surfaces sampled, {int(keep.sum())} kept): check the '
+                         f'sampling box and sector offsets, and the water and reference-extent rules')
     sectors = sorted(sectors)
     log(f'{len(sectors)} sectors (pitch {PITCH:g})')
 
@@ -986,35 +1014,48 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
     both sides where b has none there); neighbour links across those seams are found by position on the other grid.
     Returns the merged graphs (normal sectors from a, detailed from b)."""
     dset = set(detailed['sectors']) & a['sectors']
+    if not dset:
+        log('detailed pass: none of its sectors has ground in the normal build - nothing built at pitch 0.2')
+        return a['graphs']
     alv = a['level']
     sa = alv.s
-    # seeds: a's kept ground in the detailed sectors
-    pts = []
-    for k in np.nonzero(alv.keep)[0]:
-        c = alv.col_of[k]
-        x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
-        if (int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff) in dset:
-            pts.append((x, float(alv.y[k]), z))
-    # a's shared nodes on the seams between a detailed and a normal sector, per detailed sector
     owners = defaultdict(set)
     for sec, nodes in a['border_nodes'].items():
         for nid, _pos, _k in nodes:
             owners[nid].add(sec)
-    carried = defaultdict(list)
-    for sec in dset:
-        for nid, pos, _k in a['border_nodes'].get(sec, ()):
-            if owners[nid] - dset:
-                carried[sec].append((nid, pos))
-    log(f'detailed pass: {len(dset)} sectors at pitch {DETAILED_PITCH}, {len(pts)} seed points from the normal build, '
-        f'{sum(len(v) for v in carried.values())} shared nodes on mixed seams')
-    set_pitch(DETAILED_PITCH)
     grid_min = (min(X for X, _ in a['sectors']), min(Y for _, Y in a['sectors']))
-    b = stage(detailed['samples'], detailed.get('high'), xoff, zoff, seeds=seeds, **common,
-              sector_filter=dset, grid_min=grid_min, id_start=a['next_id'], carried=carried, seed_points=pts)
-    missing = dset - b['sectors']
-    if missing:
+    while True:
+        # seeds: a's kept ground in the detailed sectors
+        pts = []
+        for k in np.nonzero(alv.keep)[0]:
+            c = alv.col_of[k]
+            x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
+            if (int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff) in dset:
+                pts.append((x, float(alv.y[k]), z))
+        # a's shared nodes on the seams between a detailed and a normal sector, per detailed sector
+        carried = defaultdict(list)
+        for sec in dset:
+            for nid, pos, _k in a['border_nodes'].get(sec, ()):
+                if owners[nid] - dset:
+                    carried[sec].append((nid, pos))
+        log(f'detailed pass: {len(dset)} sectors at pitch {DETAILED_PITCH}, {len(pts)} seed points from the normal '
+            f'build, {sum(len(v) for v in carried.values())} shared nodes on mixed seams')
+        set_pitch(DETAILED_PITCH)
+        b = stage(detailed['samples'], detailed.get('high'), xoff, zoff, seeds=seeds, **common,
+                  sector_filter=dset, grid_min=grid_min, id_start=a['next_id'], carried=carried, seed_points=pts)
+        missing = dset - b['sectors']
+        if not missing:
+            break
+        # a sector without ground at 0.2 stays at the normal pitch: its seams are then normal seams (with their
+        # nodes and edges from the normal build) or mixed seams with the detailed sectors - so the pass is made
+        # again without it, which carries those seams' nodes too (dropping them unlinked the sector, 2026-10-30)
         log(f'detailed pass: {len(missing)} sectors without ground at pitch {DETAILED_PITCH} kept at the normal pitch: '
-            + ', '.join(f'{(X & 0xFF) << 8 | (Y & 0xFF):04x}' for X, Y in sorted(missing)))
+            + ', '.join(f'{(X & 0xFF) << 8 | (Y & 0xFF):04x}' for X, Y in sorted(missing)) + ' - pass made again')
+        dset -= missing
+        set_pitch(0.8)
+        if not dset:
+            log('detailed pass: no sector left at pitch 0.2 - the normal build is kept')
+            return a['graphs']
     dset = b['sectors']
     drop = b['dropped']
     log(f'detailed pass: {len(drop)} mixed-seam shared nodes without ground at pitch {DETAILED_PITCH} dropped')
@@ -1056,7 +1097,23 @@ def write_file(graphs, out_path, log, t0):
         hpd_sectors.append(hpdtool.Sector(sid, bounds, 0, date, clock, nodes, edges, kymesh.write_mesh(mesh)))
     out = hpdtool.HpdFile(HEADER, hpd_sectors)
     data = hpdtool.write(out)
-    open(out_path, 'wb').write(data)
+    if not hpd_sectors:
+        raise BuildError('no sectors to write')
+    tmp = out_path + '.tmp'
+    try:
+        with open(tmp, 'wb') as fh:          # the previous file stays until the new one is whole and reads back
+            fh.write(data)
+        with open(tmp, 'rb') as fh:
+            try:
+                same = hpdtool.write(hpdtool.parse(fh.read())) == data
+            except (ValueError, struct.error) as e:
+                raise BuildError(f'{out_path}: the new file does not read back ({e}) - the previous one is kept')
+        if not same:
+            raise BuildError(f'{out_path}: the new file does not read back exactly - the previous one is kept')
+        os.replace(tmp, out_path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
     log(f'wrote {out_path}: {len(hpd_sectors)} sectors, {sum(len(x.nodes) for x in hpd_sectors)} nodes, '
         f'{sum(len(x.edges) for x in hpd_sectors)} edges, {len(data)} bytes ({time.time() - t0:.0f} s)')
 
@@ -1147,7 +1204,8 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
                 pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
                 idx = len(pts) - 1
             ends.append(idx)
-        pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
+        if ends[0] != ends[1]:               # a short ladder whose foot and top found one surface: no self edge
+            pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
     # Connect remaining groups: grid search (8-connected, step rule) from one group to the nearest node
     # of another, then string-pull the path into straight walkable legs with waypoint nodes.
     parent = list(range(len(pts)))

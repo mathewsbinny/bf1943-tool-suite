@@ -110,18 +110,25 @@ def order_points_of(root, lv):
     return json.load(open(p)) if os.path.isfile(p) else None
 
 
-def detailed_of(root, lv, samples, xoff, zoff):
+def detailed_of(root, lv, samples, xoff, zoff, chosen=None):
     """The detailed-zone pass, as navkit.py build does it: the level's pitch-0.2 samples (navkit.py sample --pitch 0.2,
     work\\navsample\\<lv>_navkit_p02.bin, with _hi_p02) and its detailed sectors chosen from the level alone
-    (detailed.py); None without pitch-0.2 samples."""
+    (detailed.py; chosen: that choice when the caller already has it); None without pitch-0.2 samples. Raises
+    RuntimeError when the 0.2 m samples do not cover the sectors chosen now (detailed.sampled_problem: sampled before
+    the 0.8 m samples or the sector offsets changed)."""
     import detailed
     p02 = os.path.join(root, 'work', 'navsample', f'{lv}_navkit_p02.bin')
     if not os.path.isfile(p02):
         return None
     hi = p02[:-4].replace('_p02', '_hi_p02') + '.bin'
-    common = [os.path.join(root, 'work', 'navkit', 'common', c) for c in ('mp_common', 'sp_common')]
-    chosen, _why = detailed.choose(os.path.join(root, 'work', 'levels', lv), common, samples, xoff, zoff)
-    return dict(samples=p02, high=hi if os.path.isfile(hi) else None, sectors=set(chosen))
+    if chosen is None:
+        common = [os.path.join(root, 'work', 'navkit', 'common', c) for c in ('mp_common', 'sp_common')]
+        chosen, _why = detailed.choose(os.path.join(root, 'work', 'levels', lv), common, samples, xoff, zoff)
+    problem = detailed.sampled_problem(p02, samples, chosen, xoff, zoff)
+    if problem:
+        raise RuntimeError(f'{lv}: the 0.2 m samples are stale: {problem} - sample the detailed zones again '
+                           f'(navkit.py sample {lv} --pitch 0.2)')
+    return dict(samples=p02, high=hi if os.path.isfile(hi) else None, sectors={tuple(s) for s in chosen})
 
 
 def ladders_of(root, lv):
@@ -189,8 +196,18 @@ def compare(ref, now, tol):
     return worse, better, counts
 
 
+def merged_rows(rows, existing):
+    """This run's level rows, then the rows of the run being replaced for the levels this run did not measure."""
+    done = {r['level'] for r in rows}
+    return rows + [r for r in existing if r['level'] not in done]
+
+
 def main(argv):
     args = argv[1:]
+    for k in ('--levels', '--reference', '--save', '--tolerance', '--opfor'):
+        if k in args and (args.index(k) + 1 >= len(args) or args[args.index(k) + 1].startswith('--')):
+            print(f'error: {k} needs a value')         # before a run of hours, not after it
+            return 2
     opt = lambda k, d=None: args[args.index(k) + 1] if k in args else d
     root = navparity.opfor_root(opt('--opfor'))
     levels = opt('--levels').split(',') if opt('--levels') else [
@@ -262,14 +279,19 @@ def main(argv):
         for k, a, b in counts:
             print(f'       count:  {k} {a} -> {b}')
     run = {'name': 'regression_last', 'date': time.strftime('%Y-%m-%d %H:%M'), 'levels': rows}
-    json.dump(run, open(navparity.save_path(root, 'regression_last'), 'w'), indent=1)
+    json.dump(run, open(navparity.save_path(root, 'regression_last'), 'w', encoding='utf-8', newline='\n'), indent=1)
     if '--save' in args:
         name = opt('--save')
-        run['name'] = name
-        if name == reference and ref_rows:                 # a subset run keeps the other levels' reference rows
-            done = {r['level'] for r in rows}
-            run['levels'] = rows + [r for lv, r in ref_rows.items() if lv not in done]
-        json.dump(run, open(navparity.save_path(root, name), 'w'), indent=1)
+        target = navparity.save_path(root, name)
+        existing = []
+        if os.path.isfile(target):                         # a subset run keeps the other levels' rows of the run it
+            with open(target, encoding='utf-8') as f:      # replaces, whichever run that is
+                existing = json.load(f)['levels']
+        run = dict(run, name=name, levels=merged_rows(rows, existing))
+        tmp = target + '.tmp'
+        with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(run, f, indent=1)
+        os.replace(tmp, target)
         print(f'saved as reference run "{name}"')
     print(('all passed' if not failed else f'{failed} level(s) worse or failed') + f' ({duration(time.time() - start)})')
     return 1 if failed else 0

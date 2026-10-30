@@ -8,7 +8,7 @@ Source syntax, one statement per line ('#' starts a comment):
     stwu r1, -0x60(r1)
     bl 0x82387ef0          # absolute target address
     beq cr0, done          # or beq done (cr0)
-    la r3, 0x82f00000      # pseudo: r3 = 32-bit address (lis + addi)
+    la r3, 0x82f00000      # pseudo: r3 = 32-bit address (lis + addi; lis + ori for r0)
     li32 r3, 0x12345678    # pseudo: r3 = 32-bit value (lis + ori)
     .long 0x00000000       # a data word
     .string "name"         # NUL-terminated bytes, padded to a word
@@ -35,6 +35,14 @@ def reg(text):
     if not m or int(m.group(1)) > 31:
         raise AsmError(f'not a register: {text!r}')
     return int(m.group(1))
+
+
+def base(text):
+    """A D-form base register: r0 there reads as 0 (an absolute address), never what the source meant."""
+    r = reg(text)
+    if r == 0:
+        raise AsmError('a base of r0 reads 0, not r0 (an absolute address): use another register')
+    return r
 
 
 def freg(text):
@@ -145,7 +153,17 @@ def value(text, names):
     return names[text] if text in names else number(text)
 
 
+# operand counts per mnemonic: a typo with an extra operand would otherwise assemble as something else, and a missing
+# operand raised IndexError with no line number (before 2026-10-30)
+ARITY = {**{k: (2,) for k in MEMORY | {'std', 'ld', 'lfs', 'stfs', 'li', 'lis', 'la', 'li32', 'mr'}},
+         **{k: (3,) for k in {'addi', 'addis', 'slwi', 'srwi'} | UNSIGNED | set(X_ARITH)},
+         **{k: (2, 3) for k in ('cmpwi', 'cmplwi', 'cmpw', 'cmplw')}, **{k: (1, 2) for k in BRANCH_COND},
+         **{k: (1,) for k in ('mflr', 'mfctr', 'mtlr', 'mtctr', 'b', 'bl', '.long')}, **{k: (0,) for k in FIXED}}
+
+
 def encode(m, a, at, names):
+    if m != '.string' and m in ARITY and len(a) not in ARITY[m]:
+        raise AsmError(f'{m} takes {" or ".join(map(str, ARITY[m]))} operand(s), not {len(a)}')
     if m in FIXED and not a:
         return [FIXED[m]]
     if m == '.long':
@@ -157,7 +175,7 @@ def encode(m, a, at, names):
         mm = re.fullmatch(r'(-?\w+)\((r\d+)\)', a[1].replace(' ', ''))
         if len(a) != 2 or not mm:
             raise AsmError('expected rX, offset(rY)')
-        return [D_FORM[m] << 26 | reg(a[0]) << 21 | reg(mm.group(2)) << 16 | simm(value(mm.group(1), names))]
+        return [D_FORM[m] << 26 | reg(a[0]) << 21 | base(mm.group(2)) << 16 | simm(value(mm.group(1), names))]
     if m in ('std', 'ld'):   # DS-form: the game keeps 64-bit values in saved registers
         mm = re.fullmatch(r'(-?\w+)\((r\d+)\)', a[1].replace(' ', ''))
         if len(a) != 2 or not mm:
@@ -165,13 +183,15 @@ def encode(m, a, at, names):
         offset = value(mm.group(1), names)
         if offset & 3:
             raise AsmError('std/ld offset must be a multiple of 4')
-        return [(62 if m == 'std' else 58) << 26 | reg(a[0]) << 21 | reg(mm.group(2)) << 16 | simm(offset)]
+        return [(62 if m == 'std' else 58) << 26 | reg(a[0]) << 21 | base(mm.group(2)) << 16 | simm(offset)]
     if m in ('lfs', 'stfs'):   # D-form, a floating-point register
         mm = re.fullmatch(r'(-?\w+)\((r\d+)\)', a[1].replace(' ', ''))
         if len(a) != 2 or not mm:
             raise AsmError('expected fX, offset(rY)')
-        return [(48 if m == 'lfs' else 52) << 26 | freg(a[0]) << 21 | reg(mm.group(2)) << 16 | simm(value(mm.group(1), names))]
+        return [(48 if m == 'lfs' else 52) << 26 | freg(a[0]) << 21 | base(mm.group(2)) << 16 | simm(value(mm.group(1), names))]
     if m in ('addi', 'addis'):
+        if reg(a[1]) == 0:     # the instruction reads 0 for a base of r0: what was meant is not what it does
+            raise AsmError(f'{m} with base r0 adds to 0, not to r0: write {"li" if m == "addi" else "lis"} for that')
         return [D_FORM[m] << 26 | reg(a[0]) << 21 | reg(a[1]) << 16 | simm(value(a[2], names))]
     if m in UNSIGNED:
         return [D_FORM[m] << 26 | reg(a[1]) << 21 | reg(a[0]) << 16 | uimm(value(a[2], names))]
@@ -185,6 +205,8 @@ def encode(m, a, at, names):
         lo = v & 0xFFFF
         hi = ((v + 0x8000) >> 16) & 0xFFFF
         r = reg(a[0])
+        if r == 0:     # addi with base r0 reads 0, not r0: lis r0, hi; ori r0, r0, lo (unsigned, so hi unadjusted), as li32
+            return [15 << 26 | v >> 16, 24 << 26 | lo]
         return [15 << 26 | r << 21 | hi, 14 << 26 | r << 21 | r << 16 | lo]
     if m == 'li32':
         v = value(a[1], names) & 0xFFFFFFFF

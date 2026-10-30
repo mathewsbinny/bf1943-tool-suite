@@ -6,8 +6,10 @@ A fake guest holds the bot code (bots.build()'s bytes), the data area with the m
 block with two bots and two capture points. Checked: attach finds the mailbox; the snapshot reads records, flags
 and torn records; input and throttle write the fields and the stamp (the guest's tick) under the sequence lock and
 zero them at the end; stop zeroes every command; a wrong block version is refused. Then: wherever the writes land
-between the guest's loads (bots.guest_command, the bot code's read), the guest takes a whole command or none; the
-bot code without its hook is not "applied"; a hold stops writing once the match's mailbox is replaced or cleared.
+between the guest's loads (bots.guest_command, the bot code's read), the guest takes a whole command or none;
+wherever the bot code's record writes (bots.guest_record) land between guestmem's loads, its state and flag reads
+give the old record, the new one, or torn, never an unmarked mix; the bot code without its hook is not "applied"; a
+hold stops writing once the match's mailbox is replaced or cleared.
 """
 import contextlib
 import io
@@ -126,6 +128,17 @@ def main():
           and s['flags'][0]['radius'] == 20.0, 'snapshot: the capture points\' owners, control and radius')
     code, text = run(g, 'bots')
     check(code == 0 and 'slot  1' in text and '(torn)' in text and 'flag 1  owner 1' in text, 'bots prints them')
+    # the header's flag count is not locked with the records: a record left from a tick that found more capture
+    # points (its tick older than the newest read) is marked stale, the current ones are not
+    f1 = BLOCK + bots.FLAG0 + bots.FLAG_SIZE
+    g.write_u32(f1 + bots.F_SEQ, 499)
+    g.write_u32(f1 + bots.F_SEQ_END, 499)
+    fl = gm.flag_records(g, BLOCK)
+    check(not fl[0]['stale'] and fl[1]['stale'] and not fl[1]['torn'], 'a flag record older than the newest one is stale')
+    code, text = run(g, 'bots')
+    check('(stale)' in text, 'bots prints it as stale')
+    g.write_u32(f1 + bots.F_SEQ, 500)
+    g.write_u32(f1 + bots.F_SEQ_END, 500)
 
     g.writes.clear()
     code, _ = run(g, 'input', '--throttle', '1', '--yaw', '1.5', '--buttons', 'Sprint', '--slot', '1', '--hold', '0')
@@ -203,6 +216,85 @@ def whole_commands():
           f'write_command: the guest takes the old command, the new one or none, never a mix ({len(seen)} outcomes)')
 
 
+class RacingGuest(FakeGuest):
+    """A fake guest whose bot code writes a record while guestmem reads it: reads go a word at a time in address
+    order, and after the n-th word of the record read, the next schedule(n) of the guest's writes land
+    (bots.guest_record: the code's order, which test_bots.py checks against the code)."""
+
+    def race(self, record, size, steps, schedule):
+        self.record, self.size, self.steps, self.schedule, self.loads = record, size, list(steps), schedule, 0
+
+    def read(self, address, n):
+        out = b''
+        for a in range(address, address + n, 4):
+            out += FakeGuest.read(self, a, min(4, address + n - a))
+            if getattr(self, 'steps', None) and self.record <= a < self.record + self.size:
+                self.loads += 1
+                for _ in range(self.schedule(self.loads)):
+                    if self.steps:
+                        o, w = self.steps.pop(0)
+                        FakeGuest.write_u32(self, self.record + o, w)
+        return out
+
+
+def schedules(steps, loads=40):
+    """When the guest's writes land: steady paces (pace writes per word read, after delay words), and two bursts (k
+    writes after word a, the rest after word b: a reader preempted mid-read, the case that mixed)."""
+    for delay in range(loads):
+        for pace in (0.25, 0.5, 1, 2, 3):
+            yield lambda n, d=delay, p=pace: int(max(0, n - d) * p) - int(max(0, n - 1 - d) * p)
+    for a in range(1, 30):
+        for k in range(1, steps):
+            for b in range(a + 1, loads):
+                yield lambda n, a=a, k=k, b=b: k if n == a else steps if n == b else 0
+
+
+def whole_records():
+    """bot_record and flag_records against the bot code's writes landing between their loads: each gives the old
+    record, the new one, or torn, never a mix that is not marked torn (before 2026-10-30 it compared the two ticks of
+    one copy, and took a mix: the old opening tick, new fields, the old closing tick)."""
+    at = BLOCK + bots.BOT0
+    fl = BLOCK + bots.FLAG0
+    old_state = {bots.R_PLAYER: 0x90000000, bots.R_SOLDIER: 0x50000001, bots.R_TEAM: 1, bots.R_X: gm.bits32(10.0),
+                 bots.R_Y: gm.bits32(182.0), bots.R_Z: gm.bits32(-20.0)}
+    new_state = {**old_state, bots.R_SOLDIER: 0x50000002, bots.R_X: gm.bits32(11.0), bots.R_Y: gm.bits32(183.0),
+                 bots.R_Z: gm.bits32(-21.0)}
+    old_flag = {bots.F_ENTITY: 0xA0000000, bots.F_OWNER: 2, bots.F_CONTROL: gm.bits32(100.0), bots.F_ENABLED: 1,
+                bots.F_RADIUS: gm.bits32(20.0), bots.F_X: gm.bits32(-80.0), bots.F_Y: gm.bits32(205.0),
+                bots.F_Z: gm.bits32(53.0)}
+    new_flag = {**old_flag, bots.F_OWNER: 1, bots.F_CONTROL: gm.bits32(50.0), bots.F_X: gm.bits32(-81.0),
+                bots.F_Z: gm.bits32(54.0)}
+    state_of = lambda r: tuple(r[n] for n in ('R_SEQ', 'R_SOLDIER', 'R_X', 'R_Y', 'R_Z', 'R_SEQ_END'))
+    flag_of = lambda f: (f['owner'], f['control'], tuple(f['position']))
+    for what, base, size, first, last, old, new, read in (
+            ('bot_record', at, bots.C_STAMP, bots.R_SEQ, bots.R_SEQ_END, old_state, new_state,
+             lambda g: (lambda r: (state_of(r), r['torn']))(gm.bot_record(g, BLOCK, 0))),
+            ('flag_records', fl, bots.FLAG_SIZE, bots.F_SEQ, bots.F_SEQ_END, old_flag, new_flag,
+             lambda g: (lambda f: (flag_of(f), f['torn']))(gm.flag_records(g, BLOCK)[0]))):
+        g = RacingGuest()
+        make_match(g)
+        g.write_u32(BLOCK + bots.H_FLAGS, 1)
+
+        def guest(tick, fields):
+            g.steps = None
+            for o, w in bots.guest_record(first, last, tick, fields):
+                g.write_u32(base + o, w)
+            return g
+        want = {read(guest(499, old))[0], read(guest(500, new))[0]}
+        seen, mixed = set(), []
+        steps = bots.guest_record(first, last, 500, new)
+        for schedule in schedules(len(steps)):
+            guest(499, old).race(base, size, steps, schedule)
+            got, torn = read(g)
+            if not torn:
+                seen.add(got)
+                if got not in want:
+                    mixed.append(got)
+        check(not mixed and seen == want and len(want) == 2,
+              f'{what}: the old record or the new one, never an unmarked mix, wherever the guest\'s writes land '
+              f'between its loads ({len(seen)} whole outcomes{", mixes " + str(mixed[:2]) if mixed else ""})')
+
+
 def unhooked():
     g = FakeGuest()
     g.put(bots.HOOK, bytes(4))
@@ -256,6 +348,7 @@ def match_change():
 if __name__ == '__main__':
     main()
     whole_commands()
+    whole_records()
     unhooked()
     match_change()
     print('all passed' if not failures else f'{len(failures)} failed')

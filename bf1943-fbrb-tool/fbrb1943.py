@@ -18,13 +18,16 @@ Command line:
   python fbrb1943.py extract <bundle.fbrb> <out dir> [filter]
                                                            the entries as files under their names, and
                                                            fbrb.manifest.json (name, type, flags, size, sha256);
-                                                           never into the game folder
+                                                           never into the game folder, and never through a link
+                                                           or junction to outside <out dir> (each destination
+                                                           is resolved and checked before it is written)
   python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
                                                            a copy with entries replaced (names as listed);
                                                            never written into the game folder or over the input
 
 The game folder (core game1943.find_game) is only read: a changed bundle goes elsewhere, for the Xenia kit or a
-mod folder to use.
+mod folder to use. Every file is written beside its destination and moved into place (write_file), so a hard link
+already at a destination is replaced, never written through.
 """
 import gzip
 import hashlib
@@ -32,6 +35,7 @@ import json
 import os
 import struct
 import sys
+import tempfile
 import zlib
 
 sys.dont_write_bytecode = True
@@ -126,15 +130,128 @@ def contains(folder, path):
         return False
 
 
-def inside_game(path):
-    """True when path lies in the BF1943 game folder (game1943.find_game), which the tools only read."""
+def game_folder():
+    """The BF1943 game folder (game1943.find_game), which the tools only read; None when there is none."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'core'))
     try:
         from bfbc2core import game1943
-        game = game1943.find_game()
+        return game1943.find_game()
     except (ImportError, FileNotFoundError):
-        return False
-    return contains(game, path)
+        return None
+
+
+def inside_game(path):
+    """True when path lies in the BF1943 game folder (game1943.find_game), which the tools only read."""
+    game = game_folder()
+    return game is not None and contains(game, path)
+
+
+def own_game_root(bundle):
+    """The game copy the input bundle belongs to, or None: the nearest folder above it that has a levels folder
+    holding bundles (levels/*.fbrb or levels/<level>/*.fbrb), as a game copy does (2026-10-30: only find_game's
+    copy was protected, so a bundle of another copy could be extracted, or replaced, into that copy)."""
+    d = os.path.dirname(canonical(bundle))
+    while True:
+        levels = os.path.join(d, 'levels')
+        if os.path.isdir(levels):
+            try:
+                names = os.listdir(levels)
+                if any(n.lower().endswith('.fbrb') for n in names) or any(
+                        f.lower().endswith('.fbrb') for n in names if os.path.isdir(os.path.join(levels, n))
+                        for f in os.listdir(os.path.join(levels, n))):
+                    return d
+            except OSError:
+                pass
+        up = os.path.dirname(d)
+        if up == d:
+            return None
+        d = up
+
+
+def protected(bundle):
+    """The game folders the tool only reads: find_game's copy and the input bundle's own (own_game_root)."""
+    return [g for g in (game_folder(), own_game_root(bundle)) if g is not None]
+
+
+def in_protected(game, path):
+    """The game folder (or one of the list of them) that holds path, or None."""
+    for g in ([game] if isinstance(game, str) else game or ()):
+        if contains(g, path):
+            return g
+    return None
+
+
+def checked(out, path, game, name):
+    """path, when it resolves (links and junctions followed) inside out and outside the game folder (game: one folder,
+    a list of them, or None); ValueError otherwise. A link already inside out would send a write elsewhere although
+    the name stays inside it."""
+    in_game = in_protected(game, path) is not None
+    if in_game or not contains(out, path):
+        where = 'in the game folder, which the tools only read' if in_game else f'outside {out}'
+        raise ValueError(f'{name} would be written at {canonical(path)}, {where} (through a link or junction); '
+                         f'not written')
+    return path
+
+
+def write_file(dst, data):
+    """dst holding data, or as it was: written to a temporary file beside it, then put in its place (os.replace).
+    An existing dst is never opened for writing, so a hard link there (which realpath cannot see) to a file
+    elsewhere, the game folder included, only loses its name in dst; the file it linked to is left as it was."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(dst)), prefix='.fbrb-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+        os.replace(tmp, dst)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def extract_target(out, name, game):
+    """Where entry <name> is written under out (an existing folder), its folders made one at a time: each folder,
+    and then the file, is resolved and checked (checked()) before anything is made in or written through it."""
+    p = safe_path(out, name)
+    cur = out
+    for part in os.path.relpath(os.path.dirname(p), out).split(os.sep):
+        if part in ('', '.'):
+            continue
+        cur = checked(out, os.path.join(cur, part), game, name)
+        if not os.path.isdir(cur):
+            os.mkdir(cur)
+            checked(out, cur, game, name)
+    return checked(out, p, game, name)
+
+
+MANIFEST = 'fbrb.manifest.json'
+
+
+def extract_plan(b, out, flt):
+    """The entries extract writes (filtered); ValueError, before anything is written, when two would be one file on
+    this system (names equal, or equal but for case: the second replaced the first, 2026-10-30), when a file would
+    stand where another entry's folder goes, or when an entry is named as the manifest."""
+    root = os.path.normcase(os.path.abspath(out))
+    owner, folders, plan = {}, {}, []
+    for e in b.entries:
+        if flt not in e['name'].lower():
+            continue
+        key = os.path.normcase(os.path.abspath(safe_path(out, e['name'])))
+        if key == os.path.join(root, MANIFEST):
+            raise ValueError(f'entry {e["name"]!r} has the manifest\'s name ({MANIFEST}); nothing was extracted')
+        if key in owner:
+            raise ValueError(f'entries {owner[key]!r} and {e["name"]!r} would be one file on this system; nothing '
+                             f'was extracted')
+        owner[key] = e['name']
+        d = os.path.dirname(key)
+        while len(d) > len(root):
+            folders.setdefault(d, e['name'])
+            d = os.path.dirname(d)
+        plan.append(e)
+    for key, name in owner.items():
+        if key in folders or key == root:
+            raise ValueError(f'entry {name!r} would be a file where {folders.get(key, "the output")!r} needs a folder; '
+                             f'nothing was extracted')
+    return plan
 
 
 def main(argv):
@@ -166,21 +283,23 @@ def main(argv):
             print(__doc__)
             return 1
         out, flt = argv[3], (argv[4].lower() if len(argv) > 4 else '')
-        if inside_game(out):
-            raise ValueError(f'{out} is in the game folder, which the tools only read; extract elsewhere')
+        game = protected(path)
+        if in_protected(game, out):
+            raise ValueError(f'{out} is in the game folder {in_protected(game, out)}, which the tools only read; '
+                             f'extract elsewhere')
+        plan = extract_plan(b, out, flt)                    # collisions refused before anything is written
+        os.makedirs(out, exist_ok=True)
         manifest = []
-        for e in b.entries:
-            if flt not in e['name'].lower():
-                continue
-            data = b.data(e['name'])
-            p = safe_path(out, e['name'])
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            open(p, 'wb').write(data)
+        for e in plan:
+            data = b.payload[e['offset']:e['offset'] + e['size']]
+            p = extract_target(out, e['name'], game)       # every destination resolved and checked before writing
+            write_file(p, data)                             # a new file moved into place: a hard link is not written through
             manifest.append(dict(name=e['name'], type=e['type'], flags=e['flags'], size=len(data),
                                  sha256=hashlib.sha256(data).hexdigest()))
-        os.makedirs(out, exist_ok=True)
-        with open(os.path.join(out, 'fbrb.manifest.json'), 'w', encoding='utf-8') as f:
-            json.dump(dict(bundle=os.path.abspath(path), sha256=hashlib.sha256(b.raw).hexdigest(), entries=manifest), f, indent=1)
+        text = json.dumps(dict(bundle=os.path.abspath(path), sha256=hashlib.sha256(b.raw).hexdigest(), entries=manifest),
+                          indent=1)
+        write_file(checked(out, os.path.join(out, MANIFEST), game, MANIFEST),
+                   text.encode('utf-8'))                    # UTF-8 with \n newlines on every system
         print(f'extracted {len(manifest)} entries into {out}')
     elif cmd == 'replace':
         if len(argv) < 5:
@@ -189,8 +308,9 @@ def main(argv):
         out = argv[3]
         if canonical(out) == canonical(path):
             raise ValueError('the output would overwrite the input bundle; write a copy elsewhere')
-        if inside_game(out):
-            raise ValueError(f'{out} is in the game folder, which the tools only read; write the bundle elsewhere')
+        if in_protected(protected(path), out):
+            raise ValueError(f'{out} is in the game folder {in_protected(protected(path), out)}, which the tools only '
+                             f'read; write the bundle elsewhere')
         rep = {}
         for spec in argv[4:]:
             name, _, file = spec.partition('=')
@@ -198,7 +318,7 @@ def main(argv):
                 raise ValueError(f'expected <entry name>=<file>, got {spec!r}')
             rep[name] = open(file, 'rb').read()
         raw, _, _ = b.build(rep)
-        open(out, 'wb').write(raw)
+        write_file(out, raw)                                # never written through a hard link at out
         print(f'wrote {out}: {len(rep)} entries replaced')
     return 0
 

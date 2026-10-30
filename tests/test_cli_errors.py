@@ -2,7 +2,9 @@ r"""Every command-line tool's error handling (no game data): each is run with in
 missing, or not the kind the tool reads - and must exit with an error code, tell the cause and what to do in
 words, name its log, and record the error in that log (%LOCALAPPDATA%\bf1943-tool-suite\logs; a temporary folder
 here). The BF1943 tools: the STFS reader, the spawn map, NavKit's BF1943 steps (level objects, the sampler, the
-detailed sectors, the jump links, the navigation audit, the enclosure probe) and the test runner.
+detailed sectors, the jump links, the navigation audit, the enclosure probe). The test runner's own errors: an
+--only naming no test (its message, exit 1) and an --only without a name (usage, exit 2) - before 2026-10-30 this
+case ran `--only` alone, which passed on an unhandled IndexError and never reached the unknown-name message.
 
 Also every tool that once took --help for a file name: run with --help (and -h) in an empty folder, it must exit 0,
 print its usage and write nothing.
@@ -46,7 +48,6 @@ def main(argv):
         ('RSNV tool, a level not exported', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'rsnvtool.py'), 'info', 'no_such_level'], 'rsnvtool', 'missing'),
         ('navigation export, a level not built', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport1943.py'), 'no_such_level'], 'navexport1943', 'missing'),
         ('enclosure probe, a level not sampled',[PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'enclosure_probe1943.py'), 'no_such_level', '0', '0', '0'], 'enclosure_probe1943', 'missing'),
-        ('test runner, an unknown test name', [PY, os.path.join(SUITE, 'run_tests.py'), 'quick', '--only'], 'run-tests', 'what to do'),
     ]
     try:
         for label, args, log_name, says in cases:
@@ -56,6 +57,18 @@ def main(argv):
             text = open(log[-1], encoding='utf-8', errors='replace').read() if log else ''
             ok = r.returncode != 0 and says in out.lower() and 'details' in out.lower() and 'ERROR' in text
             check(ok, f'{label}: exit {r.returncode}, the cause in words, the log ({os.path.basename(log[-1]) if log else "none"})')
+            if not ok:
+                print('       ' + out.strip().replace('\n', '\n       ')[:600])
+        runner = os.path.join(SUITE, 'run_tests.py')
+        for label, args, code_wanted, says in (('an --only naming no test', ['quick', '--only', 'no such test name'], 1,
+                                                'matches no quick test'),
+                                               ('an --only without a name', ['quick', '--only'], 2, 'usage')):
+            r = subprocess.run([PY, '-B', runner, *args], capture_output=True, text=True, errors='replace', env=env,
+                               timeout=120)
+            out = r.stdout + r.stderr
+            ok = r.returncode == code_wanted and says in out.lower() and 'traceback' not in out.lower() \
+                and 'indexerror' not in out.lower()
+            check(ok, f'test runner, {label}: exit {r.returncode}, its own message')
             if not ok:
                 print('       ' + out.strip().replace('\n', '\n       ')[:600])
         empty = os.path.join(tmp, 'empty')

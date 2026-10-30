@@ -78,16 +78,21 @@ class Entity:
     def refs(self):
         """Every reference in the property tree: (field path, ref), local GUIDs and partition/GUID paths."""
         out = []
-
-        def walk(el, path):
-            for c in el.children or ():
-                name = c.attr('name') or c.tag
-                r = c.attr('ref')
-                if r is not None and r != 'null':
-                    out.append((path + name, r))
-                if c.children is not None:
-                    walk(c, path + name + '/')
-        walk(self.element, '')
+        # in document order, with a stack rather than recursion: dbx.parse reads any nesting (2026-10-30: a deep
+        # one raised RecursionError here)
+        todo = [(iter(self.element.children or ()), '')]
+        while todo:
+            c = next(todo[-1][0], None)
+            if c is None:
+                todo.pop()
+                continue
+            path = todo[-1][1]
+            name = c.attr('name') or c.tag
+            r = c.attr('ref')
+            if r is not None and r != 'null':
+                out.append((path + name, r))
+            if c.children is not None:
+                todo.append((iter(c.children), path + name + '/'))
         return out
 
 

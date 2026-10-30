@@ -110,6 +110,10 @@ python tools\navexport1943.py wake_island_s --big-endian   wake_island_s.be.rsnv
 ```
 
 `--check` reads the file back and compares it with the build. Export again after every build (under a minute on Wake Island).
+The exporter takes only the checked build of the level's current preparation: after `prepare` or `sample` again, the
+old `<level>.hpd` stays on disk but is refused until you build and check again (a failed check is exported, with a
+warning). When it writes `<level>.rsnv` (by default, or `--out` naming that file) it stamps `navkit.json` with what it
+exported (`exported`: the file's SHA-256 and the build's, the `.hpd`'s SHA-256), which the vehicle worlds check.
 
 To look inside an export (read-only):
 
@@ -124,7 +128,7 @@ python tools\rsnvtool.py --help                      the other commands: locate,
 After the soldier export, one command builds and checks the worlds of the jeeps, tanks, landing craft and planes:
 
 ```
-python tools\navexport_vehicles1943.py wake_island_s                 every class; samples the ground vehicles if their samples are missing
+python tools\navexport_vehicles1943.py wake_island_s                 every class; samples the ground vehicles if their samples are missing or stale
 python tools\navexport_vehicles1943.py wake_island_s --sample        sample the ground vehicles again first
 python tools\navexport_vehicles1943.py wake_island_s --check-only    only the checks, on the worlds already written
 ```
@@ -132,6 +136,15 @@ python tools\navexport_vehicles1943.py wake_island_s --check-only    only the ch
 `--classes jeep,tank` builds only those classes. The ground vehicles' sampling is the long part (about 11-13 minutes
 per class on a map). It reads `<level>.rsnv` and never changes it. The exit code is 1 when a check fails; the checks
 are in `<level>.vehicles.json`.
+
+Each vehicle step records what it was made from in `navkit.json` (`vehicles`: the collision, each class's samples and
+world, with the preparation, the game copy, the class's parameters and the soldier world). Ground samples of another
+preparation or other sampling parameters (radius, step, height, pitch) are made again; a world needs the export of the
+current soldier build (every builder fails without `<level>.rsnv`); the level's spawns come from the game copy it was
+prepared from. A class the level has none of (no spawns; for the landing craft also no water, whatever the soldier
+export) is recorded as absent, and the check accepts that; a class asked for whose world is missing, or of another
+preparation, class parameters or soldier world, fails the check (one not asked for is a note). A new `prepare` drops
+every vehicle stamp, a new soldier `sample` or `build` drops the worlds'.
 
 ## Where the files go
 

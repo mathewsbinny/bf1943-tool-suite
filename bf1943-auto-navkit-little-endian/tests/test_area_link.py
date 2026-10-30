@@ -48,10 +48,16 @@ def main(argv):
     check(not lv.connected(1, 2, 1, 0, 'raw'), 'straight step 0.65 m does not')
 
     plane = level([[0.0, 0.66, 1.32, 1.98]])           # a 39.5 deg plane: walkable, steps of 0.66 m
-    check(lv is not None and plane.connected(0, 1, 1, 0, 'slope'), 'the slope rule joins a steep plane')
+    check(plane.connected(0, 1, 1, 0, 'slope'), 'the slope rule joins a steep plane')
     check(not plane.connected(0, 1, 1, 0, 'raw'), 'the raw rule cuts it')
-    check(len(navbuild.components(plane, {k: (k, 0) for k in range(4)}, 0, 0)) == (4 if navbuild.AREA_LINK != 'slope' else 1),
-          'components: the steep plane gives one area per cell')
+    # components() under the documented default rule (README: areas are joined by DICE's raw 0.6 m terrain step):
+    # a steep terrain plane gives one area per cell, the same plane of object surfaces one area (slope rule)
+    check(navbuild.AREA_LINK == 'terrain', f"the area link rule is 'terrain' (README) ({navbuild.AREA_LINK!r})")
+    tplane = level([[0.0, 0.66, 1.32, 1.98]], terrain=[[1, 1, 1, 1]])
+    oplane = level([[0.0, 0.66, 1.32, 1.98]], terrain=[[0, 0, 0, 0]])
+    cells = {k: (k, 0) for k in range(4)}
+    check(len(navbuild.components(tplane, cells, 0, 0)) == 4, 'components: a steep terrain plane gives one area per cell')
+    check(len(navbuild.components(oplane, cells, 0, 0)) == 1, 'components: the same plane of object surfaces one area')
 
     # diagonal (0,0) -> (1,1), step 0.9: through side (1,0) at 0.45 (both steps 0.45) - links, even unwalkable
     d = level([[0.0, 0.45], [5.0, 0.9]], keep=[[1, 0], [0, 1]])

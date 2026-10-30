@@ -49,7 +49,7 @@ def main(argv):
         print(__doc__)
         return 1
     lad = extract(argv[1], argv[2:])
-    json.dump(lad, open(os.path.join(argv[1], 'ladders.json'), 'w'), indent=1)
+    json.dump(lad, open(os.path.join(argv[1], 'ladders.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     print(f'{len(lad)} ladders -> {os.path.join(argv[1], "ladders.json")}')
     return 0
 

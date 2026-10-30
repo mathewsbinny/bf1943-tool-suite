@@ -4,6 +4,12 @@ Usage: python stfs.py info <package>
        python stfs.py list <package> [filter]
        python stfs.py extract <package> <outdir> [filter]      (filter = case-insensitive substring)
        extract refuses (nothing written) a package whose names would leave <outdir> ('..', a drive, ...).
+       A damaged file (a block chain that loops, fewer bytes than its size) stops extract with an error and leaves
+       an earlier extracted copy of that file as it was. Two files that would be one file here (names equal but
+       for case) or a file where a folder goes also stop extract before anything is written.
+       An unknown command or a missing argument prints this and exits 1. Refused as damaged: a name longer than
+       its 40-byte field, a parent that is no folder entry. Refused unread: a package whose block separation
+       has bit 1 set (its second hash-table copies are current; this reader reads the first copies only).
 
 Format (public STFS documentation, Free60): header with display name (UTF-16BE at 0x411), header size
 (u32 BE at 0x340) and the volume descriptor at 0x379 (block separation u8 at 0x37B, file-table block
@@ -17,6 +23,7 @@ length, 0x40 = blocks consecutive, 0x80 = directory), block count u24 LE at 0x29
 import os
 import struct
 import sys
+import tempfile
 
 BLOCK = 0x1000
 
@@ -34,7 +41,18 @@ class Package:
         self.base = (self.header_size + 0xFFF) & ~0xFFF
         # read-only packages (separation bit 0 set) keep one hash table per level; others keep two
         self.shift = 0 if (self.separation & 1) else 1
-        self.entries = self._file_table()
+        try:
+            if self.separation & 2:
+                # bit 1: the package was last written to the second copy of its hash tables. This reader follows
+                # block chains through the first copy only, which may then be stale (2026-10-30: refused rather
+                # than read wrong; the active-copy rules are not implemented)
+                raise ValueError(f'package not read: its volume descriptor (block separation {self.separation:#x}, '
+                                 f'bit 1 set) says its hash tables\' second copies are the current ones, and this reader '
+                                 f'reads only the first copies')
+            self.entries = self._file_table()
+        except BaseException:
+            self.f.close()
+            raise
 
     def _fix(self, block):
         """Data block number -> raw block number: a level-0 hash table precedes every 0xAA data blocks
@@ -67,8 +85,12 @@ class Package:
     def _blocks(self, start, count, consecutive):
         if consecutive:
             return list(range(start, start + count))
-        out, b = [], start
+        out, b, seen = [], start, set()
         for _ in range(count):
+            if b in seen:                           # a damaged chain: it loops back to a block already read
+                raise ValueError(f'damaged package: the block chain from block {start} comes back to block {b} '
+                                 f'after {len(out)} block(s); nothing was read')
+            seen.add(b)
             out.append(b)
             b = self._next(b)
         return out
@@ -84,10 +106,19 @@ class Package:
             flags = e[0x28]
             if not flags & 0x3F:
                 break
+            if flags & 0x3F > 0x28:                 # the name field is 0x28 bytes: a longer name reads the entry's other fields
+                raise ValueError(f'damaged package: entry {i // 0x40} has a name of {flags & 0x3F} bytes in a 40-byte '
+                                 f'field; nothing was read')
             entries.append({'name': e[:flags & 0x3F].decode('latin-1'), 'dir': bool(flags & 0x80),
                             'consecutive': bool(flags & 0x40), 'count': int.from_bytes(e[0x29:0x2C], 'little'),
                             'start': int.from_bytes(e[0x2F:0x32], 'little'), 'parent': struct.unpack_from('>H', e, 0x32)[0],
                             'size': struct.unpack_from('>I', e, 0x34)[0]})
+        for i, e in enumerate(entries):
+            p = e['parent']
+            if p != 0xFFFF and (p >= len(entries) or not entries[p]['dir']):     # before: taken as the root
+                raise ValueError(f'damaged package: entry {i} ({e["name"]!r}) names entry {p} as its parent folder, and '
+                                 f'{"there is no such entry" if p >= len(entries) else "that entry is a file"}; '
+                                 f'nothing was read')
         for i, e in enumerate(entries):
             parts, p, seen = [e['name']], e['parent'], {i}
             while p != 0xFFFF and p < len(entries):
@@ -129,31 +160,76 @@ def safe_target(dest, path):
     return target
 
 
-def main(argv):
-    if len(argv) < 3:
-        print(__doc__)
-        return 1
-    pkg = Package(argv[2])
-    if argv[1] == 'extract':
-        for e in pkg.entries:                       # every path checked before anything is written
-            safe_target(argv[3], e['path'])
-    if argv[1] == 'info':
-        print(f'{pkg.magic!r} "{pkg.name}" header {pkg.header_size:#x} separation {pkg.separation} '
-              f'file table {pkg.ft_blocks} blocks at {pkg.ft_start}; {len(pkg.entries)} entries')
-        return 0
-    flt = (argv[3] if argv[1] == 'list' and len(argv) > 3 else argv[4] if len(argv) > 4 else '').lower()
+def write_file(dst, data):
+    """dst holding data, or as it was: written to a temporary file beside it, then put in its place."""
+    folder = os.path.dirname(dst)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix='.stfs-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+        os.replace(tmp, dst)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+COMMANDS = {'info': (3, 3), 'list': (3, 4), 'extract': (4, 5)}      # command -> (fewest, most) arguments with argv[0]
+
+
+def extract_plan(pkg, dest, flt):
+    """[(entry, target)] of the files extract writes, every package path checked first (safe_target); ValueError when
+    two files would be one file on this system (names equal but for case, here: the second would replace the first)
+    or a file would stand where another file's folder goes. Nothing is written before this passes."""
+    for e in pkg.entries:
+        safe_target(dest, e['path'])
+    root = os.path.normcase(os.path.realpath(dest))
+    plan, owner, folders = [], {}, {}
     for e in pkg.entries:
         if e['dir'] or flt not in e['path'].lower():
             continue
-        if argv[1] == 'list':
-            print(f'{e["size"]:>12}  {e["path"]}')
-        elif argv[1] == 'extract':
-            dst = safe_target(argv[3], e['path'])
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            open(dst, 'wb').write(pkg.read(e))
-            print(f'{e["size"]:>12}  {dst}')
-    return 0
+        target = safe_target(dest, e['path'])
+        key = os.path.normcase(target)
+        if key in owner:
+            raise ValueError(f'damaged package: {owner[key]!r} and {e["path"]!r} would be one file on this system; '
+                             f'nothing was extracted')
+        owner[key] = e['path']
+        d = os.path.dirname(key)
+        while len(d) > len(root):
+            folders.setdefault(d, e['path'])
+            d = os.path.dirname(d)
+        plan.append((e, target))
+    for key, path in owner.items():
+        if key in folders:
+            raise ValueError(f'damaged package: the file {path!r} would stand where {folders[key]!r} needs a folder; '
+                             f'nothing was extracted')
+    return plan
 
+
+def main(argv):
+    if len(argv) < 2 or argv[1] not in COMMANDS or not COMMANDS[argv[1]][0] <= len(argv) <= COMMANDS[argv[1]][1]:
+        print(__doc__)                              # an unknown command or a missing argument does nothing: exit 1
+        return 1
+    cmd = argv[1]
+    pkg = Package(argv[2])
+    try:
+        if cmd == 'info':
+            print(f'{pkg.magic!r} "{pkg.name}" header {pkg.header_size:#x} separation {pkg.separation} '
+                  f'file table {pkg.ft_blocks} blocks at {pkg.ft_start}; {len(pkg.entries)} entries')
+        elif cmd == 'list':
+            flt = argv[3].lower() if len(argv) > 3 else ''
+            for e in pkg.entries:
+                if not e['dir'] and flt in e['path'].lower():
+                    print(f'{e["size"]:>12}  {e["path"]}')
+        else:
+            flt = argv[4].lower() if len(argv) > 4 else ''
+            for e, dst in extract_plan(pkg, argv[3], flt):      # every path checked before anything is written
+                write_file(dst, pkg.read(e))            # read (and checked) first: a damaged entry leaves dst as it was
+                print(f'{e["size"]:>12}  {dst}')
+    finally:
+        pkg.f.close()
+    return 0
 
 if __name__ == '__main__':
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))

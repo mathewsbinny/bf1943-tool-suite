@@ -6,11 +6,11 @@
 //   --match-objects     also pair placed objects (ReferenceObjectData) whose GUIDs differ by blueprint + position
 //                       (builds of one map often re-create them: PC vs console vs Linux server)
 //   --type <text>       only instances whose type contains <text> (e.g. --type ReferenceObjectData)
-//   --ignore <field>    leave this field out (repeatable; e.g. --ignore Enumeration)
+//   --ignore <field>    leave this field (or attribute) out (repeatable; e.g. --ignore Enumeration)
 //   --summary           counts only
 //   --all               list every instance (default: the first 40 per section)
 //   --json <file>       also write the full result as JSON
-// exit code: 0 = no differences, 1 = differences, 2 = bad input
+// exit code: 0 = no differences, 1 = differences, 2 = bad input or the comparison could not run
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -36,11 +36,24 @@ static class LevelDiff
         public readonly List<string> Added = new List<string>(), Removed = new List<string>();   // list entries
     }
 
+    // a value as shown (Text) and what it is exactly (Raw: kind, count and width, bytes, other attributes). Values
+    // are equal when their Raw is: the text alone hides an integer turned decimal (both "2"), a width or kind change.
+    sealed class Value { public string Text, Raw; }
+
     static int Main(string[] args)
     {
         ToolLog.Start("leveldiff");
         try { return MainCore(args); }
-        catch (Exception e) { return ToolLog.Fail(e); }       // unexpected: logged and explained, exit code 1
+        catch (Exception e) { return ToolLog.Fail(e); }       // unexpected: logged and explained, exit code 2
+    }
+
+    const string UsageText = "usage: LevelDiff <a.dbx> <b.dbx> [--match-objects] [--type <text>] [--ignore <field>] [--summary] [--all] [--json <file>]";
+
+    static int Usage(string why)
+    {
+        if (why != null) Console.Error.WriteLine(why);
+        Console.Error.WriteLine(UsageText);
+        return 2;
     }
 
     static int MainCore(string[] args)
@@ -49,24 +62,31 @@ static class LevelDiff
         var files = new List<string>();
         for (int i = 0; i < args.Length; i++)
         {
-            switch (args[i])
+            string a = args[i];
+            if (a == "--match-objects") o.MatchObjects = true;
+            else if (a == "--summary") o.Summary = true;
+            else if (a == "--all") o.All = true;
+            else if (a == "--type" || a == "--ignore" || a == "--json")
             {
-                case "--match-objects": o.MatchObjects = true; break;
-                case "--summary": o.Summary = true; break;
-                case "--all": o.All = true; break;
-                case "--type": o.Type = Next(args, ref i); break;
-                case "--ignore": o.Ignore.Add(Next(args, ref i)); break;
-                case "--json": o.Json = Next(args, ref i); break;
-                default: files.Add(args[i]); break;
+                if (i + 1 >= args.Length || args[i + 1].Length == 0) return Usage(a + " needs a value");
+                string v = args[++i];
+                if (a == "--type") o.Type = v;
+                else if (a == "--ignore") o.Ignore.Add(v);
+                else o.Json = v;
             }
+            else if (a.StartsWith("--")) return Usage("unknown option " + a);
+            else files.Add(a);
         }
-        if (files.Count != 2 || files.Any(f => f == null))
+        if (files.Count != 2) return Usage(null);
+        DbxFile fa, fb;
+        try
         {
-            Console.Error.WriteLine("usage: LevelDiff <a.dbx> <b.dbx> [--match-objects] [--type <text>] [--ignore <field>] [--summary] [--all] [--json <file>]");
-            return 2;
+            fa = DbxFile.Read(files[0]);
+            fb = DbxFile.Read(files[1]);
+            if (!fa.IsBinary || !fb.IsBinary) { Console.Error.WriteLine("both files must be binary .dbx"); return 2; }
+            fa.Walkable(files[0]);
+            fb.Walkable(files[1]);
         }
-        DbxFile a, b;
-        try { a = new DbxFile(files[0]); b = new DbxFile(files[1]); }
         catch (Exception e)
         {
             ToolLog.Error(e, "reading the files");
@@ -75,11 +95,8 @@ static class LevelDiff
             Console.Error.WriteLine("  what to do: " + ce[1] + "  (details: " + (ToolLog.LogPath ?? "no log") + ")");
             return 2;
         }
-        if (!a.IsBinary || !b.IsBinary) { Console.Error.WriteLine("both files must be binary .dbx"); return 2; }
-        return Run(a, b, files[0], files[1], o);
+        return Run(fa, fb, files[0], files[1], o);
     }
-
-    static string Next(string[] args, ref int i) { return i + 1 < args.Length ? args[++i] : null; }
 
     static string TypeOf(DbxFile f, Element i)
     {
@@ -93,23 +110,40 @@ static class LevelDiff
         Func<DbxFile, List<Element>> pick = f => f.Instances().Where(i => o.Type == null || (f.Get(i, "type") ?? "").IndexOf(o.Type, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
         var ia = pick(a);
         var ib = pick(b);
-        var byGuidB = new Dictionary<string, Element>(StringComparer.OrdinalIgnoreCase);
-        foreach (var i in ib) byGuidB[b.Get(i, "guid") ?? ""] = i;
+        // pairs by GUID: each B instance pairs once (the n-th A instance of a GUID with the n-th B one); an instance
+        // without a GUID pairs with none
+        var byGuidB = new Dictionary<string, Queue<Element>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in ib)
+        {
+            string g = b.Get(i, "guid");
+            if (g == null) continue;
+            Queue<Element> q;
+            if (!byGuidB.TryGetValue(g, out q)) byGuidB[g] = q = new Queue<Element>();
+            q.Enqueue(i);
+        }
         var pairs = new List<KeyValuePair<Element, Element>>();
         var onlyA = new List<Element>();
         var matchedB = new HashSet<Element>();
         foreach (var i in ia)
         {
-            Element j;
-            if (byGuidB.TryGetValue(a.Get(i, "guid") ?? "", out j)) { pairs.Add(new KeyValuePair<Element, Element>(i, j)); matchedB.Add(j); }
+            string g = a.Get(i, "guid");
+            Queue<Element> q;
+            if (g != null && byGuidB.TryGetValue(g, out q) && q.Count > 0)
+            {
+                var j = q.Dequeue();
+                pairs.Add(new KeyValuePair<Element, Element>(i, j));
+                matchedB.Add(j);
+            }
             else onlyA.Add(i);
         }
         var onlyB = ib.Where(j => !matchedB.Contains(j)).ToList();
+        // placed objects, once per file (listing and pairing look them up)
+        var objA = PlacedObject.All(a).ToDictionary(x => x.Instance, x => x);
+        var objB = PlacedObject.All(b).ToDictionary(x => x.Instance, x => x);
         int pairedByPosition = 0;
         if (o.MatchObjects)
         {
             var posB = new Dictionary<string, Queue<Element>>();
-            var objB = PlacedObject.All(b).ToDictionary(x => x.Instance, x => x);
             foreach (var j in onlyB)
             {
                 PlacedObject po;
@@ -118,35 +152,42 @@ static class LevelDiff
                 if (!posB.TryGetValue(po.PositionKey, out q)) posB[po.PositionKey] = q = new Queue<Element>();
                 q.Enqueue(j);
             }
-            var objA = PlacedObject.All(a).ToDictionary(x => x.Instance, x => x);
-            foreach (var i in onlyA.ToList())
+            var pairedA = new HashSet<Element>();
+            var pairedB = new HashSet<Element>();
+            foreach (var i in onlyA)
             {
                 PlacedObject po;
                 Queue<Element> q;
                 if (!objA.TryGetValue(i, out po) || !posB.TryGetValue(po.PositionKey, out q) || q.Count == 0) continue;
                 var j = q.Dequeue();
                 pairs.Add(new KeyValuePair<Element, Element>(i, j));
-                onlyA.Remove(i);
-                onlyB.Remove(j);
+                pairedA.Add(i);
+                pairedB.Add(j);
                 pairedByPosition++;
             }
+            onlyA = onlyA.Where(i => !pairedA.Contains(i)).ToList();
+            onlyB = onlyB.Where(j => !pairedB.Contains(j)).ToList();
         }
 
         var diffs = new List<InstanceDiff>();
+        if (o.Type == null)
+        {
+            var p = ComparePartition(a, b, o);
+            if (p.Changes.Count + p.Added.Count + p.Removed.Count > 0) diffs.Add(p);
+        }
         foreach (var p in pairs)
         {
             var d = Compare(a, p.Key, b, p.Value, o);
             if (d.Changes.Count + d.Added.Count + d.Removed.Count > 0) diffs.Add(d);
         }
 
-        var outText = new StringBuilder();
         Action<string> say = s => { Console.WriteLine(s); };
         say("A: " + nameA + "  (" + ia.Count + " instances)");
         say("B: " + nameB + "  (" + ib.Count + " instances)");
         say("same instance in both: " + pairs.Count + (pairedByPosition > 0 ? " (" + pairedByPosition + " placed objects paired by blueprint + position)" : "")
             + "; changed: " + diffs.Count + "; only in A: " + onlyA.Count + "; only in B: " + onlyB.Count);
-        Section("only in A (removed in B)", onlyA, a, o, say);
-        Section("only in B (added in B)", onlyB, b, o, say);
+        Section("only in A (removed in B)", onlyA, a, objA, o, say);
+        Section("only in B (added in B)", onlyB, b, objB, o, say);
         if (!o.Summary && diffs.Count > 0)
         {
             say("");
@@ -162,7 +203,7 @@ static class LevelDiff
             }
             if (!o.All && diffs.Count > 40) say("... " + (diffs.Count - 40) + " more changed instances (--all lists them)");
         }
-        if (o.Json != null) File.WriteAllText(o.Json, Json(a, b, nameA, nameB, onlyA, onlyB, diffs, pairs.Count));
+        if (o.Json != null) SafeWrite.Text(o.Json, Json(a, b, nameA, nameB, onlyA, onlyB, diffs, pairs.Count));
         return onlyA.Count + onlyB.Count + diffs.Count == 0 ? 0 : 1;
     }
 
@@ -172,31 +213,60 @@ static class LevelDiff
         return s.Length > 120 ? s.Substring(0, 120) + "..." : s;
     }
 
-    static void Section(string title, List<Element> list, DbxFile f, Options o, Action<string> say)
+    static void Section(string title, List<Element> list, DbxFile f, Dictionary<Element, PlacedObject> placed, Options o, Action<string> say)
     {
         if (list.Count == 0) return;
         say("");
         say("== " + title + ": " + list.Count + "  (" + string.Join(", ", list.GroupBy(i => TypeOf(f, i)).OrderByDescending(g => g.Count()).Take(8).Select(g => g.Key + " " + g.Count())) + ")");
         if (o.Summary) return;
-        foreach (var i in o.All ? list : list.Take(40)) say("    " + TypeOf(f, i) + "  " + (f.Get(i, "id") ?? "") + "  " + f.Get(i, "guid") + Placement(f, i));
+        foreach (var i in o.All ? list : list.Take(40)) say("    " + TypeOf(f, i) + "  " + (f.Get(i, "id") ?? "") + "  " + f.Get(i, "guid") + Placement(placed, i));
         if (!o.All && list.Count > 40) say("    ... " + (list.Count - 40) + " more (--all lists them)");
     }
 
-    static string Placement(DbxFile f, Element i)
+    static string Placement(Dictionary<Element, PlacedObject> placed, Element i)
     {
-        var po = PlacedObject.All(f).FirstOrDefault(x => x.Instance == i);
-        return po == null ? "" : "  " + po.Blueprint + " at " + Math.Round(po.X, 1) + ", " + Math.Round(po.Y, 1) + ", " + Math.Round(po.Z, 1);
+        PlacedObject po;
+        return !placed.TryGetValue(i, out po) ? "" : "  " + po.Blueprint + " at " + Math.Round(po.X, 1) + ", " + Math.Round(po.Y, 1) + ", " + Math.Round(po.Z, 1);
     }
 
-    // Fields of one instance as path -> value; lists of references as sets of entries.
-    static void Flatten(DbxFile f, Element e, string path, Options o, Dictionary<string, string> values, Dictionary<string, List<string>> lists)
+    static string Hex(byte[] b, int from) { return BitConverter.ToString(b, from).Replace("-", "").ToLowerInvariant(); }
+
+    // What an element is exactly: its kind, for numbers their count and width, its value bytes (a text's string),
+    // and its attributes other than name.
+    static string Raw(DbxFile f, Element e)
+    {
+        string attrs = string.Join(" ", e.Attributes.Where(x => f.Table[x.Name] != "name").Select(x => f.Table[x.Name] + "=" + f.Table[x.Value]));
+        string v;
+        if (e.IsContainer) v = "container of " + e.Children.Count + ", byte " + e.ContainerByte;
+        else if (e.Kind == Element.Text) v = "text '" + XmlExport.ValueText(f, e) + "'";
+        else if (e.Kind == Element.Numbers)
+        {
+            int n, size;
+            int at = Element.NumbersHeader(e.Payload, out n, out size);
+            v = n + " number(s) of " + size + " bytes" + (at < e.Payload.Length ? " " + Hex(e.Payload, at) : "");
+        }
+        else v = "kind " + e.Kind + " " + Hex(e.Payload, 0);
+        return v + (attrs.Length > 0 ? ", " + attrs : "");
+    }
+
+    static Value ValueOf(DbxFile f, Element e)
+    {
+        string r = f.Get(e, "ref");
+        string text = e.IsContainer ? "(" + e.Children.Count + " entries)" : r != null ? "-> " + r : XmlExport.ValueText(f, e);
+        return new Value { Text = text, Raw = Raw(f, e) };
+    }
+
+    // Fields of one instance as path -> value; lists of references as sets of entries. skipInstances: leave out
+    // instance children (the partition's own fields).
+    static void Flatten(DbxFile f, Element e, string path, Options o, Dictionary<string, Value> values, Dictionary<string, List<string>> lists, bool skipInstances)
     {
         var seen = new Dictionary<string, int>();
         foreach (var c in e.Children)
         {
             string name = f.Get(c, "name");
-            if (name != null && o.Ignore.Contains(name)) continue;
             string tag = f.TagOf(c), key = name ?? tag;
+            if (skipInstances && tag == "instance") continue;
+            if (name != null && o.Ignore.Contains(name)) continue;
             int n;
             seen.TryGetValue(key, out n);
             seen[key] = n + 1;
@@ -213,33 +283,83 @@ static class LevelDiff
                 }
                 else
                 {
-                    values[p] = "(" + c.Children.Count + " entries)";
-                    Flatten(f, c, p, o, values, lists);
+                    values[p] = ValueOf(f, c);
+                    Flatten(f, c, p, o, values, lists, false);
                 }
                 continue;
             }
-            string r = f.Get(c, "ref");
-            values[p] = r != null ? "-> " + r : XmlExport.ValueText(f, c);
+            values[p] = ValueOf(f, c);
         }
+    }
+
+    // an element's attributes by name (a repeated name gets [n]) but those skipped or ignored
+    static Dictionary<string, string> AttributeMap(DbxFile f, Element e, Options o, params string[] skip)
+    {
+        var m = new Dictionary<string, string>();
+        foreach (var at in e.Attributes)
+        {
+            string k = f.Table[at.Name];
+            if (skip.Contains(k) || o.Ignore.Contains(k)) continue;
+            string key = "(" + k + ")";
+            for (int n = 1; m.ContainsKey(key); n++) key = "(" + k + "[" + n + "])";
+            m[key] = f.Table[at.Value];
+        }
+        return m;
+    }
+
+    static void CompareAttributes(Dictionary<string, string> x, Dictionary<string, string> y, InstanceDiff d)
+    {
+        foreach (var k in x.Keys.Union(y.Keys))
+        {
+            string va, vb;
+            x.TryGetValue(k, out va);
+            y.TryGetValue(k, out vb);
+            if (va != vb) d.Changes.Add(new Change { Path = k, A = va, B = vb });
+        }
+    }
+
+    // The partition element itself: its attributes (guid, primaryInstance, ...), its children other than instances,
+    // and the number of top-level elements.
+    static InstanceDiff ComparePartition(DbxFile a, DbxFile b, Options o)
+    {
+        var pa = a.TopLevel[0];
+        var pb = b.TopLevel[0];
+        var d = new InstanceDiff { Guid = a.Get(pa, "guid"), GuidB = b.Get(pb, "guid"), Type = "(" + a.TagOf(pa) + ")" };
+        if (a.TopLevel.Count != b.TopLevel.Count)
+            d.Changes.Add(new Change { Path = "(top-level elements)", A = a.TopLevel.Count.ToString(), B = b.TopLevel.Count.ToString() });
+        if (a.TagOf(pa) != b.TagOf(pb)) d.Changes.Add(new Change { Path = "(tag)", A = a.TagOf(pa), B = b.TagOf(pb) });
+        CompareAttributes(AttributeMap(a, pa, o), AttributeMap(b, pb, o), d);
+        if (pa.IsContainer && pb.IsContainer) CompareFields(a, pa, b, pb, o, d, true);
+        else if (pa.IsContainer != pb.IsContainer) d.Changes.Add(new Change { Path = "(kind)", A = Raw(a, pa), B = Raw(b, pb) });
+        return d;
     }
 
     static InstanceDiff Compare(DbxFile a, Element ia, DbxFile b, Element ib, Options o)
     {
         var d = new InstanceDiff { Guid = a.Get(ia, "guid"), GuidB = b.Get(ib, "guid"), Type = TypeOf(a, ia), Id = a.Get(ia, "id") };
-        if (TypeOf(b, ib) != d.Type) d.Changes.Add(new Change { Path = "(type)", A = a.Get(ia, "type"), B = b.Get(ib, "type") });
-        if (a.Get(ia, "id") != b.Get(ib, "id")) d.Changes.Add(new Change { Path = "(id)", A = a.Get(ia, "id"), B = b.Get(ib, "id") });
-        var va = new Dictionary<string, string>();
-        var vb = new Dictionary<string, string>();
+        CompareAttributes(AttributeMap(a, ia, o, "guid"), AttributeMap(b, ib, o, "guid"), d);
+        if (ia.IsContainer && ib.IsContainer) CompareFields(a, ia, b, ib, o, d, false);
+        else if (ia.IsContainer != ib.IsContainer) d.Changes.Add(new Change { Path = "(kind)", A = Raw(a, ia), B = Raw(b, ib) });
+        return d;
+    }
+
+    static void CompareFields(DbxFile a, Element ia, DbxFile b, Element ib, Options o, InstanceDiff d, bool skipInstances)
+    {
+        var va = new Dictionary<string, Value>();
+        var vb = new Dictionary<string, Value>();
         var la = new Dictionary<string, List<string>>();
         var lb = new Dictionary<string, List<string>>();
-        Flatten(a, ia, "", o, va, la);
-        Flatten(b, ib, "", o, vb, lb);
+        Flatten(a, ia, "", o, va, la, skipInstances);
+        Flatten(b, ib, "", o, vb, lb, skipInstances);
         foreach (var k in va.Keys.Union(vb.Keys))
         {
-            string x, y;
+            Value x, y;
             va.TryGetValue(k, out x);
             vb.TryGetValue(k, out y);
-            if (x != y) d.Changes.Add(new Change { Path = k, A = x, B = y });
+            if (x != null && y != null && x.Raw == y.Raw) continue;
+            string ta = x == null ? null : x.Text, tb = y == null ? null : y.Text;
+            if (x != null && y != null && ta == tb) { ta += "  [" + x.Raw + "]"; tb += "  [" + y.Raw + "]"; }   // the same text: show what differs
+            d.Changes.Add(new Change { Path = k, A = ta, B = tb });
         }
         foreach (var k in la.Keys.Union(lb.Keys))
         {
@@ -254,7 +374,6 @@ static class LevelDiff
             if (d.Removed.Count + d.Added.Count == entries && !x.SequenceEqual(y, StringComparer.OrdinalIgnoreCase))
                 d.Changes.Add(new Change { Path = k, A = "same " + x.Count + " entries", B = "in another order" });
         }
-        return d;
     }
 
     static Dictionary<string, int> Counts(List<string> l)

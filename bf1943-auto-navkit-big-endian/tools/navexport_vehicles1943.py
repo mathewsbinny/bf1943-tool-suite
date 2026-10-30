@@ -14,7 +14,14 @@ Writes, beside the soldier world (work\levels\<level>\navkit\<level>.rsnv, which
                                           resolves to in the current soldier world, its island; the inputs' hashes
   <level>.vehicles.json                   the checks: per world its counts, islands and transfers, problems
 
-Checks (exit 1 when any fails): each world reads back and validates (rsnv.World.validate); every node lies on a
+Each world is built from the game copy the level was prepared from, and stamped in navkit.json (vehicleclasses1943:
+the preparation, the class's parameters, the soldier world); ground samples of another preparation or other class
+parameters are made again. A class the level has none of (no spawns of it; for the landing craft also no water) is
+stamped absent, and an earlier world file of it removed.
+
+Checks (exit 1 when any fails): every class asked for (--classes) has a world, or is stamped absent; a world not
+stamped as built from the current preparation, class parameters and soldier world fails (build it again); each
+world reads back and validates (rsnv.World.validate); every node lies on a
 cell of its own world; every board transfer has a vehicle node and a soldier node; every alight / drop transfer's
 soldier node lies on a soldier island that is no carrier, and on the main island for the landing craft and ground
 vehicles; no landing-craft alight lands in Iwo Jima's no-go strip (the beach outside the ForbidPathfinding boardwalk,
@@ -22,7 +29,6 @@ x -190..-174, z -10..26: NAVMESH_AUDIT); every carrier spawn's landing craft rea
 reference trip from each carrier island a craft is boarded from to the main island's flags takes the craft (rsnvtrip.plan).
 """
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -33,6 +39,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
+import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 from bfbc2core import game1943, rsnv, rsnvtrip  # noqa: E402
 
@@ -41,12 +48,7 @@ IWO_NO_GO = (-190.0, -174.0, -10.0, 26.0)
 KIND_NAMES = {1: 'board', 2: 'alight', 3: 'launch', 4: 'drop', 5: 'mount'}
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for b in iter(lambda: f.read(1 << 22), b''):
-            h.update(b)
-    return h.hexdigest()
+sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
 
 
 def world_path(lv, cls):
@@ -58,20 +60,26 @@ def build(lv, classes, sample=False, log=print):
     import groundnav1943
     import seanav1943
     out = {}
+    st = nj.read(lv)
+    game = st.get('game')               # the copy the level was prepared from (2026-10-30: the default copy was read)
     for cls in classes:
         t0 = time.time()
         if cls in ('jeep', 'tank'):
-            seeds = groundnav1943.spawn_seeds(lv, cls)
+            seeds = groundnav1943.spawn_seeds(lv, cls, game)
             if not any(s['class'] == cls for s in seeds):
                 log(f'{lv}: no {cls} spawns: no {cls} world')
+                vc.absent(lv, cls, vc.inputs(st, lv, cls), world_path(lv, cls), f'no {cls} spawns on the level', log)
                 continue
-            if sample or not os.path.isfile(groundnav1943.paths(lv)['samples'](cls)):
+            # samples of another preparation or other class parameters are made again (2026-10-30: any file was reused)
+            if sample or not groundnav1943.samples_current(lv, cls):
+                if not sample and os.path.isfile(groundnav1943.paths(lv)['samples'](cls)):
+                    log(f'{lv} {cls}: the samples on disk are of another preparation or other {cls} parameters: sampling again')
                 groundnav1943.sample(lv, cls, log)
-            path, stats = groundnav1943.build(lv, cls, log)
+            path, stats = groundnav1943.build(lv, cls, log, game=game)
         elif cls == 'lcvp':
-            path, stats = seanav1943.build(lv, log=log)
+            path, stats = seanav1943.build(lv, game=game, log=log)
         else:
-            path, stats = airnav1943.build(lv, log=log)
+            path, stats = airnav1943.build(lv, game=game, log=log)
         if path:
             out[cls] = {'path': path, 'stats': stats, 'seconds': round(time.time() - t0, 1)}
     return out
@@ -92,10 +100,16 @@ def on_cells(w):
     return bad
 
 
-def check(lv, classes=CLASSES, log=print):
+def check(lv, classes=CLASSES, log=print, required=None):
+    """required: the classes whose world must be there (default: every class checked) - unless the level has none
+    (its builder stamped the class absent: no spawns of it, no water). 2026-10-30: a missing world was skipped, so a
+    check with the jeep world missing checked nothing and passed. A world not stamped as built from the current
+    preparation, class parameters and soldier world is a problem too."""
     W = os.path.join(game1943.level_work(lv), 'navkit')
     sp = os.path.join(W, f'{lv}.rsnv')
     S = rsnv.load(sp)
+    st = nj.read(lv)
+    required = classes if required is None else required
     carrier = {k for k, r in enumerate(S.islands) if r[2] & rsnv.ISLD_CARRIER}
     report = {'level': lv, 'soldier world': {'path': sp, 'sha256': sha256(sp), 'nodes': len(S.node_pos),
                                               'islands': len(S.islands)}, 'worlds': {}, 'problems': []}
@@ -103,7 +117,31 @@ def check(lv, classes=CLASSES, log=print):
     probs = report['problems']
     for cls in classes:
         p = world_path(lv, cls)
+        try:
+            want = vc.inputs(st, lv, cls)
+        except vc.StaleError as e:
+            probs.append(f'{cls}: {e}')
+            continue
+        stamp = vc.stamp(st, 'worlds', cls)
+        if vc.current(st, 'worlds', want, cls) and stamp.get('absent'):
+            report['worlds'][cls] = {'absent': stamp['absent']}
+            log(f'{lv} {cls}: no world: {stamp["absent"]}')
+            continue
         if not os.path.isfile(p):
+            if cls in required:
+                probs.append(f'{cls}: no world (missing {p}): build it (navexport_vehicles1943.py {lv} --classes {cls})')
+            else:
+                report.setdefault('notes', []).append(f'{cls}: not built')
+            continue
+        if not vc.current(st, 'worlds', dict(want, soldier=report['soldier world']['sha256']), cls):
+            stale = (f'{cls}: {os.path.basename(p)} is not built from the current preparation, {cls} parameters and '
+                     f'soldier world: build it again (navexport_vehicles1943.py {lv} --classes {cls})')
+            # as a missing world: a problem when asked for, else a note (2026-10-30: a world a soldier rebuild left
+            # stale failed every --classes run that did not ask for it)
+            if cls in required:
+                probs.append(stale)
+            else:
+                report.setdefault('notes', []).append(stale)
             continue
         V = rsnv.load(p)
         v = V.validate()
@@ -149,9 +187,9 @@ def check(lv, classes=CLASSES, log=print):
             f'{off} nodes off their cells')
     # trips: carrier islands -> flags by the landing craft
     lp = world_path(lv, 'lcvp')
-    if os.path.isfile(lp) and carrier:
+    if 'lcvp' in report['worlds'] and 'absent' not in report['worlds']['lcvp'] and carrier:
         V = rsnv.load(lp)
-        lvl_obj = flags_of(lv)
+        lvl_obj = flags_of(lv, st.get('game'))
         trips = []
         # the carrier islands a craft is boarded from (the decks; the lower decks and superstructure pieces that are
         # their own islands hold no craft and are left to the decks' trips)
@@ -180,9 +218,9 @@ def check(lv, classes=CLASSES, log=print):
     return report
 
 
-def flags_of(lv):
+def flags_of(lv, game=None):
     from bfbc2core import level1943
-    lvl = level1943.load(lv, log=lambda *a: None)
+    lvl = level1943.load(lv, game=game, log=lambda *a: None)
     return [(o['name'], o['position']) for o in getattr(lvl, 'objectives', []) if o.get('role') == 'flag' and o.get('position')]
 
 
@@ -210,7 +248,7 @@ def main(argv):
         raise FileNotFoundError(f'{a.level}: no soldier world (missing {sp}): run navexport1943.py {a.level}')
     if not a.check_only:
         build(a.level, classes, a.sample)
-    report = check(a.level, CLASSES)
+    report = check(a.level, CLASSES, required=classes)
     return 1 if report['problems'] else 0
 
 

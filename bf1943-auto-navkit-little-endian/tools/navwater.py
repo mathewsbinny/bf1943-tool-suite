@@ -199,7 +199,7 @@ def main(argv):
         print(f'  DICE\'s depth limit per level (99.9 % of its ground under water is within): '
               f'{min(lims):.2f} - {max(lims):.2f} m, median {float(np.median(lims)):.2f} m')
     if opt('--json'):
-        json.dump(reports, open(opt('--json'), 'w'), indent=1)
+        json.dump(reports, open(opt('--json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     return 0
 
 

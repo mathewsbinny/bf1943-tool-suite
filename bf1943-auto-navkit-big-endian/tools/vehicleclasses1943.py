@@ -37,6 +37,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-fbrb-tool')]
+import navkitjson1943 as nj  # noqa: E402
 
 VEHICLES = {
     'willys-mb': ('jeep', 'objects/vehicles/beach/willys-mb/willys-mb', 'objects/vehicles/beach/willys-mb/willys-mb_havok.res'),
@@ -112,6 +113,131 @@ CLASS_IDS = {'jeep': 1, 'tank': 2, 'lcvp': 3, 'plane': 4}       # the RSNV layer
 
 def value(cls, key):
     return CLASSES[cls][key][0]
+
+
+# ---- what each vehicle step was made from (navkit.json 'vehicles') -------------------------------------------------
+# 2026-10-30: the vehicle collision was made again only when its file was missing, and the samples reused whatever was
+# on disk, so a new preparation (another game copy, other objects) kept the old collision and samples. Each step now
+# stamps navkit.json: 'vehicles': {'collision': stamp, 'samples': {class: stamp}, 'worlds': {class: stamp}}, every
+# stamp the preparation's digest and game folder ('preparation', 'game'), a class's also the digest of its parameters
+# ('params': for the samples only those the sampler reads, SAMPLING_PARAMS; for a world every one), a world's also the
+# SHA-256 of the soldier world it was built on ('soldier'), or 'absent' with why when the level has no such world (no
+# spawns of the class, no water). navkit.py prepare writes a new navkit.json (every stamp goes); a soldier sampling or
+# build drops the worlds' stamps (navkit.invalidate); the next step needs its input's stamp to be current, and refuses
+# or makes it again. Every write is a fresh read-modify-write (navkitjson1943.update).
+
+class StaleError(RuntimeError):
+    """A vehicle step's input is of another preparation, game copy, class parameters or soldier world."""
+
+
+SAMPLING_PARAMS = ('radius', 'step', 'height', 'pitch')   # what navsample1943 is given (groundnav1943.sample_command)
+
+
+def params_id(cls, keys=None):
+    """The digest of a class's navigation parameters: every value of CLASSES[cls], or only keys."""
+    import hashlib
+    vals = {k: (v[0] if isinstance(v, tuple) else v) for k, v in CLASSES[cls].items() if keys is None or k in keys}
+    return hashlib.sha256(json.dumps(vals, sort_keys=True).encode()).hexdigest()
+
+
+def sampling_params_id(cls):
+    """The digest of the parameters the class's samples depend on (2026-10-30: every parameter was hashed, so a new
+    speed or node spacing sampled again for nothing)."""
+    return params_id(cls, SAMPLING_PARAMS)
+
+
+def inputs(st, lv, cls=None, sampling=False, **extra):
+    """The stamp a vehicle step of the current preparation makes (and the one its next step needs); sampling: the
+    class's samples' (their parameters only those the sampler reads)."""
+    if not st.get('preparation'):
+        raise StaleError(f'{lv}: prepared without a preparation stamp (an older NavKit): prepare again '
+                         f'(navkit.py prepare {lv})')
+    out = {'preparation': st['preparation'], 'game': st.get('game')}
+    if cls is not None:
+        out.update({'class': cls, 'params': sampling_params_id(cls) if sampling else params_id(cls)})
+    out.update(extra)
+    return out
+
+
+def stamp(st, kind, cls=None):
+    v = (st.get('vehicles') or {}).get(kind)
+    return (v or {}).get(cls) if cls is not None else v
+
+
+def current(st, kind, want, cls=None):
+    """Whether the step's stamp in st is want (its time and what it found aside)."""
+    have = stamp(st, kind, cls)
+    return have is not None and all(have.get(k) == v for k, v in want.items())
+
+
+def record(lv, kind, value, cls=None):
+    """Stamps a finished step; nothing when navkit.json now holds another preparation (prepared meanwhile)."""
+    import time
+    value = dict(value, time=time.strftime('%Y-%m-%d %H:%M'))
+
+    def change(st):
+        if st.get('preparation') != value['preparation']:
+            return
+        v = st.setdefault('vehicles', {})
+        if cls is None:
+            v[kind] = value
+        else:
+            v.setdefault(kind, {})[cls] = value
+    return nj.update(lv, change)
+
+
+def drop(lv, kind, cls=None):
+    """Removes a step's stamp before it runs: an interrupted run leaves none."""
+    def change(st):
+        v = st.get('vehicles') or {}
+        if cls is None:
+            v.pop(kind, None)
+        else:
+            (v.get(kind) or {}).pop(cls, None)
+    if os.path.isfile(nj.paths(lv)['settings']):
+        nj.update(lv, change)
+
+
+def absent(lv, cls, want, path, why, log=print):
+    """The level has no world of the class (its data says so: no spawns of it, no water): a world file of an earlier
+    run goes, and the stamp says why (navexport_vehicles1943.check tells this from a world not built)."""
+    if os.path.isfile(path):
+        os.remove(path)
+        log(f'{lv}: {os.path.basename(path)} of an earlier run removed ({why})')
+    record(lv, 'worlds', dict(want, absent=why), cls)
+
+
+def prepared_game(st, game, lv):
+    """The game copy the level was prepared from; a different one given is refused (navkit.same_game's rule: the
+    same folder by identity, navkitjson1943.same_file)."""
+    want = st.get('game')
+    if game is None:
+        return want
+    if not nj.same_file(want, game):
+        raise StaleError(f'{lv}: prepared from {want}, not {game}: use that copy, or prepare again (navkit.py prepare {lv})')
+    return game
+
+
+def soldier_world(st, lv, path):
+    """The SHA-256 of the soldier world a vehicle world is built on. Refused when it is missing, when the soldier build
+    is not of the current preparation, or (the default <level>.rsnv, by file identity) when the file is not the export
+    of the current build: the export's stamp names the build by its .hpd's SHA-256 (navkit.json 'build_from'
+    'hpd_sha256'; 2026-10-30: by its 'built' minute, which a quick rebuild repeats)."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f'{lv}: no soldier world (missing {path}): export it (navexport1943.py {lv})')
+    built = st.get('build_from') or {}
+    if built.get('preparation') != st.get('preparation') or 'built' not in st or not built.get('hpd_sha256'):
+        raise StaleError(f'{lv}: the soldier build is not of the current preparation: build and export it again '
+                         f'(navkit.py build {lv}; navexport1943.py {lv})')
+    if not nj.check_passed(st):              # 2026-10-30 review: a build whose check failed was exported and stamped
+        raise StaleError(f'{lv}: the soldier build\'s check did not pass ({st.get("checked") or "not checked"}): no '
+                         f'vehicle world is built on it (navkit.py check {lv})')
+    h = nj.sha256(path)
+    ex = st.get('exported') or {}
+    default = os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv')
+    if nj.same_file(path, default) and (ex.get('sha256') != h or ex.get('hpd_sha256') != built['hpd_sha256']):
+        raise StaleError(f'{lv}: {path} is not the export of the current build: export again (navexport1943.py {lv})')
+    return h
 
 
 def _fields(xml, name):

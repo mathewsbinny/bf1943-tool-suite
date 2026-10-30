@@ -40,8 +40,13 @@ if __name__ == '__main__':
     check(code == 0 and 'made-up bf1943 test' in out and 'made-up quick test' in out, f'bf1943 --list lists both (exit {code})')
     code, out = run('--only', 'bf1943 test', 'bf1943')
     check(code == 0 and '1 of 1 passed' in out, f'--only takes a name that holds a tier\'s name (exit {code})')
-    for args in (['bf19433', '--strict'], ['quik'], ['--strcit'], ['quick', 'bf1943']):
-        code, out = run(*args)
+    code, out = run('quick', '--only', 'no such test name')
+    check(code == 1 and 'matches no quick test' in out, f'--only naming no test is an error, exit {code}')
+    for args in (['bf19433', '--strict'], ['quik'], ['--strcit'], ['quick', 'bf1943'], ['quick', '--only']):
+        try:
+            code, out = run(*args)
+        except Exception as e:                      # 2026-10-30: --only without a value raised IndexError
+            code, out = f'{type(e).__name__}', ''
         check(code == 2 and 'usage' in out.lower() and 'passed' not in out, f'{" ".join(args)}: a usage error, exit {code}'
               + ('' if code == 2 else '\n       ' + out.strip().replace('\n', '\n       ')[:400]))
     print('all passed' if not failures else f'{len(failures)} failed')

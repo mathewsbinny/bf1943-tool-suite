@@ -108,16 +108,29 @@ def report(r):
     return '\n'.join(lines)
 
 
+def parse(argv):
+    """argparse over the arguments (2026-10-30 review: option values were taken as positionals, so options before the
+    .hpd checked the game folder as the build); None for -h / --help."""
+    import argparse
+    if any(a in ('-h', '--help') for a in argv[1:]):
+        return None
+    ap = argparse.ArgumentParser(prog='routecheck1943.py', add_help=False)
+    ap.add_argument('hpd')
+    ap.add_argument('level')
+    ap.add_argument('--game')
+    ap.add_argument('--json')
+    return ap.parse_args(argv[1:])
+
+
 def main(argv):
-    args = [a for a in argv[1:] if not a.startswith('--')]
-    opts = dict(zip(argv[1:], argv[2:]))
-    if len(args) < 2:
+    a = parse(argv)
+    if a is None:
         print(__doc__)
-        return 1
-    r = check(args[0], args[1], opts.get('--game'))
+        return 0
+    r = check(a.hpd, a.level, a.game)
     print(report(r))
-    if '--json' in opts:
-        with open(opts['--json'], 'w', encoding='utf-8') as f:
+    if a.json:
+        with open(a.json, 'w', encoding='utf-8', newline='\n') as f:
             json.dump(r, f, indent=1)
     return 0 if r['ok'] else 1
 

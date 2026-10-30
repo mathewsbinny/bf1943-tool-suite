@@ -47,6 +47,22 @@ The payload is a sequence of elements. Each element is:
 The top level holds one `partition` container. A 0 where a tag would start at the top level ends the tree;
 that byte and everything after it are kept as they are.
 
+**Damaged files.** DbxEdit (every command, DbxEditGUI and LevelDiff) reads a file exactly as core `dbx.py` does and
+refuses what it refuses (2026-10-30; before, DbxEdit read on and printed neighbouring bytes as values, or wrote XML
+with unclosed elements):
+- the offset table, the string area (*S*) or a string's zero byte not inside the file, the table not inside the
+  string area, or a string ending outside the string area;
+- a varint running past the end of the file, or longer than 64 bits;
+- a tag, attribute or text string index past the table;
+- an element header, container byte or two-byte value cut off by the end of the file;
+- numbers 0 or 1 byte wide (an empty list of any width is fine), or *n* × *s* bytes running past the file;
+- no element after the string table, or containers still open at the end of the file.
+
+The tree is read and written without recursion, so `xml` and `roundtrip` take any nesting the format allows (an
+export whose indentation would pass 2^28 tabs is refused). The commands that walk the tree recursively (`edit`,
+`import`, `check`, `fixslots`, DbxEditGUI, LevelDiff) take files nested up to 1,000 containers deep and refuse
+deeper ones by name; every game file is far below that.
+
 ## 3. XML output (`DbxEdit xml`)
 
 For every binary `.dbx` file, `<name>.xml` is written next to it, UTF-8 without a byte-order mark, lines
@@ -67,9 +83,17 @@ ended by CR LF:
   - any other size: the first two bytes as an unsigned 16-bit number (the reader still advances by the size).
 - Other types: `true` for 1, `false` for 0, else the number.
 - In attribute values and text, `&`, `<`, `>` and `"` are written as `&amp;`, `&lt;`, `&gt;`, `&quot;`.
-- Strings are decoded as UTF-8; a string runs to its zero byte or the end of the file.
+- Strings are decoded as UTF-8; a string runs to its zero byte, which is inside the string area (section 2).
 
-The XML is for reading. DbxEdit edits the binary file itself.
+The XML is for reading. DbxEdit edits the binary file itself. A folder is searched for files whose extension is
+exactly `.dbx` (Windows' `*.dbx` pattern also matches `.dbxold`, whose XML would overwrite the `.dbx` file's).
+
+**Where files are written.** Everything the tools write (`xml`, `edit`, `import`, `fixslots`, DbxEditGUI's saves and
+exports, LevelDiff's `--json`) is written to a temporary file beside the target and moved into its place, so a failed
+write leaves the old file and a hard link at the target is replaced, never written through. Nothing is written into
+the BF1943 game folder (`BF1943_GAME`, else the Xenia kit's `dist\xenon` in the suite, as core `game1943.find_game`
+finds it), however the path is cased and through whatever link or junction it leads there: such a write is refused
+(`xml` counts the file as FAILED, the other commands exit 2). This is the rule of the suite's `fbrb1943.py`.
 
 ## 4. Writing (`DbxEdit edit`, `DbxEdit roundtrip`)
 
@@ -89,20 +113,32 @@ An unchanged file therefore comes back byte for byte.
 Commands run in the order given. A GUID comparison ignores case. "References" are attributes named `ref`.
 A local reference is a `ref` value 36 characters long without a `/`.
 
-- `replace=<old>|<new>`: every string-table entry exactly `<old>` becomes `<new>`. Fails if none matched.
+Exit codes: 0, written; 1, a command found nothing to change (named on stderr; nothing is written); 2, a command
+without its arguments or with an empty one it needs (each command's usage is printed), or the edit could not run
+(a file damaged or missing, the output refused).
+
+- `replace=<old>|<new>`: every string-table entry exactly `<old>` becomes `<new>`. Fails if none matched. An
+  empty `<old>` is refused (it would rewrite string 0, the empty string every empty value uses).
 - `replaceprefix=<old>|<new>[|<except>...]`: every entry starting with `<old>` (ignoring case), unless it
   starts with one of the non-empty exceptions (ignoring case), gets `<new>` in place of that start; if the
-  entry's start was all lower case, `<new>` is lower-cased too.
+  entry's start was all lower case, `<new>` is lower-cased too. Fails if none matched; an empty `<old>` is
+  refused (every string would match, tag names included).
 - `drop=<guid>`: walks the tree from the last element to the first, at every level. An `instance` with that
-  GUID is removed. Any other element whose `ref` equals the GUID, or ends in `/<guid>`, is removed if it is
-  an `item`; otherwise all its `ref` attributes become `null`, and its children are still visited. Fails if
-  no instance was removed.
+  GUID is removed. Any other element whose `ref` equals the GUID (a local reference to it) is removed if it is
+  an `item`; otherwise all its `ref` attributes become `null`, and its children are still visited. A reference
+  `<partition>/<guid>` names another partition's instance and is left as it is (a graft keeps its source's
+  GUIDs, so the source partition's instance may share the GUID). Fails if no instance was removed.
 - `dropfield=<name>`: removes every element, at any depth, that is not an `instance` and has an attribute
   `name` equal to `<name>` (children of removed elements are not visited).
 - `set=<field>|<true|false|0-255>`: for every non-container element of a type other than text or numbers,
   with a two-byte value and an attribute `name` equal to `<field>`, sets the second byte. Fails if none.
-- `setfield=<guid>|<field>|<value>`: on a direct child of that instance named `<field>` (first match that is
-  text or numbers), sets the text, or the single 4-byte number (a float if the value has a `.`).
+- `setfield=<guid>|<field>|<value>`: on the first direct child of that instance named `<field>` that is not a
+  container. A reference field (one with a `ref` attribute) gets `<value>` as its reference. Any other value is
+  typed like the stored one, as `import` types a changed value (section 6): text; numbers of the stored width,
+  `/`-separated; a 4-byte number stays an integer or a decimal as stored (`2` in a decimal field is 2.0; before
+  2026-10-30 it wrote the integer 2, which shows as `2` in the XML too); bool or byte. A decimal with more digits
+  than 4 bytes hold is rounded and reported. Fails (exit 1, nothing written) when there is no such field or the
+  value does not fit it. `<value>` may hold `|`.
 - `partguid=<guid>`: sets the `guid` attribute of the top-level partition.
 - `additem=<guid>|<array>|<ref>[|<before ref>]`: adds an item to the direct child `array` of that instance
   named `<array>`, shaped like its first existing item but with only a `ref` attribute; at the end, or
@@ -233,7 +269,8 @@ evidence). *Where* is `<type> <guid> [<field path>]`, as above.
   a slot <= `EnumOffset` or > `EnumOffset` + L is an **error**. **Warnings:** taking the slotted placed objects in slot
   order, with *next* = `EnumOffset` + 1, each object's slot must equal *next*, then *next* = slot + width (2 when the
   partition its `ReferencedObject` names has a `PhysicsEntityData` instance, else 1), and at the end *next* must be
-  `EnumOffset` + L + 1 (a blueprint partition not in the folders skips this, with a warning); an object whose
+  `EnumOffset` + L + 1 (a blueprint partition not in the folders, or a slotted object without a `ReferencedObject`
+  into another partition, skips this with a warning naming it); an object whose
   `Transform` position is more than 1.55 x W / 4 + 0.1 m from its leaf's centre (X, Y, Z / 16); a two-leaf object
   whose leaves differ (any key or `Max`). For each tree: not one pre-order tree from node 0 followed by exactly 256
   all-zero nodes is an **error**; an inner node whose `Max` is not the larger of its children's, and a leaf whose
@@ -286,4 +323,9 @@ decimal), `SphereKeyX`, `SphereKeyY`, `SphereKeyZ`, `SphereKeyW` (2 bytes each, 
 3. else the nearest unused same-blueprint object within 50 m;
 4. else 0.
 
-It prints how many objects each rule matched.
+Each object of `<level>`, and each non-zero slot, is given once, GUID matches first: a copy of an object at the same
+place under another GUID gets the next rule's slot or 0, not the original's (before 2026-10-30 both got it, the shared
+slot the check warns about). It prints how many objects each rule matched.
+
+`check` exits 0 with no errors, 1 with errors, 2 when it could not run (bad usage, a file damaged, missing or not
+binary, `--slots-from` included). The cull-tree walk uses no recursion: a tree of any depth is checked.

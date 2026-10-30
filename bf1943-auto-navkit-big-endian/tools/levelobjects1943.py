@@ -211,7 +211,7 @@ def main(argv):
                                 'box_lo_y': round(box_lo, 3)})
     for name, value in (('objects.json', objs), ('group_instances.json', groups), ('soldier_spawns.json', spawns),
                         ('order_points.json', orders), ('object_boxes.json', boxes), ('ladders.json', ladders)):
-        with open(os.path.join(out, name), 'w', encoding='utf-8') as f:
+        with open(os.path.join(out, name), 'w', encoding='utf-8', newline='\n') as f:
             json.dump(value, f)
     print(f'{level}: {len(objs)} placed objects, {len(groups)} group members, {len(placed)} with collision')
     print('triangles: ' + ', '.join(f'{k} {v}' for k, v in counts.items()))

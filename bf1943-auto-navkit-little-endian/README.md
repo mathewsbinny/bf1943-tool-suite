@@ -5,8 +5,9 @@
 Part of the BF1943 Tool Suite. **BF1943 status: partly adapted.** Today it is OPFOR's BFBC2 NavKit: it reads BFBC2
 PC levels from Project OPFOR's copy, and everything below, including the measurements, is on BFBC2 data. Its
 `tools\hkpack.py` also reads Havok 4.6.1 packfiles (byte order from the file, 20-byte member records, layouts given
-by `tools\havok461.py`, since BF1943's packfiles have no `__types__`), so BF1943 data converted for the PC port can
-be read once the converter exists. For BF1943, bots will not run Kynapse: they will use our own navigation runtime,
+by `tools\havok461.py`, since BF1943's packfiles have no `__types__`), and `tools\levelobjects.py` reads collision
+from them (BF1943's `hk*` mesh and convex shapes, checked on every Wake Island packfile; 2026-10-30), so BF1943 data
+converted for the PC port can be read once the converter exists. For BF1943, bots will not run Kynapse: they will use our own navigation runtime,
 a per-level graph exported from NavKit's builder and queried with A* (operation-rising-sun
 `research/evidence/navigation-runtime-options.json`).
 
@@ -81,8 +82,32 @@ tools\               NavKit tools (Python 3.13 + numpy / matplotlib)
   graphstats.py      route-graph statistics of .hpd files (no docstring; imports hpdtool from OPFOR's navkit\tools)
 src\                 (reserved for the generator proper)
 tests\               the rule tests on made-up data (water, edits, area links, portals, soldiers, headroom, bridges,
-                     dynamic props, collision index, lips, roof pruning) and Havok 4.6.1 on BF1943's Wake Island
+                     dynamic props, collision index, lips, roof pruning), the builder's edge cases (no ground, the
+                     file put in place whole, detailed sectors without 0.2 m ground, short ladders, run grids),
+                     damaged files (hpdtool, kymesh, navsample), navkit.py's steps on a made-up OPFOR folder
+                     (install / restore, apply, caches, unpack, game log, options), the window's Cancel, and
+                     Havok 4.6.1 (and levelobjects' collision) on BF1943's Wake Island
 ```
+
+## Robustness rules (2026-10-30)
+
+- `install` on a level that had no path data leaves `pathdata.hpd.opfor-none`: the installed file is then never taken
+  for DICE's (`dice_pathdata`, `navparity.reference_of`, the level list), and `restore` removes it.
+- `apply` builds with the same inputs as `build` (detailed zones and ladders included); `--out` cannot name the game's
+  own path data.
+- A pitch-0.2 run leaves `<level>_navkit_p02.sectors.json` (the sectors it covered, the sector offsets); `build` and
+  `navregress.py` refuse 0.2 m samples that do not cover the detailed sectors chosen now (a run from before that record:
+  refused when the 0.8 m samples are newer). The detailed-sector cache follows the sector offsets and the objects.
+- An unpack counts as done only with its `.navkit-unpacked` marker (or, for one made before the marker, every `.dbx` with
+  its `.xml`); one that did not finish is redone.
+- Settings, caches, reports and `pathdata.hpd` are written beside and put in place whole; a new `.hpd` must read back
+  first, else the previous file stays. A level with no walkable ground is a clear error (`navbuild.BuildError`), and so
+  is a high-capsule or narrow run on another grid than the main run.
+- `hpdtool.parse` refuses truncated or overlapping files (so `hpdcheck` cannot pass one); all 267 shipped and built
+  `.hpd` files on this PC still read back byte for byte.
+- `navkit.py`: an option without its value, or a malformed `--box` / `--y` / `--pitch`, is exit code 2; a declined
+  sampling run exit code 1. The window's Cancel and close end the step and what it started (`taskkill /T`), close the
+  game and restore `opfor.ini` without freezing the window.
 
 ## Detailed zones, ladders and walkability rules (2026-10-21 / 22)
 

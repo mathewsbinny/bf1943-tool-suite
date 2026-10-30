@@ -30,6 +30,10 @@ namespace Bfbc2Dbx.Gui
             Application.Run(new MainWindow(args.Length > 0 ? args[0] : null));
         }
 
+        // a message to the user (a hook, so a test can run the window's code without message boxes)
+        internal static Action<IWin32Window, string, string, bool> Notice = (owner, text, title, error) =>
+            MessageBox.Show(owner, text, title, MessageBoxButtons.OK, error ? MessageBoxIcon.Error : MessageBoxIcon.None);
+
         static void Crash(Exception e, bool fatal)
         {
             if (e == null) return;
@@ -43,8 +47,12 @@ namespace Bfbc2Dbx.Gui
     {
         DbxFile doc;
         string path;
-        bool modified, backedUp;
+        bool backedUp;
         readonly Stack<byte[]> undo = new Stack<byte[]>();
+        // the undo depth the file on disk holds (0 when opened, the depth at the last save; -1 when no undo state
+        // holds it any more): the document is modified whenever it is at another depth, an undo past a save included
+        int savedAt;
+        bool modified { get { return doc != null && undo.Count != savedAt; } }
         readonly List<string> script = new List<string>();   // the edits as DbxEdit commands
 
         readonly TreeView tree = new TreeView();
@@ -374,10 +382,12 @@ namespace Bfbc2Dbx.Gui
 
         // ---------------------------------------------------------------------------------------------- editing
 
-        void Snapshot()
+        void Snapshot() { PushUndo(doc.Serialize()); }
+
+        void PushUndo(byte[] state)
         {
-            undo.Push(doc.Serialize());
-            modified = true;
+            if (undo.Count < savedAt) savedAt = -1;          // the saved state was undone: no undo state holds it now
+            undo.Push(state);
         }
 
         void Undo()
@@ -385,7 +395,6 @@ namespace Bfbc2Dbx.Gui
             if (undo.Count == 0) { Log("Nothing to undo."); return; }
             doc = new DbxFile(undo.Pop());
             if (script.Count > 0) script.RemoveAt(script.Count - 1);
-            modified = undo.Count > 0;
             Rebuild(null);
             Log("Undone.");
         }
@@ -397,27 +406,28 @@ namespace Bfbc2Dbx.Gui
             var before = doc.Serialize();
             try
             {
-                bool changed = false;
+                var changedAttributes = new List<string>();
+                bool valueChanged = false;
                 for (int i = 0; i < e.Attributes.Count && i < attributes.Rows.Count; i++)
                 {
                     string v = Convert.ToString(attributes.Rows[i].Cells[1].Value) ?? "";
-                    if (v != doc.Table[e.Attributes[i].Value]) { e.Attributes[i].Value = doc.Intern(v); changed = true; }
+                    if (v != doc.Table[e.Attributes[i].Value])
+                    {
+                        changedAttributes.Add(doc.Table[e.Attributes[i].Name]);
+                        e.Attributes[i].Value = doc.Intern(v);
+                    }
                 }
                 if (!e.IsContainer && value.Text != XmlExport.ValueText(doc, e))
                 {
                     bool rounded;
                     e.Payload = XmlImport.EncodeValue(doc, e, value.Text, out rounded);
-                    changed = true;
+                    valueChanged = true;
                     if (rounded) Log("Rounded to the nearest 4-byte value: " + XmlExport.ValueText(doc, e));
                 }
-                if (!changed) return;
-                undo.Push(before);
-                modified = true;
+                if (!valueChanged && changedAttributes.Count == 0) return;
+                PushUndo(before);
                 var inst = InstanceOf(tree.SelectedNode);
-                string name = doc.Get(e, "name");
-                if (inst != null && inst.Children.Contains(e) && name != null && !e.IsContainer)
-                    script.Add("setfield=" + doc.Get(inst, "guid") + "|" + name + "|" + XmlExport.ValueText(doc, e));
-                else script.Add("# edited " + Label(e) + " in " + (inst == null ? "partition" : doc.Get(inst, "guid")) + " (no command form)");
+                script.Add(EditCommand(doc, inst, e, changedAttributes, valueChanged, Label(e)));
                 tree.SelectedNode.Text = Label(e);
                 ShowElement(tree.SelectedNode);
                 UpdateState();
@@ -429,6 +439,26 @@ namespace Bfbc2Dbx.Gui
                 ToolLog.Warn("value not accepted: " + ex.Message);
                 MessageBox.Show(this, ex.Message, "Value not accepted", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        // The DbxEdit command that replays an edit of element e (of instance inst): setfield for a value, or a
+        // reference, of a direct field of the instance - the field setfield finds (the first non-container child of
+        // that name), and a value a command line can carry (one line, no space at either end). Anything else is a
+        // comment: replayed, it changes nothing, and the script says so.
+        internal static string EditCommand(DbxFile doc, Element inst, Element e, IList<string> changedAttributes, bool valueChanged, string label)
+        {
+            string name = doc.Get(e, "name"), guid = inst == null ? null : doc.Get(inst, "guid");
+            bool direct = guid != null && name != null && !e.IsContainer && inst.IsContainer
+                          && inst.Children.FirstOrDefault(c => doc.Get(c, "name") == name && !c.IsContainer) == e;
+            if (direct)
+            {
+                string reference = doc.Get(e, "ref");
+                string v = !valueChanged && changedAttributes.Count == 1 && changedAttributes[0] == "ref" ? reference
+                         : valueChanged && changedAttributes.Count == 0 && reference == null ? XmlExport.ValueText(doc, e) : null;
+                if (v != null && v.IndexOfAny(new[] { '\r', '\n' }) < 0 && v == v.Trim())
+                    return "setfield=" + guid + "|" + name + "|" + v;
+            }
+            return "# edited " + label + " in " + (guid ?? "partition") + " (no command form)";
         }
 
         void GoToReference()
@@ -463,8 +493,9 @@ namespace Bfbc2Dbx.Gui
             {
                 if (path != null) d.InitialDirectory = Path.GetDirectoryName(path);
                 if (d.ShowDialog(this) != DialogResult.OK) return null;
-                var f = new DbxFile(d.FileName);
+                var f = DbxFile.Read(d.FileName);
                 if (!f.IsBinary) { MessageBox.Show(this, "Not a binary .dbx file.", title); return null; }
+                f.Walkable(d.FileName);
                 file = d.FileName;
                 return f;
             }
@@ -561,6 +592,7 @@ namespace Bfbc2Dbx.Gui
             Snapshot();
             var list = except.Split('|').Where(x => x.Length > 0).ToList();
             int n = new Editor(doc).ReplacePrefix(from, to, list);
+            if (n == 0) { undo.Pop(); Log("replaceprefix: no string starts with " + from); return; }
             script.Add("replaceprefix=" + from + "|" + to + (list.Count > 0 ? "|" + string.Join("|", list) : ""));
             Log("replaceprefix " + from + " -> " + to + ": " + n + " string(s)");
             Rebuild(Selected);
@@ -691,16 +723,35 @@ namespace Bfbc2Dbx.Gui
                 if (d.ShowDialog(this) == DialogResult.OK) Open(d.FileName);
         }
 
+        // Opens file; the document open before stays open when file cannot be read or shown.
         void Open(string file)
         {
+            DbxFile f;
             try
             {
-                var f = new DbxFile(file);
-                if (!f.IsBinary) { MessageBox.Show(this, file + "\n\nis not a binary .dbx file (it may be plain XML already).", "Open"); return; }
+                f = DbxFile.Read(file);
+                if (!f.IsBinary) { GuiProgram.Notice(this, file + "\n\nis not a binary .dbx file (it may be plain XML already).", "Open", false); return; }
+                f.Walkable(file);
+            }
+            catch (Exception ex)
+            {
+                ToolLog.Error(ex, "opening " + file);
+                GuiProgram.Notice(this, ToolLog.Report(ex), "Cannot open " + Path.GetFileName(file), true);
+                return;
+            }
+            DbxFile oldDoc = doc;
+            string oldPath = path;
+            int oldSaved = savedAt;
+            bool oldBackedUp = backedUp;
+            var oldUndo = undo.ToArray();
+            var oldScript = script.ToList();
+            try
+            {
                 doc = f;
                 path = file;
-                modified = backedUp = false;
+                backedUp = false;
                 undo.Clear();
+                savedAt = 0;
                 script.Clear();
                 found.Clear();
                 Rebuild(null);
@@ -708,33 +759,45 @@ namespace Bfbc2Dbx.Gui
             }
             catch (Exception ex)
             {
+                doc = oldDoc;
+                path = oldPath;
+                savedAt = oldSaved;
+                backedUp = oldBackedUp;
+                undo.Clear();
+                foreach (var u in oldUndo.Reverse()) undo.Push(u);
+                script.Clear();
+                script.AddRange(oldScript);
+                try { if (doc != null) Rebuild(null); else { tree.Nodes.Clear(); UpdateState(); } } catch (Exception) { }
                 ToolLog.Error(ex, "opening " + file);
-                MessageBox.Show(this, ToolLog.Report(ex), "Cannot open " + Path.GetFileName(file), MessageBoxButtons.OK, MessageBoxIcon.Error);
+                GuiProgram.Notice(this, ToolLog.Report(ex), "Cannot open " + Path.GetFileName(file), true);
             }
         }
 
+        // Saves to target. Saving over the file the document came from (however the path is cased or linked) keeps
+        // the original as <name>.dbx.bak once per opened file, when there is no .bak yet.
         void Save(string target)
         {
             if (doc == null) return;
             if (target == null) { SaveAs(); return; }
             try
             {
-                if (target == path && !backedUp && File.Exists(path) && !File.Exists(path + ".bak"))
+                bool over = path != null && SafeWrite.Canonical(target) == SafeWrite.Canonical(path);
+                if (over && !backedUp && File.Exists(path) && !File.Exists(path + ".bak"))
                 {
-                    File.Copy(path, path + ".bak");
+                    SafeWrite.Bytes(path + ".bak", File.ReadAllBytes(path));
                     Log("original kept as " + Path.GetFileName(path) + ".bak");
                 }
-                backedUp = true;
-                File.WriteAllBytes(target, doc.Serialize());
+                SafeWrite.Bytes(target, doc.Serialize());
+                backedUp = true;                                  // the file at path is now one this window wrote
                 path = target;
-                modified = false;
+                savedAt = undo.Count;
                 Log("saved " + target);
                 UpdateState();
             }
             catch (Exception ex)
             {
                 ToolLog.Error(ex, "saving");
-                MessageBox.Show(this, ToolLog.Report(ex), "Cannot save", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                GuiProgram.Notice(this, ToolLog.Report(ex), "Cannot save", true);
             }
         }
 
@@ -744,7 +807,7 @@ namespace Bfbc2Dbx.Gui
             using (var d = new SaveFileDialog { Filter = "Binary DBX (*.dbx)|*.dbx", FileName = path == null ? "" : Path.GetFileName(path) })
             {
                 if (path != null) d.InitialDirectory = Path.GetDirectoryName(path);
-                if (d.ShowDialog(this) == DialogResult.OK) { backedUp = true; Save(d.FileName); }
+                if (d.ShowDialog(this) == DialogResult.OK) Save(d.FileName);
             }
         }
 
@@ -755,7 +818,7 @@ namespace Bfbc2Dbx.Gui
             {
                 d.InitialDirectory = Path.GetDirectoryName(path);
                 if (d.ShowDialog(this) != DialogResult.OK) return;
-                File.WriteAllText(d.FileName, XmlExport.Convert(doc.Serialize()));
+                SafeWrite.Text(d.FileName, XmlExport.Convert(doc));
                 Log("exported " + d.FileName);
             }
         }
@@ -797,7 +860,7 @@ namespace Bfbc2Dbx.Gui
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 var lines = new List<string> { "# DbxEdit commands for " + Path.GetFileName(path) + " - replay with: DbxEdit edit <in.dbx> <out.dbx> @" + Path.GetFileName(d.FileName) };
                 lines.AddRange(script);
-                File.WriteAllLines(d.FileName, lines);
+                SafeWrite.Text(d.FileName, string.Join("\n", lines) + "\n");
                 Log("saved " + script.Count + " edit(s) to " + d.FileName);
             }
         }

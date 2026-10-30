@@ -12,7 +12,7 @@ python -B spawnmap.py <dist\xenon folder> [level ...] [--json spawns.json] [--na
 
 The default game folder is the one `bf1943-xenia-kit` builds from your own package. The tool only reads it; with `--json` it also writes the map as JSON.
 
-With `--navflags` (2026-10-30) it also writes `work\levels\<level>\navkit\<level>.flags.txt` for each level (`BF1943_WORK` sets another work folder): plain lines a C program reads, `flag <index> <base|flag> <initial owner 0|1|2> <x> <y> <z> <radius> <name>`, and `spawn <team> <objective> <x> <y> <z>` for each base's soldier spawn and its alternates. navhost and rsbot's offline tests (project-opfor-bf1943 `TnT/Code/Engine/AI/Bots`) read it.
+With `--navflags` (2026-10-30) it also writes `work\levels\<level>\navkit\<level>.flags.txt` for each level (`BF1943_WORK` sets another work folder): plain lines a C program reads, `flag <index> <base|flag> <initial owner 0|1|2> <x> <y> <z> <radius> <name>`, and `spawn <team> <objective> <x> <y> <z>` for each base's soldier spawn and its alternates. navhost and rsbot's offline tests (project-opfor-bf1943 `TnT/Code/Engine/AI/Bots`) read it. Only real objectives become flags (2026-10-30): one with no index or no position, or a point at the map origin that owns no spawn (Coral Sea's three "Spawn" points, all index 0), is named in a `# left out` comment instead; each index appears once (a duplicate is an error).
 
 ## What it reads
 
@@ -37,4 +37,4 @@ Positions are the `Transform` translation (x, y, z, with y up), in metres.
 
 ## Tests
 
-`tests/test_spawnmap.py` checks `--navflags`' lines on a made-up map, then runs the tool on the default game folder when it exists, checks every level's two bases, and checks that every soldier spawn has a team.
+`tests/test_spawnmap.py` checks `--navflags`' lines on a made-up map (and that placeholder objectives and duplicate indices are handled; `--made-up` stops there, the quick tier), then runs the tool on the default game folder when it exists, checks every level's two bases, that every soldier spawn has a team, and that each level's flags have unique indices and none at the map origin.

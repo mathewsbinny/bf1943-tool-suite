@@ -24,7 +24,6 @@ What it builds (parameters: vehicleclasses1943.CLASSES['plane'], all [E] except 
     at least 10 nodes that is not a carrier (Coral Sea's islets), to the soldier node there (aux).
 """
 import argparse
-import json
 import math
 import os
 import sys
@@ -36,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
 import rsnvgrid1943  # noqa: E402
+import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 from bfbc2core import game1943, rsnv, terrain  # noqa: E402
 
@@ -222,27 +222,46 @@ def segment_clear(floor, x0, z0, pitch, a, b, clear):
     return bool((p[:, 1] >= floor[j, i] + clear - 1e-6).all())
 
 
+def flight_box(hf, sea, pts):
+    """(min (x, z), max (x, z)) the plane world covers before it is fitted to the sectors: the land (terrain above the
+    sea) and the points given (plane spawns, soldier nodes), MARGIN around. 2026-10-30 review: no terrain above the
+    sea raised ValueError on an empty array; ValueError now only when there is neither land nor a point."""
+    lo, hi = np.array([np.inf, np.inf]), np.array([-np.inf, -np.inf])
+    land = hf.heights > sea
+    if land.any():
+        jj, ii = np.nonzero(land)
+        cx, cz = hf.cell
+        lo = np.array([hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
+        hi = np.array([hf.min[0] + (ii.max() + 1) * cx, hf.min[2] + (jj.max() + 1) * cz])
+    if len(pts):
+        P = np.asarray(pts, float).reshape(-1, 3)[:, [0, 2]]
+        lo, hi = np.minimum(lo, P.min(0)), np.maximum(hi, P.max(0))
+    if not (lo <= hi).all():
+        raise ValueError(f'no land above the sea ({sea:g} m), no plane spawn and no soldier node: no plane world')
+    return lo - MARGIN, hi + MARGIN
+
+
 def build(lv, soldier_path=None, game=None, log=print):
+    """The plane world: (rsnv path, stats). Reads the level from the game copy it was prepared from (2026-10-30:
+    game=None read the default copy); a level without water flies over its terrain (soldier1943.sea_level)."""
+    import soldier1943
     p = paths(lv)
     t0 = time.time()
-    st = json.load(open(os.path.join(p['navkit'], 'navkit.json'), encoding='utf-8'))
-    sea = float(st.get('sea_level', 0.0))
+    st = nj.read(lv)
+    game = vc.prepared_game(st, game, lv)
+    want = vc.inputs(st, lv, 'plane')
+    soldier_path = soldier_path or p['soldier']
+    want['soldier'] = vc.soldier_world(st, lv, soldier_path)
+    vc.drop(lv, 'worlds', 'plane')
     pitch = vc.value('plane', 'pitch')
     radius = vc.value('plane', 'radius')
     agl = vc.value('plane', 'cruise_agl')
     hf_path = os.path.join(p['objects'], 'heightfield.res')
     hf = terrain.read(hf_path)
+    sea = soldier1943.sea_level(st, hf)              # 2026-10-30: float(None) raised on a level without water
     spawns, lvl = plane_spawns(lv, game)
-    soldier_path = soldier_path or p['soldier']
     S = rsnv.load(soldier_path)
-    land = hf.heights > sea
-    jj, ii = np.nonzero(land)
-    cx, cz = hf.cell
-    lo = np.array([hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
-    hi = np.array([hf.min[0] + (ii.max() + 1) * cx, hf.min[2] + (jj.max() + 1) * cz])
-    pts = [s['pos'] for s in spawns] + S.node_pos.tolist()
-    P = np.array(pts)[:, [0, 2]]
-    lo, hi = np.minimum(lo, P.min(0)) - MARGIN, np.maximum(hi, P.max(0)) + MARGIN
+    lo, hi = flight_box(hf, sea, [s['pos'] for s in spawns] + S.node_pos.tolist())
     lo = np.maximum(lo, [hf.min[0], hf.min[2]])
     hi = np.minimum(hi, [hf.max[0] - pitch, hf.max[2] - pitch])
     # whole sectors' worth of the soldier grid: keep the box inside the sector grid (X, Z >= 0)
@@ -373,6 +392,7 @@ def build(lv, soldier_path=None, game=None, log=print):
               'water_depth': 0.0, 'sha256': meta['sources']['soldier rsnv']['sha256']}
     stats = rsnvgrid1943.write_world(lv, 'plane', sets, node_list, edge_list, offm, p['rsnv'], st['sector_offsets'],
                                      header, meta, log=log)
+    vc.record(lv, 'worlds', want, 'plane')
     stats.update({'lanes': len(lanes), 'drops': len(drops), 'seconds': round(time.time() - t0, 1)})
     log(f'{lv}: plane world {p["rsnv"]} ({stats["seconds"]:.0f} s)')
     return p['rsnv'], stats

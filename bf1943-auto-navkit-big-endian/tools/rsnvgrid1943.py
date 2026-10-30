@@ -18,7 +18,6 @@ A world holds what the soldier's export holds, built from cells instead of a Nav
   - META: exporter version, sources and their hashes, the class's parameters.
 """
 import collections
-import hashlib
 import json
 import math
 import os
@@ -29,6 +28,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
+import navkitjson1943 as nj  # noqa: E402
 from bfbc2core import rsnv  # noqa: E402
 
 EXPORTER_VERSION = '1.2 (2026-10-29: costs rounded up to 16 x length, the heuristic scale in the header)'
@@ -82,12 +82,7 @@ def grid_links(mask_index, di_dj=STRAIGHT):
     return out
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for b in iter(lambda: f.read(1 << 22), b''):
-            h.update(b)
-    return h.hexdigest()
+sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
 
 
 def areas_of(cs, sector_offsets):

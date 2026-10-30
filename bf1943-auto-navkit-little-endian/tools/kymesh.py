@@ -159,8 +159,10 @@ def parse_mesh(m: bytes) -> Mesh:
                 area.cells.append(Cell(rows[j][1:], _points(m, o + rows[j][0], o + rows[j + 1][0])))
             area.end_row = rows[-1][1:]
         areas.append(area)
-    for area in areas:
+    for k, area in enumerate(areas):
         for p in area.portals:
+            if p.target not in area_index:
+                raise ValueError(f'area {k}: portal target {p.target:#x} is not the start of an area')
             p.target = area_index[p.target]
 
     links = []
@@ -174,7 +176,9 @@ def parse_mesh(m: bytes) -> Mesh:
             refs = []
             for q in range(c):
                 ptr = _u32(m, lo + 0x10 + q * 4)
-                owner = max(a for a in area_offsets if a <= ptr)
+                owner = max((a for a in area_offsets if a <= ptr), default=None)
+                if owner is None:
+                    raise ValueError(f'link {sid:#x}/{j}: reference {ptr:#x} lies before the first area')
                 refs.append((area_index[owner], ptr - owner))
             objs.append(LinkObject(h, refs))
         links.append(NeighbourLink(sid, objs))
@@ -211,6 +215,9 @@ def write_mesh(mesh: Mesh) -> bytes:
             struct.pack_into('<Iff', out, item_pos + k * 12, area_off[it.area], it.a, it.b)
         if items:
             struct.pack_into('<I', out, item_pos + len(items) * 12, len(out))
+    unplaced = [i for i in range(len(mesh.areas)) if i not in area_off]
+    if unplaced:
+        raise ValueError(f'areas {unplaced[:5]} are in no tile: every area must be listed by a tile to be written')
     end_slot_off = len(out)
     out += mesh.end_slot
     tile_offs.append(end_slot_off)

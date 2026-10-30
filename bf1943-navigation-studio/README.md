@@ -36,6 +36,9 @@ start.
 | pitch | detailed zones (0.2 m areas) in orange |
 | small islands | islands under 25 nodes in magenta |
 
+In the island modes, ground whose area has no route node in its sector (on no island) is drawn near-black, never in
+the main network's green (2026-10-30).
+
 **Path test (P).** Press P, click a start and an end on the ground: the cheapest route over the build's route
 graph (its directed edges and stored costs) is drawn, with its cost, length and the detour against the straight
 line. Without a route the panel says why: which island each point is on and where they come closest (drawn in
@@ -59,7 +62,9 @@ The camera works as in the Map Inspector (left drag rotates, right drag pans, wh
 to a point, F for fly mode). For tests and pictures: `--screenshot out.png [--frames N] [--color ...] [--island N]
 [--path "x,y,z;x,y,z"] [--focus x,y,z [--distance m]] [--yaw rad] [--pitch rad] [--hide <layer>,...]` (`--pitch 1.45`
 looks almost straight down; the audit's pictures of the seam breaks and the Iwo Jima beach pocket were made this way,
-`work\levels\<level>\audit\pictures\`).
+`work\levels\<level>\audit\pictures\`). `--path` takes exactly two points (else exit code 2 before the level loads);
+`--screenshot` ends with exit code 1, writing nothing, when the viewer took no picture. `tests/test_studio.py` checks
+the colours, `--path` and that exit code without game data or a window.
 
 The navigation data comes from `core/bfbc2core/navdata.py`, which reads the file with NavKit's byte-exact reader.
 

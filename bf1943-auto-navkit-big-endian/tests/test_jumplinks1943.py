@@ -108,7 +108,11 @@ def ship_checks():
 
 
 def game_checks():
-    """navkit.py's --game reaches jump-link generation (2026-10-26: level_links always took the default copy)."""
+    """navkit.py's --game reaches jump-link generation (2026-10-26: level_links always took the default copy), in a
+    temporary work folder (the real one is never read)."""
+    import json
+    import shutil
+    import tempfile
     import navkit
     from bfbc2core import game1943
     seen = []
@@ -120,51 +124,53 @@ def game_checks():
         seen.append(g)
         raise Stop()
     saved = game1943.find_game
+    saved_links = J.level_links
+    work = tempfile.mkdtemp(prefix='jumplinks_')
+    saved_work = os.environ.get('BF1943_WORK')
+    os.environ['BF1943_WORK'] = work
     game1943.find_game = find_game
+    calls = []
     try:
+        # a level prepared and sampled from the custom copy (build refuses samples without the stamps of its
+        # preparation, and a --game other than the preparation's)
+        p = navkit.paths('wake_island_s')
+        for k in ('objects', 'samples', 'navkit'):
+            os.makedirs(p[k])
+        with open(os.path.join(p['samples'], 'samples.bin'), 'wb') as f:
+            f.write(b'samples')
+        stamp = dict(preparation='p', game='X:/custom/dist/xenon', time='-')
+        with open(p['settings'], 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(dict(level='wake_island_s', game='X:/custom/dist/xenon', preparation='p', sector_offsets=[-11, -11],
+                           samples={'0.8': stamp}, sampled='-'), f)
         try:
-            J.level_links('wake_island_s', log=lambda *a: None, game='X:/custom/dist/xenon')
+            J.level_links('wake_island_s', log=lambda *a: None, game='X:/other/dist/xenon')
         except (Stop, FileNotFoundError, OSError):
             pass
-        check(seen[:1] == ['X:/custom/dist/xenon'], f'level_links uses the game folder it is given ({seen[:1]})')
-        calls = []
-        saved_links = J.level_links
+        check(seen[:1] == ['X:/other/dist/xenon'], f'level_links uses the game folder it is given ({seen[:1]})')
+        seen.clear()
+        try:
+            J.level_links('wake_island_s', log=lambda *a: None)
+        except (Stop, FileNotFoundError, OSError):
+            pass
+        check(seen[:1] == ['X:/custom/dist/xenon'], f'without one, the copy the level was prepared from ({seen[:1]})')
 
-        def level_links(lv, log=print, game=None):
+        def level_links(lv, log=print, game=None, **k):
             calls.append(game)
             raise Stop()
         J.level_links = level_links
-        # a level prepared and sampled from the custom copy, in a temporary work folder (build refuses samples
-        # without the stamps of its preparation, and a --game other than the preparation's)
-        import json
-        import shutil
-        import tempfile
-        work = tempfile.mkdtemp(prefix='jumplinks_')
-        saved_work = os.environ.get('BF1943_WORK')
-        os.environ['BF1943_WORK'] = work
         try:
-            p = navkit.paths('wake_island_s')
-            for k in ('objects', 'samples', 'navkit'):
-                os.makedirs(p[k])
-            open(os.path.join(p['samples'], 'samples.bin'), 'wb').write(b'samples')
-            stamp = dict(preparation='p', game='X:/custom/dist/xenon', time='-')
-            with open(p['settings'], 'w', encoding='utf-8') as f:
-                json.dump(dict(level='wake_island_s', game='X:/custom/dist/xenon', preparation='p', sector_offsets=[-11, -11],
-                               samples={'0.8': stamp}, sampled='-'), f)
-            try:
-                navkit.build('X:/custom/dist/xenon', 'wake_island_s', log=lambda *a: None)
-            except (Stop, Exception):
-                pass
-        finally:
-            J.level_links = saved_links
-            if saved_work is None:
-                os.environ.pop('BF1943_WORK', None)
-            else:
-                os.environ['BF1943_WORK'] = saved_work
-            shutil.rmtree(work, ignore_errors=True)
-        check(calls[:1] == ['X:/custom/dist/xenon'], f"navkit.py build passes its --game to level_links ({calls[:1]})")
+            navkit.build('X:/custom/dist/xenon', 'wake_island_s', log=lambda *a: None)
+        except (Stop, Exception):
+            pass
     finally:
+        J.level_links = saved_links
         game1943.find_game = saved
+        if saved_work is None:
+            os.environ.pop('BF1943_WORK', None)
+        else:
+            os.environ['BF1943_WORK'] = saved_work
+        shutil.rmtree(work, ignore_errors=True)
+    check(calls[:1] == ['X:/custom/dist/xenon'], f"navkit.py build passes its --game to level_links ({calls[:1]})")
 
 
 if __name__ == '__main__':

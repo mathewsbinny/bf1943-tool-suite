@@ -19,8 +19,9 @@ for line in source.decode().splitlines():
         name,form,op,xop=m.groups();mask=0xfc000000|masks[form]
         table.append((name,mask,(int(op)<<26)|(int(xop)&masks[form])))
 counts=collections.Counter();ambiguous=0;unknown=0;functions=collections.Counter()
-with (ROOT/'work/vmx128/classified.tsv').open('w',newline='') as out:
-    writer=csv.writer(out,delimiter='\t');writer.writerow(['address','function','word','matches'])
+with (ROOT/'work/vmx128/classified.tsv').open('w',encoding='utf-8',newline='') as out:
+    writer=csv.writer(out,delimiter='\t',lineterminator='\r\n');  # CRLF, as recorded: vmx_inputs.INPUTS and evidence pin these bytes
+    writer.writerow(['address','function','word','matches'])
     for f in csv.DictReader((ROOT/'work/xex-analysis/functions.tsv').open(),delimiter='\t'):
         for at in range(int(f['start'],16),int(f['end'],16),4):
             word=struct.unpack_from('>I',data,at-0x82000000)[0]
@@ -32,5 +33,5 @@ with (ROOT/'work/vmx128/classified.tsv').open('w',newline='') as out:
             functions[f['start']]+=1;writer.writerow([f'{at:08x}',f['start'],f'{word:08x}',','.join(names)])
 report=dict(reference_member=member,reference_sha256=hashlib.sha256(source).hexdigest(),definitions=len(table),counts=dict(counts.most_common()),ambiguous=ambiguous,unmatched_primary_4_5_6=unknown,functions=len(functions),
     limitations=['Mask candidates in declared function ranges; embedded data and reserved operand combinations are not excluded.','Only explicit VX128 table entries; unmatched words may be standard AltiVec, data or unsupported instructions.'])
-(ROOT/'research/evidence/vmx128-classification.json').write_text(json.dumps(report,indent=2)+'\n')
+(ROOT/'research/evidence/vmx128-classification.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8', newline='\n')
 print(json.dumps(report,indent=2))
