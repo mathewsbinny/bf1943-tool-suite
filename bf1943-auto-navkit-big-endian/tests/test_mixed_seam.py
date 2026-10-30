@@ -3,7 +3,8 @@ game data): two sectors side by side, a wall along the seam with one opening. Th
 (z 20-30), the 0.2 m samples the real one, 0.8 m wide (z 28.6-29.4) behind a thicker wall - the coarse run misses a
 post, as on BF1943's carriers and islets. The shared seam nodes come from the 0.8 m build (one per 10 m of ground
 along the seam), and the 0.2 m build has no ground within CARRY_RADIUS of them: without SEAM_GAP_NODES the two
-sectors are not joined at all (Wake Island's Japanese carrier, Coral Sea's islets, 2026-10-24).
+sectors are not joined at all (Wake Island's Japanese carrier, Coral Sea's islets, 2026-10-24). Also the seam passes'
+0.8 m cell -> 0.2 m columns mapping (navbuild.fine_columns, 2026-10-30).
 
   python -B test_mixed_seam.py
 """
@@ -78,8 +79,29 @@ def build(tmp, gap_nodes):
     return out, lines
 
 
+def fine_columns_check():
+    """navbuild.fine_columns (2026-10-30): the 0.2 m columns under a 0.8 m cell are its 4 x 4, each once, all with
+    centres inside the cell; the rounding seam_fine_links used before (points c + (u + 0.5) x 0.2, round-half-even)
+    takes columns twice and leaves others out at such a cell - the case reproduced here."""
+    from types import SimpleNamespace
+    sa = SimpleNamespace(min_x=0.0, min_z=0.0)
+    sb = SimpleNamespace(min_x=0.0, min_z=0.0)
+    bad = []
+    for gi in range(0, 130):
+        cols = navbuild.fine_columns(sa, sb, gi, gi, 0.8, 0.2)
+        inside = all(gi * 0.8 - 0.4 - 1e-9 <= i * 0.2 < gi * 0.8 + 0.4 - 1e-9 for i, _j in cols)
+        if len(set(cols)) != 16 or len(cols) != 16 or not inside:
+            bad.append(gi)
+    check(not bad, f'fine_columns: 16 distinct 0.2 m columns inside every 0.8 m cell of 130 ({bad[:3] or "all"})')
+    legacy = sorted(int(round((0.8 + (u + 0.5) * 0.2) / 0.2)) for u in range(-2, 2))
+    new = sorted({i for i, _j in navbuild.fine_columns(sa, sb, 1, 1, 0.8, 0.2)})
+    check(legacy == [2, 4, 4, 6] and new == [2, 3, 4, 5],
+          f'the cell at 0.8 m: the old rounding took columns {legacy} (4 twice, 3 and 5 never), the new {new}')
+
+
 if __name__ == '__main__':
     soldier1943.configure()
+    fine_columns_check()
     tmp = tempfile.mkdtemp(prefix='mixed_seam_')
     try:
         np.save(os.path.join(tmp, 'forbid.npy'), np.zeros((0, 3, 3), np.float32))

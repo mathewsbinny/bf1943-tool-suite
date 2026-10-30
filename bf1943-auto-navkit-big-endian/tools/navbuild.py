@@ -1156,6 +1156,8 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
         by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
         n_links = seam_fine_links(a, b, by_sec, set(b_det), xoff, zoff)
         log(f'detailed pass: {n_links} fine-resolved link(s) in normal sectors beside mixed seams')
+        for p, q in (FINE_LINKS[-n_links:] if n_links else []):
+            log(f'  fine link {p} - {q}')
     if SEAM_FAR_LINKS:
         by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
         n_far = seam_far_links(a, b, by_sec, set(b_det), xoff, zoff)
@@ -1167,6 +1169,18 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
 
 
 SEAM_FINE_BAND = 2.0            # m: seam_fine_links looks this far into the normal sector from a mixed seam
+
+
+def fine_columns(sa, sb, gi, gj, pa, pb):
+    """The columns of the fine grid sb (pitch pb) whose centres lie in the coarse grid sa's cell (gi, gj) (pitch pa):
+    [c - pa/2, c + pa/2) on each axis, (pa / pb)^2 of them, each once. Both seam passes use it (2026-10-30). Before,
+    seam_fine_links rounded the points c + (u + 0.5) x pb to the fine grid; those fall on halves, and round-half-even
+    took some columns twice and left others out (seam_far_links found it on Iwo Jima's slope, 2026-10-29)."""
+    cx, cz = sa.min_x + gi * pa, sa.min_z + gj * pa
+    fi0 = int(math.ceil((cx - pa / 2 - sb.min_x) / pb - 1e-6))
+    fj0 = int(math.ceil((cz - pa / 2 - sb.min_z) / pb - 1e-6))
+    n = int(round(pa / pb))
+    return [(fi0 + u, fj0 + v) for u in range(n) for v in range(n)]
 
 
 def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff):
@@ -1230,14 +1244,10 @@ def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff):
                 set_pitch(pb)
                 fine = {}
                 for k, (gi, gj) in coarse.items():
-                    cx, cz = sa.min_x + gi * pa, sa.min_z + gj * pa
-                    for u in range(-2, 2):
-                        for v in range(-2, 2):
-                            fx, fz = cx + (u + 0.5) * pb, cz + (v + 0.5) * pb
-                            fi, fj = int(round((fx - sb.min_x) / pb)), int(round((fz - sb.min_z) / pb))
-                            for f in lb.surfaces(fi, fj):
-                                if abs(float(lb.y[f]) - float(la.y[k])) <= 0.4:
-                                    fine.setdefault(f, (fi, fj, k))
+                    for fi, fj in fine_columns(sa, sb, gi, gj, pa, pb):
+                        for f in lb.surfaces(fi, fj):
+                            if abs(float(lb.y[f]) - float(la.y[k])) <= 0.4:
+                                fine.setdefault(f, (fi, fj, k))
                 seen = {}
                 for f0 in fine:
                     if f0 in seen:
@@ -1285,6 +1295,7 @@ def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff):
                                             pairs.append((idx, q, d))
                                 ends.append(idx)
                             pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
+                            FINE_LINKS.append(tuple(tuple(round(v, 2) for v in pts[e][1]) for e in ends))
                             made += 1
     finally:
         set_pitch(DETAILED_PITCH)
@@ -1293,6 +1304,7 @@ def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff):
 
 SEAM_FAR_LINKS = False          # seam_far_links (2026-10-29; soldier1943.configure sets it for BF1943)
 FAR_LINKS = []                  # the links seam_far_links made: (x, y, z) of both ends (for the build log)
+FINE_LINKS = []                 # ... and seam_fine_links (2026-10-30)
 
 
 def seam_far_links(a, b, by_sec, b_secs, xoff, zoff):
@@ -1318,16 +1330,7 @@ def seam_far_links(a, b, by_sec, b_secs, xoff, zoff):
         return next_id[0]
 
     def under(gi, gj):
-        # the 0.2 m columns whose centres lie in the 0.8 m cell [c - 0.4, c + 0.4): four by four. (Rounding the
-        # points c + (u + 0.5) x 0.2 to the 0.2 m grid falls on halves, and round-half-even gave columns twice and
-        # left others out: the fine flood broke on Iwo Jima's slope, 2026-10-29)
-        cx, cz = sa.min_x + gi * pa, sa.min_z + gj * pa
-        fi0 = int(math.ceil((cx - pa / 2 - sb.min_x) / pb - 1e-6))
-        fj0 = int(math.ceil((cz - pa / 2 - sb.min_z) / pb - 1e-6))
-        n = int(round(pa / pb))
-        for u in range(n):
-            for v in range(n):
-                yield fi0 + u, fj0 + v
+        return fine_columns(sa, sb, gi, gj, pa, pb)
     try:
         for S in sorted(b_secs):
             for dX, dY in ((1, 0), (-1, 0), (0, 1), (0, -1)):
