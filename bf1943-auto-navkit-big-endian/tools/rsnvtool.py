@@ -14,6 +14,9 @@ navexport_vehicles1943.py), ask it questions, draw it, and compare two of them.
   rsnvtool.py cells <file|level> --at X,Z --y Y [--radius R] [--dy D] [--samples] [--line A B]
                                                                 text maps around a point: each area's cells, the
                                                                 build's samples on both grids, a line over them
+  rsnvtool.py walk <level> A B [--reach R]                      the build's kept samples along a line (A, B: nodes or
+                                                                X,Y,Z), both grids: the surface followed column by
+                                                                column, the largest step, the gaps, the end's offset
   rsnvtool.py picture <file|level> --at X,Z [--radius R] [--y Y [--dy D]] [--route FROM TO] [--png F]
                                                                 top-down: cells, edges (tight ones red), nodes, a route;
                                                                 --y draws only the floors near that height
@@ -447,6 +450,77 @@ def cmd_cells(w, a, path):
     return 0
 
 
+def sample_walk(bs, a, b, grid='0.2 m', reach=1.0):
+    """The build's own kept samples along the line a -> b on one grid: column by column (every 0.05 m along the line,
+    the nearest column), the kept surface nearest the height followed so far (within reach), or a gap. Returns
+    {'grid', 'columns': [(x, z, y or None, slope or None)], 'largest_step', 'step_at', 'gaps', 'end_dy'} or None when
+    the grid does not cover the line. Read-only; what a straight walk over the kept surfaces meets."""
+    g = [t for t in bs.grids if t[0] == grid]
+    if not g:
+        return None
+    _w, s, keep, _h = g[0]
+    dx, dz = b[0] - a[0], b[2] - a[2]
+    ln = math.hypot(dx, dz)
+    n = max(1, int(math.ceil(ln / 0.05)))
+    y, cols, last = a[1], [], None
+    largest, at, gaps, gap = 0.0, None, [], 0.0
+    for k in range(n + 1):
+        t = k / n
+        x, z = a[0] + dx * t, a[2] + dz * t
+        i, j = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
+        if not (0 <= i < s.nx and 0 <= j < s.nz):
+            return None
+        if (i, j) == last:
+            continue
+        last = (i, j)
+        best = None
+        for q in s.column(i, j):
+            if keep[q] and abs(float(s.y[q]) - y) <= reach and (best is None or abs(float(s.y[q]) - y) < abs(float(s.y[best]) - y)):
+                best = q
+        cx, cz = s.min_x + i * s.pitch, s.min_z + j * s.pitch
+        if best is None:
+            cols.append((round(cx, 2), round(cz, 2), None, None))
+            gap += s.pitch
+            continue
+        if gap:
+            gaps.append(round(gap, 2))
+            gap = 0.0
+        ny = float(s.y[best])
+        if cols and abs(ny - y) > largest:
+            largest, at = abs(ny - y), (round(cx, 2), round(cz, 2))
+        sl = math.degrees(math.acos(max(-1.0, min(1.0, float(s.normal[best][1])))))
+        cols.append((round(cx, 2), round(cz, 2), round(ny, 3), round(sl, 1)))
+        y = ny
+    if gap:
+        gaps.append(round(gap, 2))
+    return {'grid': grid, 'columns': cols, 'largest_step': round(largest, 3), 'step_at': at, 'gaps': gaps,
+            'end_dy': round(y - b[1], 3)}
+
+
+def cmd_walk(w, a, path):
+    """The build's kept samples along a line, on both grids (sample_walk)."""
+    bs = BuildSamples(os.path.basename(path).split('.')[0])
+    pa, pb = node_of_point(w, a.a), node_of_point(w, a.b)
+    print(f'{pa} -> {pb}: line of sight {"in sight" if w.los(pa, pb) else "not in sight"} / '
+          f'{"in sight" if w.los(pb, pa) else "not in sight"} (back)')
+    for grid in ('0.2 m', '0.8 m'):
+        r = sample_walk(bs, pa, pb, grid, a.reach)
+        if r is None:
+            print(f'  {grid}: no samples there')
+            continue
+        print(f"  {grid}: largest step {r['largest_step']} m at {r['step_at']}, gaps {r['gaps'] or 'none'}, the end "
+              f"{r['end_dy']:+.2f} m off b")
+        print('    ' + ' '.join(f'{c[2]:.2f}' if c[2] is not None else '-' for c in r['columns']))
+    return 0
+
+
+def node_of_point(w, text):
+    """A point X,Y,Z, or a node number's position."""
+    if ',' in text:
+        return point(text)
+    return tuple(float(v) for v in w.node_pos[int(text)])
+
+
 def picture(w, cx, cz, radius, route, png, y=None, dy=3.0):
     from PIL import Image, ImageDraw
     x0, x1, z0, z1 = cx - radius, cx + radius, cz - radius, cz + radius
@@ -571,6 +645,10 @@ def main(argv):
     p.add_argument('--dy', type=float, default=1.5, help='areas whose ground at the point is within this of --y')
     p.add_argument('--samples', action='store_true')
     p.add_argument('--line', nargs=2, help='two points X,Y,Z: the line drawn over the maps')
+    p = add('walk')
+    p.add_argument('a')
+    p.add_argument('b')
+    p.add_argument('--reach', type=float, default=1.0, help='the kept surface followed lies within this of the last')
     p = add('picture')
     p.add_argument('--at', required=True)
     p.add_argument('--radius', type=float, default=25.0)
@@ -608,6 +686,8 @@ def main(argv):
         return cmd_tight(w, a, path)
     if a.cmd == 'cells':
         return cmd_cells(w, a, path)
+    if a.cmd == 'walk':
+        return cmd_walk(w, a, path)
     return 2
 
 

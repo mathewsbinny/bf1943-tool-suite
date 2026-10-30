@@ -96,6 +96,25 @@ def main(argv):
         check(len(one) == 1 and len(comps) >= 2 and worst <= 0.6 + 1e-6,
               f'AREA_CLIFF 0.6 at 0.2 m: {len(one)} area at 1.0, {len(comps)} at 0.6, side-by-side cells at most '
               f'{worst:.2f} m apart')
+        # AREA_CLIFF_REACH 2 (2026-10-29) on 0.2 m cells: a floor reached round a ramp lies one empty row from the floor
+        # 1.4 m below it; no two cells of an area are side by side beyond the step, so the reach of 1 keeps one area,
+        # the reach of 2 splits it, and no two cells of one area two apart across an empty cell are over 0.77 m apart
+        h3 = [[0.0, 0.05, 0.1, 0.15], [9.0, 9.0, 9.0, 0.4], [1.4, 1.15, 0.9, 0.65]]
+        k3 = [[1, 1, 1, 1], [0, 0, 0, 1], [1, 1, 1, 1]]
+        turn = level(h3, keep=k3)
+        mem3 = {k: (k % 4, k // 4) for k in range(12) if k3[k // 4][k % 4]}
+        saved_r = navbuild.AREA_CLIFF_REACH
+        navbuild.AREA_CLIFF_REACH = 1
+        one = navbuild.components(turn, mem3, 0, 0)
+        navbuild.AREA_CLIFF_REACH = 2
+        comps = navbuild.components(turn, mem3, 0, 0)
+        navbuild.AREA_CLIFF_REACH = saved_r
+        worst = max((abs(turn.y[a[2]] - turn.y[b[2]]) for c in comps for a in c for b in c
+                     if {abs(a[0] - b[0]), abs(a[1] - b[1])} <= {0, 2} and (a[0] != b[0] or a[1] != b[1])
+                     and ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2) not in {(x[0], x[1]) for x in c}), default=0.0)
+        check(len(one) == 1 and len(comps) >= 2 and worst <= 0.77 + 1e-6,
+              f'AREA_CLIFF_REACH 2: {len(one)} area at reach 1, {len(comps)} at reach 2, cells two apart across an '
+              f'empty cell at most {worst:.2f} m apart')
     finally:
         navbuild.AREA_CLIFF = saved
         navbuild.set_pitch(0.8)

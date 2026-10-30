@@ -40,7 +40,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.
-- **Wake Island, today's build (2026-10-29, round 4):** 12,744 nodes, 45,180 edges, 64 islands; the main network has 11,393
+- **Wake Island, today's build (2026-10-29, round 5):** 12,779 nodes, 45,278 edges, 64 islands; the main network has 11,420
   nodes; 16 of 16 ladders linked from the main network, the 4 carrier AA guns and 21 carrier ledges by jump links; all 10 flag pairs
   routed; `hpdcheck` passes.
 - **The audit** (`tools\navaudit1943.py`, new 2026-10-24; operation-rising-sun `research/NAVMESH_AUDIT.md`):
@@ -93,6 +93,11 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   side-by-side cells of one area beyond the 0.2 m step rule). Tight walk edges 8/10/14/30 -> 8/6/6/28; pockets
   0.24/0.05/0.20/0.00 % -> 0.04/0.03/0.01/0.00 %; exports 4.2-5.4 MB. What is left, case by case: operation-rising-sun
   `research/NAVMESH_AUDIT.md` item 7.
+- **2026-10-29, round 5:** `AREA_CLIFF_REACH` 2 (no two cells of an area two apart across an empty cell beyond a 45-degree
+  slope plus the step: Iwo Jima's floor strip one empty row from the floor 1.56 m above it) and `SEAM_FAR_LINKS` (0.8 m
+  pieces two columns apart beside a mixed seam joined where one piece of 0.2 m ground carries the build's own line:
+  Iwo Jima's last seam break closed; Iwo Jima 2 links, Coral Sea 3). Tight walk edges 8/6/6/28 -> 6/6/4/26; pockets
+  0.04/0.04/0.00/0.00 %; no seam break left; `rsnvtool.py walk` added. NAVMESH_AUDIT.md item 8.
 
 **Vehicle navigation (new 2026-10-26).** One RSNV world per vehicle class beside the soldier's, read by rsnav like
 any other world: `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `.lcvp.rsnv`, `.plane.rsnv`, plus
@@ -172,6 +177,7 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
 | `pockets <level>` | the main network's pieces without tight edges, the largest pockets with positions |
 | `tight <level> [--samples] [--json F]` | every tight walk edge (new 2026-10-29): its ends' areas (sector, pitch, layer, cell, ground), the first failing line-of-sight sample each way with the rule that refuses it (`rsnv.World.los`'s trace) and by how much, the other areas with ground there, and a cause (`hole`, `step`, `lean`, `cell`, `climb`, `end`); `--samples` adds the build's own samples and kept surfaces at that sample (the audit's base masks) |
 | `cells <level> --at X,Z --y Y [--radius R] [--samples] [--line A B]` | text maps around a point (new 2026-10-29), 0.2 m a character: each area's walkable cells, the build's samples on both grids (kept / not kept), a line drawn over them |
+| `walk <level> A B [--reach R]` | the build's own kept samples along a line (new 2026-10-29, round 5; A, B nodes or points), on both grids: the surface followed column by column, the largest step and where, the gaps, how far the end lies off B - what a straight walk over the kept surfaces meets, to set against line of sight |
 | `picture <level> --at X,Z [--radius R] [--y Y] [--route FROM TO]` | a top-down PNG: cells; edges (tight red, ladders orange, jumps cyan); a route in yellow |
 | `diff <a> <b>` | what changed between two exports |
 

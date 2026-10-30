@@ -1,5 +1,5 @@
 """rsnvtool.py (NavKit's RSNV inspector) on a made-up file (no game data): info, validate, locate, los, route (by nodes
-and by a point), pockets, picture, diff, tight (each tight pair, JSON) and cells (text maps) answer as the file says;
+and by a point), pockets, picture, diff, tight (each tight pair, JSON), cells (text maps) and walk's sample profile answer as the file says;
 los on two stacked floors keeps to each floor; a missing export is refused.
 
   python -B test_rsnvtool.py
@@ -80,6 +80,24 @@ if __name__ == '__main__':
     check(code == 1 and 'not in sight' in out, 'los: from one floor to the floor under it, not in sight')
     code2, out2 = run('los', c, '0.2,10.8,0.2', '1.2,10.8,1.2')
     check(code2 == 0, 'los: along the upper of two stacked floors, in sight (the start on the nearest floor)')
+    # walk (sample_walk) on made-up samples: one row of 0.2 m columns, a 0.5 m step at x = 0.6 and a column with no
+    # kept surface at x = 1.2
+    import types
+    import numpy as np
+    sys.path.insert(0, os.path.dirname(TOOL))
+    import rsnvtool
+    ys = [0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    smp = types.SimpleNamespace(pitch=0.2, min_x=0.0, min_z=0.0, nx=10, nz=1, y=np.array(ys, np.float32),
+                                normal=np.tile(np.array([0.0, 1.0, 0.0], np.float32), (10, 1)))
+    smp.column = lambda i, j: range(j * 10 + i, j * 10 + i + 1)
+    kept = np.ones(10, bool)
+    kept[6] = False
+    bs = types.SimpleNamespace(grids=[('0.2 m', smp, kept, '00')])
+    r = rsnvtool.sample_walk(bs, (0.0, 0.0, 0.0), (1.8, 0.5, 0.0))
+    check(r is not None and r['largest_step'] == 0.5 and r['step_at'] == (0.6, 0.0) and r['gaps'] == [0.2]
+          and r['end_dy'] == 0.0, f'walk: the 0.5 m step, the one-column gap, the end on b ({r and r["largest_step"]}, '
+          f'{r and r["gaps"]})')
+    check(rsnvtool.sample_walk(bs, (0.0, 0.0, 0.0), (3.0, 0.5, 0.0)) is None, 'walk: a line off the samples: none')
     code, out = run('info', os.path.join(tmp, 'missing.rsnv'))
     check(code == 1 and 'no such export' in out, 'a missing export: refused with its cause')
     print('all passed' if not failures else f'{len(failures)} failed')

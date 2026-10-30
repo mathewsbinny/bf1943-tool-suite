@@ -49,11 +49,18 @@ def configure():
     # other term), so cells further apart are no walk; 34-44 areas per map held such pairs 0.6-1.0 m apart (Coral Sea
     # area 3133: 78.45 beside 79.41), the height grid read them as a ramp, and 5 of the 22 remaining tight pairs met one
     navbuild.AREA_CLIFF = 0.6
+    # and between cells two apart across a cell the area does not hold (2026-10-29, round 5): the per-cell height grid
+    # carried a floor across the empty cell to the floor 1.56 m below it (Iwo Jima (-92.0, 20.7, -17.4): kept 0.2 m
+    # ground at 20.72-20.75 m along the edge, a strip at 19.16 m one empty row away in the same area)
+    navbuild.AREA_CLIFF_REACH = 2
     # join_groups floods 2 m past a sector's window: ground joined to the rest of its sector only round a corner of
     # the neighbour sector (Coral Sea's last seam break, 2026-10-26)
     navbuild.JOIN_MARGIN = 2.0
     # beside a mixed seam, the 0.8 m graph is told where the 0.2 m samples join ground its step rule cannot (a lip the
     # coarse grid does not resolve: Coral Sea's last seam break, 2026-10-26)
     navbuild.SEAM_FINE_LINKS = True
+    # ... and where that 0.2 m ground joins 0.8 m pieces two columns apart across columns the 0.8 m grid kept nothing in
+    # (Iwo Jima's last seam break, 2026-10-29)
+    navbuild.SEAM_FAR_LINKS = True
     # a sector's window grows 1 m past a mixed seam, so both grids' cells overlap there (2026-10-26)
     navbuild.MIXED_OVERLAP = 1.0

@@ -143,6 +143,8 @@ JOIN_DETAILED = set()           # the sectors built at DETAILED_PITCH (build()):
 AREA_CLIFF = None               # m: no two plan-neighbouring cells of one area further apart in height than this and than
                                 # a 45-degree slope plus the step (components, _cliff; 2026-10-26, soldier1943.configure
                                 # sets 1.0 for BF1943); None = off
+AREA_CLIFF_REACH = 1            # 2: AREA_CLIFF also between cells two apart with an empty cell between them (2026-10-29,
+                                # soldier1943.configure sets 2 for BF1943)
 BORDER_SEAM_LINE = False        # shared border nodes also on the seam line itself for ground that does not reach the
                                 # border line one sample beyond (2026-10-26; soldier1943.configure sets it for BF1943)
 BRIDGE_UNION = True             # 45-degree bridges: outline from the exact union (bridge_union) - False: clip_bridges
@@ -376,6 +378,17 @@ def _cliff(y, n, ij, cols, step):
         m = cols.get((i + di, j + dj))
         if m is not None and abs(y[n] - y[m]) > max(AREA_CLIFF, math.hypot(di, dj) * PITCH + step):
             return True
+    if AREA_CLIFF_REACH >= 2:
+        # two cells away, straight or diagonal, with the cell between them not in the area: the per-cell height grid
+        # carries the far cell's height across the empty one (Iwo Jima 0a0a: a strip of the floor 1.56 m below, one
+        # empty row from the upper floor on both sides, 2026-10-29); the limit is a 45-degree slope over the two cells
+        # plus the step
+        for di, dj in ((2, 0), (-2, 0), (0, 2), (0, -2), (2, 2), (2, -2), (-2, 2), (-2, -2)):
+            m = cols.get((i + di, j + dj))
+            if m is None or (i + di // 2, j + dj // 2) in cols:
+                continue
+            if abs(y[n] - y[m]) > max(AREA_CLIFF, math.hypot(di, dj) * PITCH + step):
+                return True
     return False
 
 
@@ -1143,6 +1156,12 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
         by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
         n_links = seam_fine_links(a, b, by_sec, set(b_det), xoff, zoff)
         log(f'detailed pass: {n_links} fine-resolved link(s) in normal sectors beside mixed seams')
+    if SEAM_FAR_LINKS:
+        by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
+        n_far = seam_far_links(a, b, by_sec, set(b_det), xoff, zoff)
+        log(f'detailed pass: {n_far} fine-resolved link(s) two 0.8 m columns apart beside mixed seams')
+        for p, q in (FAR_LINKS[-n_far:] if n_far else []):
+            log(f'  far link {p} - {q}')
     log(f'merged: {len(a_norm)} normal + {len(b_det)} detailed sectors')
     return merged
 
@@ -1267,6 +1286,164 @@ def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff):
                                 ends.append(idx)
                             pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
                             made += 1
+    finally:
+        set_pitch(DETAILED_PITCH)
+    return made
+
+
+SEAM_FAR_LINKS = False          # seam_far_links (2026-10-29; soldier1943.configure sets it for BF1943)
+FAR_LINKS = []                  # the links seam_far_links made: (x, y, z) of both ends (for the build log)
+
+
+def seam_far_links(a, b, by_sec, b_secs, xoff, zoff):
+    """SEAM_FAR_LINKS: SEAM_FINE_LINKS for 0.8 m pieces two columns apart (2026-10-29). Iwo Jima 0b0d: a strip of four
+    0.8 m surfaces 0.8-2.4 m past the seam and the main network's area beside it, joined by a 30-degree slope of 0.2 m
+    kept ground (steps of 0.20 m at most), with no 0.8 m surface kept in the columns between (their one 0.8 m sample
+    lies on a steep facet), so no two side-by-side columns ever met and the strip stayed an island of 3 nodes.
+    Within SEAM_FINE_BAND of the seam and one column past it, the 0.8 m kept surfaces fall into pieces under the 0.8 m
+    step rule; the 0.2 m kept surfaces under those columns (within 0.4 m of the 0.8 m surface) and under the columns
+    with no 0.8 m surface (all of them) fall into pieces under the 0.2 m step rule. Two 0.8 m surfaces of different
+    pieces, two columns apart (one of them in the band), that one 0.2 m piece stands on get a walk edge when the build's
+    own line rule (line_walkable) walks the 0.2 m samples from one to the other; once per pair of pieces. The side-by-
+    side pairs stay SEAM_FINE_LINKS' (it runs first, unchanged). by_sec: {sector: merged graph tuple}, changed in place.
+    Returns the links made."""
+    la, lb = a['level'], b['level']
+    sa, sb = la.s, lb.s
+    pa, pb = a['pitch'], DETAILED_PITCH
+    made = 0
+    next_id = [b['next_id'] + 600000]
+
+    def new_id():
+        next_id[0] += 1
+        return next_id[0]
+
+    def under(gi, gj):
+        # the 0.2 m columns whose centres lie in the 0.8 m cell [c - 0.4, c + 0.4): four by four. (Rounding the
+        # points c + (u + 0.5) x 0.2 to the 0.2 m grid falls on halves, and round-half-even gave columns twice and
+        # left others out: the fine flood broke on Iwo Jima's slope, 2026-10-29)
+        cx, cz = sa.min_x + gi * pa, sa.min_z + gj * pa
+        fi0 = int(math.ceil((cx - pa / 2 - sb.min_x) / pb - 1e-6))
+        fj0 = int(math.ceil((cz - pa / 2 - sb.min_z) / pb - 1e-6))
+        n = int(round(pa / pb))
+        for u in range(n):
+            for v in range(n):
+                yield fi0 + u, fj0 + v
+    try:
+        for S in sorted(b_secs):
+            for dX, dY in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                T = (S[0] + dX, S[1] + dY)
+                if T not in by_sec or T in b_secs or T not in a['info']:
+                    continue
+                info = a['info'][T]
+                own = info['area_of']
+                gi0, gj0, ox, oz = info['origin']
+                x0, z0 = (S[0] + xoff) * 100.0, (S[1] + zoff) * 100.0
+                seam = (x0 + (100.0 if dX > 0 else 0.0)) if dX else (z0 + (100.0 if dY > 0 else 0.0))
+                set_pitch(pa)
+                nb = int(SEAM_FINE_BAND / pa)
+                cols, band = set(), set()
+                for t in range(int(100 / pa) + 1):
+                    for q in range(nb + 2):
+                        x = (seam + dX * q * pa) if dX else (x0 + t * pa)
+                        z = (z0 + t * pa) if dX else (seam + dY * q * pa)
+                        c_ = (int(round((x - sa.min_x) / pa)), int(round((z - sa.min_z) / pa)))
+                        cols.add(c_)
+                        if q <= nb:
+                            band.add(c_)
+                coarse = {k: (gi, gj) for gi, gj in cols for k in la.surfaces(gi, gj) if k in own}
+                piece = {}
+                for k0 in coarse:
+                    if k0 in piece:
+                        continue
+                    piece[k0] = k0
+                    q_ = deque([k0])
+                    while q_:
+                        k = q_.popleft()
+                        gi, gj = coarse[k]
+                        for di in (-1, 0, 1):
+                            for dj in (-1, 0, 1):
+                                if di or dj:
+                                    n = la.neighbour(k, gi, gj, di, dj)
+                                    if n in coarse and n not in piece:
+                                        piece[n] = k0
+                                        q_.append(n)
+                if len(set(piece.values())) < 2:
+                    continue
+                set_pitch(pb)
+                fine = {}
+                for k, (gi, gj) in coarse.items():
+                    for fi, fj in under(gi, gj):
+                        for f in lb.surfaces(fi, fj):
+                            if abs(float(lb.y[f]) - float(la.y[k])) <= 0.4:
+                                fine.setdefault(f, (fi, fj, k))
+                # every other 0.2 m kept surface under the columns carries the flood but no 0.8 m surface: those under
+                # a column with no 0.8 m surface, and those further than 0.4 m from it (on a 30-degree slope a 0.8 m
+                # column spans 0.46 m of rise, so the 0.4 m match alone breaks the slope into pieces)
+                for gi, gj in sorted(cols):
+                    for fi, fj in under(gi, gj):
+                        for f in lb.surfaces(fi, fj):
+                            fine.setdefault(f, (fi, fj, None))
+                seen = {}
+                for f0 in fine:
+                    if f0 in seen:
+                        continue
+                    seen[f0] = f0
+                    q_ = deque([f0])
+                    while q_:
+                        f = q_.popleft()
+                        fi, fj, _k = fine[f]
+                        for di in (-1, 0, 1):
+                            for dj in (-1, 0, 1):
+                                if di or dj:
+                                    n = lb.neighbour(f, fi, fj, di, dj)
+                                    if n in fine and n not in seen:
+                                        seen[n] = f0
+                                        q_.append(n)
+                # per fine piece, per coarse surface it stands on: the fine surface nearest that column's centre
+                touched = defaultdict(dict)
+                for f, root in seen.items():
+                    fi, fj, k = fine[f]
+                    if k is None:
+                        continue
+                    gi, gj = coarse[k]
+                    d = (sb.min_x + fi * pb - sa.min_x - gi * pa) ** 2 + (sb.min_z + fj * pb - sa.min_z - gj * pa) ** 2
+                    if k not in touched[root] or d < touched[root][k][1]:
+                        touched[root][k] = (f, d)
+                done = set()
+                pts, pairs = by_sec[T][3], by_sec[T][4]
+                for _root, ks in sorted(touched.items()):
+                    for k1 in sorted(ks):
+                        for k2 in sorted(ks):
+                            p1, p2 = piece[k1], piece[k2]
+                            if p1 >= p2 or (p1, p2) in done:
+                                continue
+                            (g1, h1), (g2, h2) = coarse[k1], coarse[k2]
+                            if max(abs(g1 - g2), abs(h1 - h2)) != 2 or (coarse[k1] not in band and coarse[k2] not in band):
+                                continue
+                            f1, f2 = ks[k1][0], ks[k2][0]
+                            set_pitch(pb)
+                            ok = line_walkable(lb, f1, fine[f1][:2], fine[f2][:2], 0, 0, f2)
+                            set_pitch(pa)
+                            if not ok:
+                                continue
+                            done.add((p1, p2))
+                            ends = []
+                            for k, (gi, gj) in ((k1, coarse[k1]), (k2, coarse[k2])):
+                                idx = next((q for q, p in enumerate(pts) if p[2] == k), None)
+                                if idx is None:
+                                    i, j = gi - gi0, gj - gj0
+                                    pos = (ox + i * pa, float(la.y[k]) + Y_OFFSET, oz + j * pa)
+                                    pts.append((new_id(), pos, k, i, j))
+                                    idx = len(pts) - 1
+                                    for q, p in enumerate(pts[:-1]):
+                                        d = math.dist(pos, p[1])
+                                        if d <= DIST_EDGE_MAX and line_walkable(la, k, (i, j), (p[3], p[4]), gi0, gj0, p[2]):
+                                            pairs.append((idx, q, d))
+                                ends.append(idx)
+                            pairs.append((ends[0], ends[1], math.dist(pts[ends[0]][1], pts[ends[1]][1])))
+                            FAR_LINKS.append(tuple(tuple(round(v, 2) for v in pts[e][1]) for e in ends))
+                            made += 1
+                set_pitch(pa)
     finally:
         set_pitch(DETAILED_PITCH)
     return made
