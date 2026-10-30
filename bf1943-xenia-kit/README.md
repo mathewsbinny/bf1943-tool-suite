@@ -81,12 +81,13 @@ Once you have a soldier in a match, the bot code adds 23 bots for a full 24-play
 
 | Working (2026-10-23) | Not yet |
 |---|---|
-| The bots join (the game announces "Bot 1 USMC Rifleman connected."), take their team's kit and appear on the scoreboard | No decisions yet: the build gives them no input (`THROTTLE = 0` in `bots.py`), so they stand; with test input (walk forward, jump) they walked and jumped, and some walked off their carrier |
-| Each server tick they get an input frame and their soldier is stepped with it, as a human's is when that player's input arrives | No aiming or facing, navigation or objectives yet |
+| The bots join (the game announces "Bot 1 USMC Rifleman connected."), take their team's kit and appear on the scoreboard | No decisions yet: their forward input is a mailbox word (`CMD_THROTTLE` in `bots.py`), zero until a host program writes it (`guestmem.py throttle 1` in the test harness walks them, 2026-10-30), so they stand; with test input (walk forward, jump) they walked and jumped, and some walked off their carrier |
+| Each server tick they get an input frame and their soldier is stepped with it, as a human's is when that player's input arrives | No aiming, navigation or objectives yet: nothing in the build decides what to send |
+| A host mailbox (2026-10-30): throttle, strafe, the button bits, an absolute facing, and one slot or all, written from outside Xenia (`guestmem.py` in the test harness); every tick each bot's position goes back to it. In game: walk, strafe, facing, sprint (button 22), jump and crouch work | |
 | Each spawns at its own team's base and respawns after dying | A fixed 23 bots; a chosen count comes later |
 | They are friendly or hostile to you according to their side, and stand on the deck | |
 
-The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): each bot created, each spawn (with the spawn point's ID) and, once a second, each soldier's position. The research behind each step is in `operation-rising-sun/research/AGENT_PROGRESS.md` (2026-10-23).
+The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): each bot created, each spawn (with the spawn point's ID) and, every 64 ticks (about 2 s), each soldier's position. The research behind each step is in `operation-rising-sun/research/AGENT_PROGRESS.md` (2026-10-23).
 
 ## Tests
 

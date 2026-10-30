@@ -16,6 +16,9 @@ Repeatable tests of maps and bots, with results compared between builds (OPFOR's
   `run_xenia_probe.ps1` runs a traced session of the kit's build (Xenia's log, GPU traces, shader dumps, function
   trace) into the suite's work folder; `capture_xenia_window.ps1` takes screenshots of Xenia's window;
   `udp_join_probe.py` watches a local multiplayer join. The probes came from operation-rising-sun on 2026-10-23.
+  `guestmem.py` (2026-10-30) reads and writes the running game's memory from outside Xenia: it finds the guest
+  base, checks the image and the bots experiment's code, reads the bots' positions, health and aim, and writes
+  their commands (throttle, strafe, facing, buttons, one slot or all).
 - The suite's own tests: `python -B ../run_tests.py quick | bf1943` (see the suite README). They check the tools
   themselves (format readers, bundle round trips, the level loader) before map and bot tests rely on them.
 - Bot tests in Xenia are, for now, `bf1943-xenia-kit`'s (`tests/test_bots.py`) and its `rs-bots:` log lines, which

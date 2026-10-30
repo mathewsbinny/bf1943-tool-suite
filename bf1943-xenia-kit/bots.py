@@ -55,13 +55,23 @@ CODE_END = 0x82AAB000
 DATA = 0x82D26E10            # unused, zero: after .data, before fieldinf (to 0x82D27000)
 DATA_END = 0x82D27000
 MAX_BOTS = 23               # a full 24-player match (12 v 12) with the host
-# data layout: state words, then a player slot per bot, then the kit lookup's handle
+# data layout: state words, then a player slot per bot, then the kit lookup's handle, then the host mailbox
 STATE, MANAGER, TICK, SLOTS = 0x0, 0x4, 0x8, 0x10
 HANDLE = SLOTS + 4 * MAX_BOTS + 4
+# Host mailbox (probe N0, guestmem.py in the test harness), all zero in the data area, so the bots stand until a
+# host program writes it. Every bot frame gets CMD_THROTTLE and CMD_STRAFE (actions 0 and 1, float bits), the
+# button words (the u64 at frame + 0x78, high word first) and the absolute facing CMD_YAW / CMD_PITCH (frame + 0x88 /
+# + 0x8c, read only with button bit 40); with CMD_SLOT nonzero, only the bot whose slot address it holds does (the
+# others get a neutral frame). Every tick each bot's soldier position (x, y, z float bits, as its log line) goes to
+# POSITIONS + 12 * slot.
+CMD_THROTTLE = HANDLE + 16
+POSITIONS = CMD_THROTTLE + 4
+CMD_STRAFE = POSITIONS + 12 * MAX_BOTS
+CMD_BUTTONS_HI, CMD_BUTTONS_LO, CMD_YAW, CMD_PITCH, CMD_SLOT = (CMD_STRAFE + 4 * k for k in range(1, 6))
+MAILBOX_END = CMD_SLOT + 4
 FRAME = 0x1E0                # stack frame: an input frame buffer at +0x80 (0x100 bytes, 16-aligned); saves (to -0x50) above it
 BUF = 0x80
 DT = BUF + 0x104             # the saved time step (float), between the buffer and the saved registers
-THROTTLE = 0x00000000        # forward input in every bot frame (float bits; 0x3F800000 = 1.0 walks forward)
 
 TEAMS = {1: 'US', 2: 'RU'}   # asset folder per team (Japan's soldiers keep BFBC2's RU name)
 KITS = {'Rifleman': 'Assault', 'Infantry': 'Support', 'Scout': 'Specialist'}
@@ -226,8 +236,25 @@ spawn:
                              # (with the AI flag they settled onto the deck but ignored forward input)
     lwz r5, 0x84(r4)
     stw r5, BUF_84(r1)
-    li32 r5, THROTTLE        # test: EIAThrottle (action 0, an analog float at frame + 8): walk forward
+    lwz r5, CMD_SLOT(r31)    # host commands: for every bot, or only the slot whose address CMD_SLOT holds
+    cmpwi r5, 0
+    beq commands
+    cmplw r5, r28
+    bne push
+commands:
+    lwz r5, CMD_THROTTLE(r31)    # EIAThrottle (action 0, an analog float at frame + 8), from the host mailbox
     stw r5, BUF_THROTTLE(r1)
+    lwz r5, CMD_STRAFE(r31)      # EIAStrafe (action 1, frame + 0x0c)
+    stw r5, BUF_STRAFE(r1)
+    lwz r5, CMD_BUTTONS_HI(r31)  # the button bits (actions 8-39; bit 40: the absolute facing is valid), a u64
+    stw r5, BUF_BUTTONS_HI(r1)
+    lwz r5, CMD_BUTTONS_LO(r31)
+    stw r5, BUF_BUTTONS_LO(r1)
+    lwz r5, CMD_YAW(r31)         # the absolute facing read with bit 40 (82308268): frame + 0x88 and + 0x8c
+    stw r5, BUF_YAW(r1)
+    lwz r5, CMD_PITCH(r31)
+    stw r5, BUF_PITCH(r1)
+push:
 
     lwz r3, 0x118(r27)
     addi r4, r1, BUF
@@ -240,16 +267,24 @@ spawn:
     mtctr r11                # 822f1d70 runs only +0x114, and only for AI-flagged players.
     li r4, 0
     bctrl
-    lwz r3, 0x120(r27)       # report: every 64 ticks, where the server has the bot's soldier
-    cmpwi r3, 0              # (its transform, 822a7bb0, translation row at +0x30, as raw float bits)
+    lwz r3, 0x120(r27)       # every tick, where the server has the bot's soldier (its transform, 822a7bb0,
+    cmpwi r3, 0              # translation row at +0x30, as raw float bits), for the host mailbox
     beq spawn_it
-    lwz r4, TICK(r31)
-    andi. r4, r4, 63
-    bne spawn_it
     bl 0x822a7bb0
     lwz r5, 0x30(r3)
     lwz r6, 0x34(r3)
     lwz r7, 0x38(r3)
+    la r12, SLOTS_ADDR       # POSITIONS + 12 * slot (r12's LR is saved)
+    subf r11, r12, r28
+    add r12, r11, r11
+    add r11, r11, r12
+    add r11, r11, r31
+    stw r5, POSITIONS(r11)
+    stw r6, POSITIONS_4(r11)
+    stw r7, POSITIONS_8(r11)
+    lwz r4, TICK(r31)        # report: every 64 ticks, the same position in the log
+    andi. r4, r4, 63
+    bne spawn_it
     lwz r3, 0x120(r27)
     lwz r8, 0x328(r3)        # the soldier's throttle limit (822edb28 clamps action 0 to it)
     li r9, 0
@@ -375,7 +410,11 @@ def build(bots=DEFAULT_BOTS):
             raise ValueError(f'unknown bot {side} {kit}')
     symbols = {'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS, 'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4,
                'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
-               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'THROTTLE': THROTTLE, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': 0}
+               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'CMD_THROTTLE': CMD_THROTTLE, 'POSITIONS': POSITIONS,
+               'POSITIONS_4': POSITIONS + 4, 'POSITIONS_8': POSITIONS + 8,
+               'CMD_STRAFE': CMD_STRAFE, 'CMD_BUTTONS_HI': CMD_BUTTONS_HI, 'CMD_BUTTONS_LO': CMD_BUTTONS_LO,
+               'CMD_YAW': CMD_YAW, 'CMD_PITCH': CMD_PITCH, 'CMD_SLOT': CMD_SLOT, 'BUF_STRAFE': BUF + 0x0C,
+               'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': 0}
     code, _ = ppcasm.assemble(CODE_SOURCE, CODE, symbols)
     table_at = CODE + len(code)
     strings_at = table_at + 16 * len(bots) + 4
@@ -395,6 +434,8 @@ def build(bots=DEFAULT_BOTS):
     if CODE + len(code) != table_at:
         raise AssertionError('code size changed between passes')
     blob = code + table + strings
+    if DATA + MAILBOX_END > DATA_END:
+        raise AssertionError('the host mailbox does not fit the data area')
     if CODE + len(blob) > CODE_END:
         raise ValueError(f'the bot code needs {len(blob):#x} bytes, the cave has {CODE_END - CODE:#x}')
     hook, _ = ppcasm.assemble(f'bl {CODE:#x}', HOOK)
@@ -410,8 +451,8 @@ def patch_toml(bots=DEFAULT_BOTS):
     names = f'{friendly} on the host side, {len(bots) - friendly} against'
     lines = [HEADER + ' Experimental; addresses are for module hash 872BBE31C0FBA21B.',
              'title_name = "Battlefield 1943"', 'title_id = "5841097E"', 'hash = "872BBE31C0FBA21B"', '',
-             '[[patch]]', '    name = "Experiment: offline bots (they spawn and stand; no decisions yet)"',
-             f'    desc = "{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; they do not move yet."',
+             '[[patch]]', '    name = "Experiment: offline bots (they stand until a host program drives them; no decisions yet)"',
+             f'    desc = "{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; they move only on a host program\'s commands (guestmem.py)."',
              '    author = "bf1943-xenia-kit"', '    is_enabled = true', '']
     for address, value, comment in words:
         lines += ['    [[patch.be32]]', f'        # {comment}', f'        address = {address:#010x}', f'        value = {value:#010x}', '']

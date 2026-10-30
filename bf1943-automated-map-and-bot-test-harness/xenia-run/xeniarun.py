@@ -26,7 +26,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
 KIT_MANIFEST = os.path.join(SUITE, 'bf1943-xenia-kit', 'output', 'kit-manifest.json')
 CRASH_WINDOW_MIN = 5            # a Windows crash record this close to the log's last write is this session's
-BOT = re.compile(r'rs-bots: (.*)$')
+# the printed report; at log level 3 Xenia also logs each call with its format string ("d> ... DbgPrint(82AAA5F8(
+# rs-bots: host player %08x ...), ContextArg)"), which is not a report
+BOT = re.compile(r'\(DbgPrint\) rs-bots: (.*)$')
 
 
 def xenia_folder(given=None):

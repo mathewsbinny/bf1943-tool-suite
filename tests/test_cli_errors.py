@@ -62,7 +62,8 @@ def main(argv):
         os.mkdir(empty)
         helps = ['bf1943-apt-tools/apt.py', 'bf1943-dbx-tools/schema1943.py', 'bf1943-fbrb-tool/fbrb1943.py',
                  'bf1943-automated-map-and-bot-test-harness/xenia-run/udp_join_probe.py',
-                 'bf1943-automated-map-and-bot-test-harness/xenia-run/xeniarun.py']
+                 'bf1943-automated-map-and-bot-test-harness/xenia-run/xeniarun.py',
+                 'bf1943-automated-map-and-bot-test-harness/xenia-run/guestmem.py']
         helps += [f'bf1943-auto-navkit-{v}-endian/tools/{n}.py' for v in ('big', 'little')
                   for n in ('detailed', 'hpdcheck', 'hpdview')]
         for tool in helps:

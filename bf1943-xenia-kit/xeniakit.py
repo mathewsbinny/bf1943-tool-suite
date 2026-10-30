@@ -165,7 +165,7 @@ def build(args):
     bots_dst = os.path.join(args.xenia, 'patches', bots.PATCH_FILE)
     bots_text = None
     if args.experiment_bots:
-        say('    experiment: offline bots (bots.py; they join, take a kit and spawn, and do not move yet)')
+        say('    experiment: offline bots (bots.py; they join, take a kit and spawn, and move only on guestmem.py\'s commands)')
         bots_text = bots.patch_toml()
         with open(bots_dst, 'w', encoding='utf-8', newline='\n') as f:
             f.write(bots_text)

@@ -32,7 +32,9 @@ i> 0000733C Title name: Battlefield 1943
 !> 0000733C Patcher: Applying patch for: Battlefield 1943(5841097E) - Offline: no automatic team on joining
 !> 0000733C Patcher: Applying patch for: Battlefield 1943(5841097E) - Experiment: offline bots
 w> 0000733C something Xenia warns about
+d> F80000C0 DbgPrint(82AAA5F8(rs-bots: host player %08x team %d), ContextArg)
 i> F80000C0 (DbgPrint) rs-bots: host player d997e0b0 team 1
+d> F80000C0 DbgPrint(82AAA61C(rs-bots: bot %08x team %d kit %08x), ContextArg)
 i> F80000C0 (DbgPrint) rs-bots: bot dc7dc3e0 team 2 kit 00000003
 i> F80000C0 (DbgPrint) rs-bots: bot dc7de5b0 team 1 kit 00000001
 i> F80000C0 (DbgPrint) rs-bots: spawned dc7dc3e0 team 2 at spawn id 00000045 soldier dda24d90
