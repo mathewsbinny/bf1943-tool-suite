@@ -83,8 +83,22 @@ def main(argv):
                      if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
         check(len(comps) >= 2 and worst <= 1.0 + 1e-6, f'AREA_CLIFF 1.0: {len(comps)} areas, side-by-side cells of one '
                                                        f'area at most {worst:.2f} m apart')
+        # BF1943's 0.6 m (2026-10-29) on 0.2 m cells: a ramp turning back with its foot 0.7 m beside its upper
+        # leg (between 0.6 and the old 1.0) is one area at 1.0 and split at 0.6; no straight pair over 0.6 m remains
+        navbuild.set_pitch(0.2)
+        ramp2 = level([[0.0, 0.1, 0.2, 0.3], [0.7, 0.6, 0.5, 0.4]])
+        navbuild.AREA_CLIFF = 1.0
+        one = navbuild.components(ramp2, members, 0, 0)
+        navbuild.AREA_CLIFF = 0.6
+        comps = navbuild.components(ramp2, members, 0, 0)
+        worst = max((abs(ramp2.y[a[2]] - ramp2.y[b[2]]) for c in comps for a in c for b in c
+                     if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
+        check(len(one) == 1 and len(comps) >= 2 and worst <= 0.6 + 1e-6,
+              f'AREA_CLIFF 0.6 at 0.2 m: {len(one)} area at 1.0, {len(comps)} at 0.6, side-by-side cells at most '
+              f'{worst:.2f} m apart')
     finally:
         navbuild.AREA_CLIFF = saved
+        navbuild.set_pitch(0.8)
     print('all passed' if not failed else f'{failed} check(s) failed')
     return 1 if failed else 0
 

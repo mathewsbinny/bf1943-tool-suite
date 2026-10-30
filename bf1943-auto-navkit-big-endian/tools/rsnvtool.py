@@ -7,6 +7,13 @@ navexport_vehicles1943.py), ask it questions, draw it, and compare two of them.
   rsnvtool.py los <file|level> X,Y,Z X,Y,Z                      line of sight between two points (the runtime's rule)
   rsnvtool.py route <file|level> FROM TO [--soldier] [--png F]  a search between nodes or points (X,Y,Z), as rsnav finds it
   rsnvtool.py pockets <file|level> [--top N]                    the main network's pieces when tight edges are left out
+  rsnvtool.py tight <file|level> [--samples] [--json F]         every tight walk edge: its ends' areas, the first
+                                                                failing line-of-sight sample each way, the rule that
+                                                                refuses it and by how much, a cause; --samples adds
+                                                                the build's own samples there (a level's work folder)
+  rsnvtool.py cells <file|level> --at X,Z --y Y [--radius R] [--dy D] [--samples] [--line A B]
+                                                                text maps around a point: each area's cells, the
+                                                                build's samples on both grids, a line over them
   rsnvtool.py picture <file|level> --at X,Z [--radius R] [--y Y [--dy D]] [--route FROM TO] [--png F]
                                                                 top-down: cells, edges (tight ones red), nodes, a route;
                                                                 --y draws only the floors near that height
@@ -190,6 +197,256 @@ def cmd_pockets(w, a):
     return 0
 
 
+def end_info(w, p):
+    """The area under an edge's end (a node position): index, sector id, pitch, layer, cell and ground."""
+    loc = w.locate(p[0], p[1], p[2], max_dist=1.0)
+    if loc is None:
+        return {'area': None}
+    k, (i, j), _d = loc
+    a = w.areas[k]
+    sec = w.sectors[a.sector]
+    return {'area': k, 'sector': f'{int(sec[0]):04x}', 'layer': int(sec[1]), 'pitch': round(a.pitch, 1),
+            'cell': [i, j], 'ground': round(w.ground(a, p[0], p[2]), 3)}
+
+
+def _hood(w, a, x, z):
+    """The 3 x 3 cells of area a around (x, z), rows from +z down: '#' walkable, '.' not, ' ' outside the bitmap."""
+    i, j, _in = w._cell_of(a, x, z)
+    rows = []
+    for dj in (1, 0, -1):
+        rows.append(''.join(('#' if w.walkable(a, i + di, j + dj) else '.') if 0 <= i + di < a.width
+                            and 0 <= j + dj < a.height else ' ' for di in (-1, 0, 1)))
+    return '/'.join(rows)
+
+
+def los_failure(w, pa, pb):
+    """None when pa sees pb; otherwise the first failing sample (rsnv.World.los's trace) with what lies there: the
+    current area's cells, every nearby area with ground on that spot (its height against the current area's, and the
+    allowance), and a cause: 'hole' (no other area has a cell there: a gap in the cells, its length along the line),
+    'step' (cells there, all beyond the height allowance), 'lean' (the sample on its 0.8 m area's ground, a neighbour
+    cell it leans to blocked), 'cell' (ground within the allowance whose cell test fails), 'climb' (the ground
+    changing too fast between samples), 'start' / 'end' (an end off its ground)."""
+    tr = {}
+    if w.los(pa, pb, tr):
+        return None
+    out = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in tr.items()}
+    rule = tr['rule']
+    if rule not in ('cell', 'climb'):
+        out['cause'] = rule
+        return out
+    x, z, cur = tr['x'], tr['z'], tr['area']
+    a = w.areas[cur]
+    i, j, _in = w._cell_of(a, x, z)
+    here = w.ground(a, x, z)
+    out.update(pitch=round(a.pitch, 1), sector=f'{int(w.sectors[a.sector][0]):04x}', cell=[i, j],
+               own=w.walkable(a, i, j), hood=_hood(w, a, x, z), cur_ground=round(here, 3))
+    cands = []
+    for k in w._near_los(x, z):
+        if k == cur:
+            continue
+        b = w.areas[k]
+        if not w.on_cell(b, x, z):
+            continue
+        d = w.ground(b, x, z) - here
+        cands.append({'area': k, 'pitch': round(b.pitch, 1), 'sector': f'{int(w.sectors[b.sector][0]):04x}',
+                      'dy': round(d, 3), 'allowed': round(w._allowed(cur, k), 3), 'cell_ok': w._cell_ok(k, x, z),
+                      'hood': _hood(w, b, x, z)})
+    cands.sort(key=lambda c: abs(c['dy']))
+    out['others'] = cands[:4]
+    if rule == 'climb':
+        out['cause'] = 'climb'
+        return out
+    if w.on_cell(a, x, z) and a.pitch_mm_ >= rsnv.COARSE_MM:
+        out['cause'] = 'lean'
+    elif not cands:
+        out['cause'] = 'hole'
+    elif all(abs(c['dy']) > c['allowed'] for c in cands):
+        out['cause'] = 'step'
+        out['step_excess'] = round(min(abs(c['dy']) - c['allowed'] for c in cands), 3)
+    else:
+        out['cause'] = 'cell'
+    if out['cause'] == 'hole':
+        # the gap's length along the line: to the next sample on any area's cells within the coarse allowance
+        dx, dz = pb[0] - pa[0], pb[2] - pa[2]
+        ln = math.hypot(dx, dz)
+        k0, n = tr['k'], tr['n']
+        gap = None
+        for k2 in range(k0 + 1, n + 1):
+            t2 = k2 / n
+            x2, z2 = pa[0] + dx * t2, pa[2] + dz * t2
+            if any(w.on_cell(w.areas[c], x2, z2) and abs(w.ground(w.areas[c], x2, z2) - tr['gy']) <= rsnv.LOS_COARSE_DY
+                   for c in w._near_los(x2, z2)):
+                gap = ln * (k2 - k0) / n
+                break
+        out['gap'] = None if gap is None else round(gap, 3)
+    return out
+
+
+class BuildSamples:
+    """The build's own collision samples and kept surfaces (navaudit1943's base masks) of a level, both grids."""
+
+    def __init__(self, level):
+        import numpy as np
+        import navaudit1943 as A
+        p = A.level_paths(level)
+        self.grids = []
+        for which, src, mask in (('0.8 m', 'samples.bin', 'normal'), ('0.2 m', 'samples_02.bin', 'detailed')):
+            mp = os.path.join(p['audit'], 'masks', f'{mask}_base.npz')
+            sp = os.path.join(p['samples'], src)
+            if not (os.path.isfile(mp) and os.path.isfile(sp)):
+                continue
+            s = A.load_samples(sp)
+            m = np.load(mp)
+            if int(m['surfaces']) != len(s.y):
+                raise SystemExit(f'{mp}: made from another sampling run')
+            self.grids.append((which, s, m['keep'], str(m['hpd_sha256'])))
+
+    def at(self, x, z, y, dy=2.5):
+        """Per grid, the nearest column's surfaces within dy of y: (height, kept, slope in degrees)."""
+        out = {}
+        for which, s, keep, _h in self.grids:
+            i, j = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
+            if not (0 <= i < s.nx and 0 <= j < s.nz):
+                continue
+            col = []
+            for q in s.column(i, j):
+                if abs(float(s.y[q]) - y) <= dy:
+                    ny = max(-1.0, min(1.0, float(s.normal[q][1])))
+                    col.append((round(float(s.y[q]), 2), bool(keep[q]), round(math.degrees(math.acos(ny)), 1)))
+            out[which] = {'column': [round(s.min_x + i * s.pitch, 2), round(s.min_z + j * s.pitch, 2)],
+                          'surfaces': col}
+        return out
+
+
+def tight_pairs(w):
+    """Every tight walk edge once: (node a, node b) with a < b."""
+    src = edge_source(w)
+    return sorted({(min(src[k], int(w.edge_target[k])), max(src[k], int(w.edge_target[k])))
+                   for k in range(len(w.edge_target)) if int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT
+                   and int(w.edge_kind[k]) == rsnv.EDGE_WALK})
+
+
+def cmd_tight(w, a, path):
+    import json
+    bs = BuildSamples(os.path.basename(path).split('.')[0]) if a.samples else None
+    rows = []
+    causes = collections.Counter()
+    for n0, n1 in tight_pairs(w):
+        pa, pb = (tuple(float(v) for v in w.node_pos[n]) for n in (n0, n1))
+        row = {'nodes': [n0, n1], 'a': [round(v, 2) for v in pa], 'b': [round(v, 2) for v in pb],
+               'length': round(math.dist(pa, pb), 3), 'ends': [end_info(w, pa), end_info(w, pb)],
+               'ab': los_failure(w, pa, pb), 'ba': los_failure(w, pb, pa)}
+        if bs is not None:
+            for d in ('ab', 'ba'):
+                f = row[d]
+                if f and 'x' in f:
+                    f['samples'] = bs.at(f['x'], f['z'], f.get('gy', pa[1]))
+        causes[(row['ab'] or {}).get('cause'), (row['ba'] or {}).get('cause')] += 1
+        rows.append(row)
+        e0, e1 = row['ends']
+        print(f"{n0}-{n1}: ({pa[0]:.1f}, {pa[1]:.1f}, {pa[2]:.1f}) -> ({pb[0]:.1f}, {pb[1]:.1f}, {pb[2]:.1f}), "
+              f"{row['length']:.2f} m; ends area {e0.get('area')} ({e0.get('sector')}, {e0.get('pitch')} m) / "
+              f"area {e1.get('area')} ({e1.get('sector')}, {e1.get('pitch')} m)")
+        for d in ('ab', 'ba'):
+            f = row[d]
+            if f is None:
+                print(f'    {d}: in sight')
+                continue
+            extra = ''.join(f', {k} {f[k]}' for k in ('excess', 'step_excess', 'gap') if k in f)
+            print(f"    {d}: {f['cause']} at {f.get('along', 0):.2f} m ({f.get('x', 0):.2f}, {f.get('z', 0):.2f}), "
+                  f"area {f.get('area')} {f.get('pitch', '')} m, cells {f.get('hood', '')}{extra}")
+            for c in f.get('others', [])[:2]:
+                print(f"        other area {c['area']} ({c['sector']}, {c['pitch']} m): dy {c['dy']:+.2f} of "
+                      f"{c['allowed']:.2f}, cell test {'ok' if c['cell_ok'] else 'fails'}, cells {c['hood']}")
+            for g, col in (f.get('samples') or {}).items():
+                print(f"        samples {g} at {tuple(col['column'])}: " + ', '.join(
+                    f"{y}{' kept' if kp else ''} {sl} deg" for y, kp, sl in col['surfaces']))
+    print(f'{path}: {len(rows)} tight pairs; causes (a->b, b->a): '
+          + ', '.join(f'{k[0]}/{k[1]} {v}' for k, v in causes.most_common()))
+    if a.json:
+        meta = {'file': os.path.abspath(path), 'pairs': len(rows)}
+        if bs is not None:
+            meta['masks_hpd_sha256'] = [h for _w, _s, _k, h in bs.grids]
+        with open(a.json, 'w', encoding='utf-8') as f:
+            json.dump({'meta': meta, 'pairs': rows}, f, indent=1)
+        print(f'wrote {a.json}')
+    return 0
+
+
+def _on_line(line, x, z, tol):
+    """Whether (x, z) lies within tol of the segment line ((x, y, z), (x, y, z)) in plan."""
+    (ax, _ay, az), (bx, _by, bz) = line
+    dx, dz = bx - ax, bz - az
+    ll = dx * dx + dz * dz
+    t = 0.0 if ll == 0 else max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / ll))
+    return math.hypot(ax + dx * t - x, az + dz * t - z) <= tol
+
+
+def cmd_cells(w, a, path):
+    """Text maps around a point, 0.2 m to a character, +z up: each area with ground within --dy of --y (its walkable
+    cells '#', its other cells '.'); with --samples, the build's own samples on both grids ('K' a kept surface within
+    0.6 m of --y, 'k' kept further off, 's' a surface within 0.6 m not kept, '.' none); with --line, '*' marks where the
+    line runs over a character that is not ground."""
+    cx, cz = (float(v) for v in a.at.split(','))
+    r, y = a.radius, a.y
+    line = (point(a.line[0]), point(a.line[1])) if a.line else None
+    n = int(round(r / 0.2))
+    xs = [cx + i * 0.2 for i in range(-n, n + 1)]
+    zs = [cz + j * 0.2 for j in range(n, -n - 1, -1)]
+    cand = set()
+    for bx in (-1, 0, 1):
+        for bz in (-1, 0, 1):
+            cand.update(w._near_los(cx + bx * r, cz + bz * r))
+    print(f'around ({cx:.2f}, {cz:.2f}), {r} m, ground within {a.dy} m of {y:.2f}; 0.2 m a character, +z up, x right')
+
+    def show(title, ch):
+        print(title)
+        for z in zs:
+            row = ''
+            for x in xs:
+                c = ch(x, z)
+                if line and c in '. ' and _on_line(line, x, z, 0.1):
+                    c = '*'
+                if abs(x - cx) < 0.1 and abs(z - cz) < 0.1:
+                    c = 'X' if c in '#K' else 'x'
+                row += c
+            print('    ' + row)
+    for k in sorted(cand):
+        ar = w.areas[k]
+        if not (ar.x0 - ar.pitch <= cx + r and cx - r <= ar.x1 + ar.pitch and ar.z0 - ar.pitch <= cz + r
+                and cz - r <= ar.z1 + ar.pitch):
+            continue
+        g = w.ground(ar, cx, cz)
+        if abs(g - y) > a.dy:
+            continue
+
+        def ch(x, z, ar=ar):
+            i, j, inside = w._cell_of(ar, x, z)
+            return ('#' if w.walkable(ar, i, j) else '.') if inside else ' '
+        sec = w.sectors[ar.sector]
+        show(f'  area {k} (sector {int(sec[0]):04x}, {ar.pitch:.1f} m, ground {g:.2f} here, {ar.min_y:.2f}..'
+             f'{ar.max_y - 1.52:.2f})', ch)
+    if a.samples:
+        bs = BuildSamples(os.path.basename(path).split('.')[0])
+        for which, s, keep, _h in bs.grids:
+            def ch(x, z, s=s, keep=keep):
+                i, j = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
+                if not (0 <= i < s.nx and 0 <= j < s.nz):
+                    return ' '
+                best = '.'
+                for q in s.column(i, j):
+                    d = abs(float(s.y[q]) - y)
+                    if keep[q] and d <= 0.6:
+                        return 'K'
+                    if keep[q] and d <= 2.0:
+                        best = 'k'
+                    elif d <= 0.6 and best == '.':
+                        best = 's'
+                return best
+            show(f'  samples {which} (kept surfaces from the base mask of build {_h[:12]})', ch)
+    return 0
+
+
 def picture(w, cx, cz, radius, route, png, y=None, dy=3.0):
     from PIL import Image, ImageDraw
     x0, x1, z0, z1 = cx - radius, cx + radius, cz - radius, cz + radius
@@ -304,6 +561,16 @@ def main(argv):
     p.add_argument('--png', nargs='?', const='-')
     p = add('pockets')
     p.add_argument('--top', type=int, default=10)
+    p = add('tight')
+    p.add_argument('--samples', action='store_true', help="the build's own samples at each failing sample")
+    p.add_argument('--json')
+    p = add('cells')
+    p.add_argument('--at', required=True)
+    p.add_argument('--y', type=float, required=True)
+    p.add_argument('--radius', type=float, default=1.6)
+    p.add_argument('--dy', type=float, default=1.5, help='areas whose ground at the point is within this of --y')
+    p.add_argument('--samples', action='store_true')
+    p.add_argument('--line', nargs=2, help='two points X,Y,Z: the line drawn over the maps')
     p = add('picture')
     p.add_argument('--at', required=True)
     p.add_argument('--radius', type=float, default=25.0)
@@ -337,6 +604,10 @@ def main(argv):
         return cmd_pockets(w, a)
     if a.cmd == 'picture':
         return cmd_picture(w, a, path)
+    if a.cmd == 'tight':
+        return cmd_tight(w, a, path)
+    if a.cmd == 'cells':
+        return cmd_cells(w, a, path)
     return 2
 
 

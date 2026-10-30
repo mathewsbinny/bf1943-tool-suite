@@ -44,8 +44,11 @@ def configure():
     # sample beyond (Coral Sea's three seam breaks, 2026-10-26)
     navbuild.BORDER_SEAM_LINE = True
     # an area holds no cliff between plan-neighbouring cells (a bridge deck beside the ground under it): the RSNV height
-    # grid cannot hold one (2026-10-26: 66 of Wake Island's 75 remaining tight edges lay in such areas)
-    navbuild.AREA_CLIFF = 1.0
+    # grid cannot hold one (2026-10-26: 66 of Wake Island's 75 remaining tight edges lay in such areas). 0.6 m from
+    # 2026-10-29 (was 1.0): a 0.2 m cell's 45-degree rise plus the step is 0.57 m straight, 0.65 m diagonal (the rule's
+    # other term), so cells further apart are no walk; 34-44 areas per map held such pairs 0.6-1.0 m apart (Coral Sea
+    # area 3133: 78.45 beside 79.41), the height grid read them as a ramp, and 5 of the 22 remaining tight pairs met one
+    navbuild.AREA_CLIFF = 0.6
     # join_groups floods 2 m past a sector's window: ground joined to the rest of its sector only round a corner of
     # the neighbour sector (Coral Sea's last seam break, 2026-10-26)
     navbuild.JOIN_MARGIN = 2.0

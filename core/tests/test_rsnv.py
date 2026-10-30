@@ -1,6 +1,7 @@
 """RSNV, the navigation runtime's per-level file (core rsnv.py), on a file made here (no game data): written in both
 byte orders it reads back identical; the Python reference search finds the cheapest path; locate finds the walkable
-cell; damaged files (truncated, a section outside the file, a bad marker, a wrong stride) are rejected with a
+cell; line of sight keeps to one floor where two areas are stacked (it starts on the floor nearest the start's
+height); damaged files (truncated, a section outside the file, a bad marker, a wrong stride) are rejected with a
 ValueError, not a crash.
 
   python -B test_rsnv.py
@@ -90,6 +91,60 @@ def chain_file(path, h_scale_q):
     dst = [t for n in range(len(pos)) for t, _c in sorted(adj[n])]
     cost = [c for n in range(len(pos)) for _t, c in sorted(adj[n])]
     return pos, src, dst, cost
+
+
+def stacked():
+    """Two 0.2 m areas over the same 8 x 8 cells, 0.8 m apart in height (a stair landing over the floor below), the
+    lower one first in index order: area 0 at 10.0 m, area 1 at 10.8 m; a third area beside them at 10.0 m east of
+    x = 1.6 joins area 0's floor. Nodes 0 and 1 on the upper floor, 2 on the lower, 3 on the side area."""
+    nodes = [(0.2, 10.8, 0.2), (1.2, 10.8, 1.2), (1.2, 10.0, 1.2), (2.4, 10.0, 0.6)]
+    links = [(0, 1), (2, 3)]
+    adj = {n: [] for n in range(len(nodes))}
+    for a_, b_ in links:
+        c = int(16 * ((nodes[a_][0] - nodes[b_][0]) ** 2 + (nodes[a_][2] - nodes[b_][2]) ** 2) ** 0.5) + 1
+        adj[a_].append((b_, c))
+        adj[b_].append((a_, c))
+    node_rows, edge_rows = [], []
+    for n, p_ in enumerate(nodes):
+        node_rows.append((*p_, len(edge_rows)))
+        edge_rows += [(t, c, 0) for t, c in adj[n]]
+    node_rows.append((0.0, 0.0, 0.0, len(edge_rows)))
+    full = bytes([0xFF] * 8)
+    sections = {
+        'SECT': [(0x0B0B, 0, 1, 0.0, 0.0, 100.0, 100.0, 0, 0, 3, 0)],
+        'NODE': node_rows,
+        'NAUX': [(1, 0, 0, 0), (1, 0, 0, 0), (0, 0, 1, 0), (2, 0, 1, 0)],
+        'EDGE': edge_rows,
+        # x0, z0, x1, z1, minY, maxY, bmap, w, h, first portal, portals, sector, island, flags, first node, nodes,
+        # pitch mm, hght, hw, hh, hstep mm
+        'AREA': [(0.0, 0.0, 1.4, 1.4, 10.0, 11.52, 0, 8, 8, 0, 0, 0, 1, 0, 0, 1, 200, 0, 1, 1, 0),
+                 (0.0, 0.0, 1.4, 1.4, 10.8, 12.32, 8, 8, 8, 0, 0, 0, 0, 0, 1, 2, 200, 1, 1, 1, 0),
+                 (1.6, 0.0, 3.0, 1.4, 10.0, 11.52, 16, 8, 8, 0, 0, 0, 1, 0, 3, 1, 200, 2, 1, 1, 0)],
+        'BMAP': full * 3,
+        'HGHT': [(0,), (0,), (0,)],
+        'GBKT': [(0, 3)] + [(3, 0)] * (rsnv.BUCKETS * rsnv.BUCKETS - 1),
+        'GLST': [(0,), (2,), (1,)],
+        'ANOD': [(2,), (0,), (1,), (3,)],
+        'ISLD': [(2, 0, rsnv.ISLD_MAIN, 0, 0), (2, 2, 0, 0, 0)],
+        'META': b'{"exporter": "test"}',
+    }
+    header = {'level': 'stacked', 'sea_level': 0.0, 'radius': 0.35, 'height': 1.8, 'step': 0.37, 'water_depth': 1.4,
+              'hpd_sha256': '00' * 32}
+    return sections, header
+
+
+def stacked_los_cases():
+    """(a, b, expected, why) over stacked(): line of sight on each floor, never between them (the start rule's
+    negative cases)."""
+    return [((0.2, 10.8, 0.2), (1.2, 10.8, 1.2), True, 'upper floor: from its node to its node'),
+            ((1.2, 10.8, 1.2), (0.2, 10.8, 0.2), True, 'upper floor, the other way'),
+            ((0.2, 10.0, 0.2), (1.2, 10.0, 1.2), True, 'lower floor'),
+            ((0.6, 10.0, 0.6), (2.4, 10.0, 0.6), True, 'lower floor to the side area at its height'),
+            ((0.2, 10.8, 0.2), (1.2, 10.0, 1.2), False, 'upper floor to the lower one below it: 0.8 m off at the end'),
+            ((0.2, 10.0, 0.2), (1.2, 10.8, 1.2), False, 'lower floor to the upper one'),
+            ((0.6, 10.8, 0.6), (2.4, 10.0, 0.6), False, 'upper floor across its edge to the side area 0.8 m below'),
+            ((0.2, 10.42, 0.2), (1.2, 10.8, 1.2), True, 'a start nearer the upper floor (0.38 m) starts on it'),
+            ((0.2, 10.38, 0.2), (1.2, 10.8, 1.2), False, 'a start nearer the lower floor (0.38 m) starts there')]
 
 
 def dijkstra(w, s, g):
@@ -229,6 +284,25 @@ if __name__ == '__main__':
     check(abs(g - 11.0) < 0.4 and abs(g2 - g) < 0.1,
           f'next to an empty block the others carry the height: {g:.3f} (planar 11.0, within half a cell\'s rise), '
           f'continuous ({g2 - g:+.3f} over 5 cm)')
+    # line of sight on stacked floors: it starts on the area nearest the start's height (LOS_START_NEAREST,
+    # 2026-10-29); before, on locate's area (the lower one, first in index order), and a line along the upper floor
+    # failed at its end
+    s3, h3 = stacked()
+    p3 = os.path.join(tmp, 'stacked.rsnv')
+    rsnv.write(p3, s3, h3)
+    st3 = rsnv.load(p3)
+    check(st3.validate() == [], f'stacked floors: {st3.validate() or "consistent"}')
+    for pa, pb, want, why in stacked_los_cases():
+        got = st3.los(pa, pb)
+        check(got == want, f'stacked floors, line of sight {"in sight" if want else "not in sight"}: {why} ({got})')
+    rsnv.LOS_START_NEAREST = False
+    old_rule = st3.los((0.2, 10.8, 0.2), (1.2, 10.8, 1.2))
+    rsnv.LOS_START_NEAREST = True
+    check(not old_rule, 'stacked floors: with the start on locate\'s area (the rule before) the upper floor\'s line fails')
+    tr = {}
+    st3.los((0.2, 10.8, 0.2), (1.2, 10.0, 1.2), tr)
+    check(tr.get('rule') == 'end' and abs(tr.get('d', 0) - 0.8) < 1e-6,
+          f'the trace of a refused line names the rule and the amount ({tr.get("rule")}, {tr.get("d")})')
     loc = a.locate(1.7, 10.0, 1.7)
     check(loc is not None and loc[0] == 0 and loc[1] == (2, 2), f'locate a walkable cell: {loc}')
     loc = a.locate(2.4, 10.0, 2.4, max_dist=0.1)

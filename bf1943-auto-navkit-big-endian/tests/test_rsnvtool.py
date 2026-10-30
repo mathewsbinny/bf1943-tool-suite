@@ -1,5 +1,6 @@
 """rsnvtool.py (NavKit's RSNV inspector) on a made-up file (no game data): info, validate, locate, los, route (by nodes
-and by a point), pockets, picture and diff answer as the file says; a missing export is refused.
+and by a point), pockets, picture, diff, tight (each tight pair, JSON) and cells (text maps) answer as the file says;
+los on two stacked floors keeps to each floor; a missing export is refused.
 
   python -B test_rsnvtool.py
 """
@@ -60,6 +61,25 @@ if __name__ == '__main__':
     rsnv.write(b, s2, header)
     code, out = run('diff', a, b)
     check(code == 0 and 'tight edges' in out and '+1' in out, 'diff: one more tight edge')
+    js = os.path.join(tmp, 'tight.json')
+    code, out = run('tight', b, '--json', js)
+    import json
+    rows = json.load(open(js, encoding='utf-8'))['pairs'] if os.path.isfile(js) else []
+    check(code == 0 and '1 tight pairs' in out and len(rows) == 1 and rows[0]['nodes'] == [0, 1]
+          and rows[0]['ends'][0]['area'] == 0, 'tight: the one flagged pair, its ends\' area, written as JSON')
+    code, out = run('tight', a)
+    check(code == 0 and '0 tight pairs' in out, 'tight: none in a file without flags')
+    code, out = run('cells', a, '--at', '1.2,1.2', '--y', '10.0', '--radius', '0.4')
+    check(code == 0 and 'area 0 (sector 0b0b, 0.8 m' in out and 'X' in out, 'cells: the area\'s map around the point')
+    code, out = run('cells', a, '--at', '2.4,2.4', '--y', '10.0', '--radius', '0.2')
+    check(code == 0 and 'x' in out.split('area 0')[-1], 'cells: the missing cell is shown as not walkable')
+    s3, h3 = test_rsnv.stacked()
+    c = os.path.join(tmp, 'stacked.rsnv')
+    rsnv.write(c, s3, h3)
+    code, out = run('los', c, '0.2,10.8,0.2', '1.2,10.0,1.2')
+    check(code == 1 and 'not in sight' in out, 'los: from one floor to the floor under it, not in sight')
+    code2, out2 = run('los', c, '0.2,10.8,0.2', '1.2,10.8,1.2')
+    check(code2 == 0, 'los: along the upper of two stacked floors, in sight (the start on the nearest floor)')
     code, out = run('info', os.path.join(tmp, 'missing.rsnv'))
     check(code == 1 and 'no such export' in out, 'a missing export: refused with its cause')
     print('all passed' if not failures else f'{len(failures)} failed')

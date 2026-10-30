@@ -70,8 +70,8 @@ Check runs two checks:
 - **routes** (`tools\routecheck1943.py`): every soldier spawn of each base and flag is joined to the route graph
   (the nearest node within 15 m across and 4 m in height), and a route is looked for between every pair of flags.
 
-For Wake Island's build of 2026-10-26 it reports 12,718 nodes, 45,118 edges and 65 islands; the main network has
-11,363 nodes; 16 of 16 ladders are linked from the main network; all 10 flag pairs are routed; the structure check
+For Wake Island's build of 2026-10-29 it reports 12,744 nodes, 45,180 edges and 64 islands; the main network has
+11,393 nodes; 16 of 16 ladders are linked from the main network; all 10 flag pairs are routed; the structure check
 passes. (The ladder count does not include the jump links to the carriers' AA guns and ledges, which are in
 `jump_links.json`.) Build also writes `<level>.cells.npz` beside the build: its areas' own cells and heights, which
 the exporter reads.
@@ -114,7 +114,7 @@ To look inside an export (read-only):
 ```
 python tools\rsnvtool.py info wake_island_s          sections, counts, edge kinds, tight edges, islands
 python tools\rsnvtool.py validate wake_island_s      exit code 1 on a problem
-python tools\rsnvtool.py --help                      the other commands: locate, los, route, pockets, picture, diff
+python tools\rsnvtool.py --help                      the other commands: locate, los, route, pockets, tight, cells, picture, diff
 ```
 
 ## Vehicle worlds

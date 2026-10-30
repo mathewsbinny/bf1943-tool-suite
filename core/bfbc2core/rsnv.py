@@ -77,6 +77,14 @@ LOS_SEAM = 2.5          # m: line of sight looks for a sector's areas this far p
                         # build's sample window overlaps the neighbour sector (up to 2.4 m where MIXED_OVERLAP grows it
                         # at a mixed seam), and a line crossing a seam must find them
 LOS_NEAR = 128          # areas at most per lookup (rsnav's MAX_NEAR)
+LOS_FOLLOWED = True     # a change of area is tested against the ground the line has followed (the last sample's), not
+                        # against the current area's height grid at the new sample (2026-10-29): past its own cells that
+                        # grid is an extrapolation, and where an area holds two floors a cell or two apart it reads the
+                        # other floor (Iwo Jima area 1189: 14.12 under a line on 14.93, the kept 0.2 m surface 14.86)
+LOS_START_NEAREST = True  # line of sight starts on the area under the start whose ground is nearest its height
+                        # (_los_start; 2026-10-29). Before, locate's nearest cell, the lowest area index on a tie: on
+                        # stairs with areas stacked 0.2-0.9 m apart in one column it started a floor below the node
+                        # and failed at the end (round 4: 11 of the 31 tight pairs on the four maps)
 LOS_GRAZE = 0.25        # of a cell (2026-10-26): a sample this close to a cell's side leans on that side. In a 0.2 m
                         # area a sample on a blocked cell passes when it is within this of a walkable neighbour's square
                         # (the build's own lines step diagonally between cells: navbuild.line_walkable); in a 0.8 m
@@ -410,37 +418,65 @@ class World:
                 return False
         return True
 
-    def _compatible(self, f, t, x, z):
-        d = self.ground(self.areas[t], x, z) - self.ground(self.areas[f], x, z)
+    def _compatible(self, f, t, x, z, gy=None):
+        """Whether the line may go on in area t at (x, z): t's ground there within the allowance of the followed
+        ground gy (LOS_FOLLOWED; of area f's ground at (x, z) without it), and t's cell test passes."""
+        ref = self.ground(self.areas[f], x, z) if gy is None or not LOS_FOLLOWED else gy
+        d = self.ground(self.areas[t], x, z) - ref
         return abs(d) <= self._allowed(f, t) and self._cell_ok(t, x, z)
 
-    def _neighbour(self, cur, x, z):
+    def _neighbour(self, cur, x, z, gy=None):
         a = self.areas[cur]
         for p in self.ports[a.first_portal:a.first_portal + a.portals]:
-            if p[6] != cur and self._compatible(cur, p[6], x, z):
+            if p[6] != cur and self._compatible(cur, p[6], x, z, gy):
                 return p[6]
         for k in self._near_los(x, z):
-            if k != cur and self._compatible(cur, k, x, z):
+            if k != cur and self._compatible(cur, k, x, z, gy):
                 return k
         return None
 
-    def los(self, a, b):
+    def _los_start(self, a):
+        """The area line of sight starts on (LOS_START_NEAREST): of the areas with ground under a (on_cell) within the
+        step plus half a metre of its height, the one whose ground is nearest a's height (the first in _near_los order
+        on a tie); None when there is none (then locate's nearest cell within 1 m)."""
+        best = None
+        lim = self.step + 0.5
+        for k in self._near_los(a[0], a[2]):
+            ar = self.areas[k]
+            if not self.on_cell(ar, a[0], a[2]):
+                continue
+            d = abs(self.ground(ar, a[0], a[2]) - a[1])
+            if d <= lim and (best is None or d < best[1]):
+                best = (k, d)
+        return best[0] if best else None
+
+    def los(self, a, b, trace=None):
         """Whether a soldier walks straight from a to b (x, y, z; pass float32 values for parity with rsnav): every
         sample, a quarter of the finest pitch apart, on a walkable cell (on_cell: in fine areas within LOS_GRAZE of
         one); between areas through portals or the buckets, to ground within LOS_DY (LOS_COARSE_DY where either area
         is coarse); the ground changing by at most that between samples; coarse cells needing their neighbours on the
         sides a sample leans to (LOS_GRAZE); gaps up to COARSE_GAP crossed in coarse zones; the first LOS_GRACE not
-        tested. See rsnav's rsnav_los.c for the reasons."""
-        loc = self.locate(a[0], a[1], a[2], max_dist=1.0)
-        if loc is None:
-            return False
-        cur = loc[0]
+        tested. See rsnav's rsnav_los.c for the reasons.
+        trace: a dict that, on a refusal, gets why (diagnostics only, rsnvtool's tight: the rule is unchanged) -
+        rule 'start' (no cell within 1 m of a), 'long', 'cell' (a sample on no compatible cell; with the coarse gap
+        search failed in a coarse area), 'climb' (the ground changing by more than lim between samples) or 'end'
+        (b's height off its ground), with the sample (k of n, x, z), the area it was on and the amounts."""
+        cur = self._los_start(a) if LOS_START_NEAREST else None
+        if cur is None:
+            loc = self.locate(a[0], a[1], a[2], max_dist=1.0)
+            if loc is None:
+                if trace is not None:
+                    trace.update(rule='start')
+                return False
+            cur = loc[0]
         gy = self.ground(self.areas[cur], a[0], a[2])
         dx, dz = b[0] - a[0], b[2] - a[2]
         ln = math.sqrt(dx * dx + dz * dz)
         step = self.min_pitch / 4.0
         n = math.ceil(ln / step)
         if n > 200000:
+            if trace is not None:
+                trace.update(rule='long')
             return False
         k = 0
         while k < n:
@@ -451,7 +487,7 @@ class World:
             x, z = a[0] + dx * t, a[2] + dz * t
             prev = cur
             if not self._cell_ok(cur, x, z):
-                nb = self._neighbour(cur, x, z)
+                nb = self._neighbour(cur, x, z, gy)
                 if nb is None and self.areas[cur].pitch_mm_ >= COARSE_MM:
                     k2 = k + 1
                     while k2 <= n and ln * ((k2 - k) / n) <= COARSE_GAP:
@@ -472,15 +508,23 @@ class World:
                         gy = self.ground(self.areas[cur], x, z)
                         continue
                 if nb is None:
+                    if trace is not None:
+                        trace.update(rule='cell', k=k, n=n, x=x, z=z, along=ln * t, area=cur, gy=gy)
                     return False
                 cur = nb
             ny = self.ground(self.areas[cur], x, z)
             lim = LOS_DY if cur == prev else self._allowed(prev, cur)
             if ln * t >= LOS_GRACE + step and abs(ny - gy) > lim:
+                if trace is not None:
+                    trace.update(rule='climb', k=k, n=n, x=x, z=z, along=ln * t, area=cur, prev_area=prev, gy=gy,
+                                 ny=ny, lim=lim, excess=abs(ny - gy) - lim)
                 return False
             gy = ny
         d = self.ground(self.areas[cur], b[0], b[2]) - b[1]
-        return abs(d) <= (LOS_COARSE_DY if self.areas[cur].pitch_mm_ >= COARSE_MM else LOS_DY)
+        lim = LOS_COARSE_DY if self.areas[cur].pitch_mm_ >= COARSE_MM else LOS_DY
+        if trace is not None and abs(d) > lim:
+            trace.update(rule='end', area=cur, d=d, lim=lim, excess=abs(d) - lim, x=b[0], z=b[2], along=ln)
+        return abs(d) <= lim
 
     def validate(self):
         """Problems with the file's contents ([] when none): every index and range the readers follow, the checks of
