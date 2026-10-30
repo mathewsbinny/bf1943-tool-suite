@@ -21,13 +21,21 @@ same way, then given what a human player gets from the network, and spawned thro
        gets one neutral input frame, as the server makes for a connection with no input queued (823af4a0):
        822bd4a8(frame) clears it; its sequence number (+0x98) is the current frame's (input state +0x160) plus
        one; +0x80 is the server's time step (the hook's f1; 822f1d70 writes it there for entities without a
-       player) and +0x84 is carried over (823a1f80 does the same); 822c15d0(state, frame) pushes it. Test input:
-       EIAThrottle (action 0, float at +0x08) = THROTTLE;
+       player) and +0x84 is carried over (823a1f80 does the same); 822c15d0(state, frame) pushes it. Its controls
+       come from the host mailbox (below): throttle, strafe, absolute facing and buttons, when the host answered a
+       recent tick; otherwise the frame stays neutral and the bot stands;
+       the bot's state (its player, soldier, team and position) goes to the mailbox;
        and without a soldier (+0x120), asks to spawn at its base: 82382720(p, spawn). The spawn is found by
        identity, not by list position: in the per-team lists 82343f68(owner, 1 and 2), the first spawn entity
        whose data's Team (entity + 0x14 -> data + 0x88) is the bot's team, turned into a spawn id (822a83a8).
        (With spawn 0, or the first entry of either list, each side's bots spawned on the other side's carrier:
        runs of 2026-10-23.) The server refuses while a respawn delay runs, so this also respawns them.
+    3. every frame, after the bots: each capture point's owner, control, radius and position go to the mailbox.
+
+Host mailbox v2 (milestone N4, 2026-10-30; v1 was probe N0's single command for every bot): one block per match,
+from the game's allocator, its address in the data area; a state and a command record per bot, a record per capture
+point. Layout: the MBOX_MAGIC ... BLOCK_SIZE names below. Readers: navhost (project-opfor-bf1943
+TnT/Code/Engine/AI/Bots/navhost, its rsmbox.h a checked copy of the layout) and the harness's guestmem.py.
 
 Stepping: a soldier is advanced only by its virtual +0x104 (822f05c8), which the network path calls once per
 input frame it drains from a connection (823b2c80, at 823b2ed4). The physics world skips characters while the
@@ -55,21 +63,49 @@ CODE_END = 0x82AAB000
 DATA = 0x82D26E10            # unused, zero: after .data, before fieldinf (to 0x82D27000)
 DATA_END = 0x82D27000
 MAX_BOTS = 23               # a full 24-player match (12 v 12) with the host
-# data layout: state words, then a player slot per bot, then the kit lookup's handle, then the host mailbox
+# data layout: state words, then a player slot per bot, then the kit lookup's handle, then the host mailbox's address
 STATE, MANAGER, TICK, SLOTS = 0x0, 0x4, 0x8, 0x10
 HANDLE = SLOTS + 4 * MAX_BOTS + 4
-# Host mailbox (probe N0, guestmem.py in the test harness), all zero in the data area, so the bots stand until a
-# host program writes it. Every bot frame gets CMD_THROTTLE and CMD_STRAFE (actions 0 and 1, float bits), the
-# button words (the u64 at frame + 0x78, high word first) and the absolute facing CMD_YAW / CMD_PITCH (frame + 0x88 /
-# + 0x8c, read only with button bit 40); with CMD_SLOT nonzero, only the bot whose slot address it holds does (the
-# others get a neutral frame). Every tick each bot's soldier position (x, y, z float bits, as its log line) goes to
-# POSITIONS + 12 * slot.
-CMD_THROTTLE = HANDLE + 16
-POSITIONS = CMD_THROTTLE + 4
-CMD_STRAFE = POSITIONS + 12 * MAX_BOTS
-CMD_BUTTONS_HI, CMD_BUTTONS_LO, CMD_YAW, CMD_PITCH, CMD_SLOT = (CMD_STRAFE + 4 * k for k in range(1, 6))
-MAILBOX_END = CMD_SLOT + 4
-FRAME = 0x1E0                # stack frame: an input frame buffer at +0x80 (0x100 bytes, 16-aligned); saves (to -0x50) above it
+# Host mailbox v2 (milestone N4: navhost; guestmem.py in the test harness). The data area has no room for a command
+# block per bot, so once per match, when the bots are created, the bot code allocates one block with the game's
+# allocator (82627d10, as for the input states), clears it, writes its header, and then stores its address (MBOX) and
+# MBOX_MAGIC in the data area; a new match (forget) clears both. The block, big-endian words:
+#   header (H_*): magic, version, bot count, bot record size, flag record count and size, the match's player manager,
+#     the tick (written last each tick, after the bots and flags) and how many flags the tick found
+#   per bot slot k at BOT0 + BOT_SIZE * k: a state record the guest writes every tick (R_*: the tick, then player,
+#     soldier (0: dead or not spawned), team, position x y z as float bits, then the tick again; a reader that sees
+#     the two ticks differ read it while it was written), and a command record the host writes (C_*: the stamp,
+#     the tick it answered, written last; throttle, strafe (actions 0 and 1), absolute yaw and pitch (frame + 0x88 /
+#     + 0x8c, used with button bit 40), the button u64 at frame + 0x78 as high and low words). A command whose stamp
+#     is more than STALE ticks old (or ahead, or none: 0) gives a neutral frame, so the bots stand if the host stops.
+#   per capture point f (FLAG0 + FLAG_SIZE * f, up to MAX_FLAGS, in the game's own iteration order): the tick, the
+#     entity, owner team (+0x80), control 0-100 (+0xa0, float bits), enabled (+0xad), radius (data + 0x114, float
+#     bits), position x y z, then the tick again.
+MBOX_MAGIC = HANDLE + 16
+MBOX = MBOX_MAGIC + 4
+MAILBOX_END = MBOX + 4
+MAGIC = 0x52534D32           # 'RSM2', in the data area and the block's header
+VERSION = 2
+STALE = 10                   # ticks: an older command gives a neutral frame
+MAX_FLAGS = 8
+H_MAGIC, H_VERSION, H_BOTS, H_BOT_SIZE, H_FLAGS_MAX, H_FLAG_SIZE, H_MANAGER, H_TICK, H_FLAGS = (4 * k for k in range(9))
+BOT0, BOT_SIZE = 0x40, 0x40
+R_SEQ, R_PLAYER, R_SOLDIER, R_TEAM, R_X, R_Y, R_Z, R_SEQ_END = (4 * k for k in range(8))
+C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO = (0x20 + 4 * k for k in range(7))
+FLAG0 = BOT0 + BOT_SIZE * MAX_BOTS
+FLAG_SIZE = 0x30
+F_SEQ, F_ENTITY, F_OWNER, F_CONTROL, F_ENABLED, F_RADIUS, F_X, F_Y, F_Z = (4 * k for k in range(9))
+F_SEQ_END = 0x2C
+BLOCK_SIZE = FLAG0 + FLAG_SIZE * MAX_FLAGS
+CP_TYPE = 0x82D57850         # ServerCapturePointEntity's type (research/evidence/bot-interfaces.json)
+# the mailbox's names, for the assembler and for readers that check their own copy of the layout (navhost's rsmbox.h)
+MAILBOX_NAMES = ('MBOX_MAGIC', 'MBOX', 'MAGIC', 'VERSION', 'STALE', 'MAX_FLAGS', 'H_MAGIC', 'H_VERSION', 'H_BOTS',
+                 'H_BOT_SIZE', 'H_FLAGS_MAX', 'H_FLAG_SIZE', 'H_MANAGER', 'H_TICK', 'H_FLAGS', 'BOT0', 'BOT_SIZE',
+                 'R_SEQ', 'R_PLAYER', 'R_SOLDIER', 'R_TEAM', 'R_X', 'R_Y', 'R_Z', 'R_SEQ_END', 'C_STAMP', 'C_THROTTLE',
+                 'C_STRAFE', 'C_YAW', 'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO', 'FLAG0', 'FLAG_SIZE', 'F_SEQ',
+                 'F_ENTITY', 'F_OWNER', 'F_CONTROL', 'F_ENABLED', 'F_RADIUS', 'F_X', 'F_Y', 'F_Z', 'F_SEQ_END',
+                 'BLOCK_SIZE', 'CP_TYPE')
+FRAME = 0x1E0                # stack frame: an input frame buffer at +0x80 (0x100 bytes, 16-aligned); saves (to -0x58) above it
 BUF = 0x80
 DT = BUF + 0x104             # the saved time step (float), between the buffer and the saved registers
 
@@ -84,6 +120,7 @@ CODE_SOURCE = '''
 hook:
     mflr r12
     stw r12, -8(r1)
+    std r22, -0x58(r1)
     std r23, -0x50(r1)
     std r24, -0x48(r1)
     std r25, -0x40(r1)
@@ -115,6 +152,40 @@ hook:
     lwz r5, 0x120(r4)
     cmpwi r5, 0
     beq out
+    li r3, BLOCK_SIZE        # the host mailbox, one block per match (82627d10 as for the input states); no bots
+    bl 0x82627d10            # without it: the next tick tries again
+    cmpwi r3, 0
+    beq out
+    mr r29, r3
+    li r4, 0
+    li r5, BLOCK_SIZE
+clear_mailbox:               # the allocator need not clear it
+    addi r5, r5, -4
+    add r6, r29, r5
+    stw r4, 0(r6)
+    cmpwi r5, 0
+    bne clear_mailbox
+    li32 r4, MAGIC           # its header
+    stw r4, H_MAGIC(r29)
+    li r4, VERSION
+    stw r4, H_VERSION(r29)
+    li r4, MAX_BOTS
+    stw r4, H_BOTS(r29)
+    li r4, BOT_SIZE
+    stw r4, H_BOT_SIZE(r29)
+    li r4, MAX_FLAGS
+    stw r4, H_FLAGS_MAX(r29)
+    li r4, FLAG_SIZE
+    stw r4, H_FLAG_SIZE(r29)
+    stw r30, H_MANAGER(r29)
+    stw r29, MBOX(r31)       # then its address, then the magic word: a host reading both sees a complete block
+    li32 r4, MAGIC
+    stw r4, MBOX_MAGIC(r31)
+    la r3, FMT_MAILBOX       # report: the mailbox's address
+    mr r4, r29
+    bl 0x829fa7ec
+    lwz r4, 0x54(r30)        # the host's player again (the calls above used the volatile registers)
+    lwz r4, 0(r4)
     lwz r25, 0x30(r4)        # the host's team: bots are friendly (the same) or enemy (3 - it)
     mr r5, r4                # report: the host's player and team (Xenia logs DbgPrint)
     lwz r6, 0x30(r4)
@@ -214,15 +285,19 @@ respawn:
     la r3, FMT_HOST_POSITION
     bl 0x829fa7ec
 bots_loop:
+    lwz r22, MBOX(r31)       # each bot's records in the host mailbox (made with the bots, so never 0 here)
+    addi r22, r22, BOT0
     la r28, SLOTS_ADDR
     li r29, MAX_BOTS
 spawn:
     lwz r27, 0(r28)
     cmpwi r27, 0
     beq skip
+    lwz r5, TICK(r31)        # its state record: the tick first, the fields, then the tick again (record_end)
+    stw r5, R_SEQ(r22)
     lwz r3, 0x118(r27)       # its input state: one neutral frame per tick, as the server makes for a
     cmpwi r3, 0              # connection with no input queued (823af4a0 -> 822bd4a8, 823a1f80, 822c15d0)
-    beq spawn_it
+    beq record
     addi r3, r1, BUF
     bl 0x822bd4a8            # a cleared frame
     lwz r3, 0x118(r27)
@@ -236,55 +311,53 @@ spawn:
                              # (with the AI flag they settled onto the deck but ignored forward input)
     lwz r5, 0x84(r4)
     stw r5, BUF_84(r1)
-    lwz r5, CMD_SLOT(r31)    # host commands: for every bot, or only the slot whose address CMD_SLOT holds
-    cmpwi r5, 0
-    beq commands
-    cmplw r5, r28
-    bne push
-commands:
-    lwz r5, CMD_THROTTLE(r31)    # EIAThrottle (action 0, an analog float at frame + 8), from the host mailbox
+    lwz r5, TICK(r31)        # the host's command, if it answered a tick at most STALE ticks ago (tick - stamp,
+    lwz r6, C_STAMP(r22)     # unsigned: a stamp of 0 or one ahead is as old)
+    subf r5, r6, r5
+    cmplwi r5, STALE
+    bgt push                 # else a neutral frame: the bot stands
+    lwz r5, C_THROTTLE(r22)  # EIAThrottle (action 0, an analog float at frame + 8)
     stw r5, BUF_THROTTLE(r1)
-    lwz r5, CMD_STRAFE(r31)      # EIAStrafe (action 1, frame + 0x0c)
+    lwz r5, C_STRAFE(r22)    # EIAStrafe (action 1, frame + 0x0c)
     stw r5, BUF_STRAFE(r1)
-    lwz r5, CMD_BUTTONS_HI(r31)  # the button bits (actions 8-39; bit 40: the absolute facing is valid), a u64
+    lwz r5, C_BUTTONS_HI(r22)    # the button bits (actions 8-39; bit 40: the absolute facing is valid), a u64
     stw r5, BUF_BUTTONS_HI(r1)
-    lwz r5, CMD_BUTTONS_LO(r31)
+    lwz r5, C_BUTTONS_LO(r22)
     stw r5, BUF_BUTTONS_LO(r1)
-    lwz r5, CMD_YAW(r31)         # the absolute facing read with bit 40 (82308268): frame + 0x88 and + 0x8c
+    lwz r5, C_YAW(r22)       # the absolute facing read with bit 40 (82308268): frame + 0x88 and + 0x8c
     stw r5, BUF_YAW(r1)
-    lwz r5, CMD_PITCH(r31)
+    lwz r5, C_PITCH(r22)
     stw r5, BUF_PITCH(r1)
 push:
-
     lwz r3, 0x118(r27)
     addi r4, r1, BUF
     bl 0x822c15d0            # push it
     lwz r3, 0x120(r27)       # and step the soldier with it, as the network path does after each frame it
     cmpwi r3, 0              # drains (823b2ed4): soldier virtual +0x104 (822f05c8: facing, jump and velocity
-    beq spawn_it             # (+0x110), the character physics with frame dt, then placement (+0x114)),
+    beq record               # (+0x110), the character physics with frame dt, then placement (+0x114)),
     lwz r11, 0(r3)           # entry index 0. Nothing else steps a soldier: the physics world skips characters
     lwz r11, 0x104(r11)      # while Physics.SingleStepCharacter is on (8253e4c8), and the per-tick update
     mtctr r11                # 822f1d70 runs only +0x114, and only for AI-flagged players.
     li r4, 0
     bctrl
-    lwz r3, 0x120(r27)       # every tick, where the server has the bot's soldier (its transform, 822a7bb0,
-    cmpwi r3, 0              # translation row at +0x30, as raw float bits), for the host mailbox
-    beq spawn_it
+record:
+    lwz r3, 0x120(r27)       # the state record: player, soldier, team, and where the server has the soldier
+    stw r27, R_PLAYER(r22)   # (its transform, 822a7bb0, translation row at +0x30, as raw float bits)
+    stw r3, R_SOLDIER(r22)
+    lwz r5, 0x30(r27)
+    stw r5, R_TEAM(r22)
+    cmpwi r3, 0
+    beq record_end
     bl 0x822a7bb0
     lwz r5, 0x30(r3)
     lwz r6, 0x34(r3)
     lwz r7, 0x38(r3)
-    la r12, SLOTS_ADDR       # POSITIONS + 12 * slot (r12's LR is saved)
-    subf r11, r12, r28
-    add r12, r11, r11
-    add r11, r11, r12
-    add r11, r11, r31
-    stw r5, POSITIONS(r11)
-    stw r6, POSITIONS_4(r11)
-    stw r7, POSITIONS_8(r11)
+    stw r5, R_X(r22)
+    stw r6, R_Y(r22)
+    stw r7, R_Z(r22)
     lwz r4, TICK(r31)        # report: every 64 ticks, the same position in the log
     andi. r4, r4, 63
-    bne spawn_it
+    bne record_end
     lwz r3, 0x120(r27)
     lwz r8, 0x328(r3)        # the soldier's throttle limit (822edb28 clamps action 0 to it)
     li r9, 0
@@ -299,6 +372,9 @@ report:
     mr r4, r27
     la r3, FMT_POSITION
     bl 0x829fa7ec
+record_end:
+    lwz r5, TICK(r31)
+    stw r5, R_SEQ_END(r22)
 spawn_it:
     lwz r4, 0x120(r27)       # no soldier yet (or dead): ask to spawn at its team's base
     cmpwi r4, 0
@@ -349,13 +425,65 @@ request:
     lwz r7, 0x120(r27)
     bl 0x829fa7ec
 skip:
+    addi r22, r22, BOT_SIZE
     addi r28, r28, 4
     addi r29, r29, -1
     cmpwi r29, 0
     bne spawn
+    lwz r29, MBOX(r31)       # the capture points, for the host: iterated as the game's own code does (82326d30):
+    addi r29, r29, FLAG0     # 825c5470(iterator, *(*context) + 4, type), then 825c1290(iterator) until it gives 0
+    li r28, 0                # (the frame buffer is free now: the iterator's 16 bytes go there)
+    bl 0x82349d78
+    lwz r4, 0(r3)
+    lwz r4, 4(r4)
+    la r5, CP_TYPE
+    addi r3, r1, BUF
+    bl 0x825c5470
+flag_next:
+    addi r3, r1, BUF
+    bl 0x825c1290
+    cmpwi r3, 0
+    beq flags_done
+    mr r27, r3
+    lwz r5, TICK(r31)        # its record: the tick, the fields, the tick again
+    stw r5, F_SEQ(r29)
+    stw r27, F_ENTITY(r29)
+    lwz r5, 0x80(r27)        # owner team
+    stw r5, F_OWNER(r29)
+    lwz r5, 0xa0(r27)        # control 0-100 (float)
+    stw r5, F_CONTROL(r29)
+    lbz r5, 0xad(r27)        # enabled
+    stw r5, F_ENABLED(r29)
+    lwz r5, 0x14(r27)        # its data's capture radius (+0x114, float)
+    cmpwi r5, 0
+    beq flag_where
+    lwz r5, 0x114(r5)
+    stw r5, F_RADIUS(r29)
+flag_where:
+    mr r3, r27               # its position, as the game's capture scan reads it (82361f14)
+    bl 0x822a7bb0
+    lwz r5, 0x30(r3)
+    stw r5, F_X(r29)
+    lwz r5, 0x34(r3)
+    stw r5, F_Y(r29)
+    lwz r5, 0x38(r3)
+    stw r5, F_Z(r29)
+    lwz r5, TICK(r31)
+    stw r5, F_SEQ_END(r29)
+    addi r29, r29, FLAG_SIZE
+    addi r28, r28, 1
+    cmpwi r28, MAX_FLAGS
+    blt flag_next
+flags_done:
+    lwz r3, MBOX(r31)        # the flag count, then the tick: this tick's records are all written
+    stw r28, H_FLAGS(r3)
+    lwz r5, TICK(r31)
+    stw r5, H_TICK(r3)
     b out
-forget:                      # no bots this match yet: clear the state and slots, remember this manager
+forget:                      # no bots this match yet: clear the state, mailbox and slots, remember this manager
     li r3, 0
+    stw r3, MBOX_MAGIC(r31)
+    stw r3, MBOX(r31)
     stw r3, STATE(r31)
     stw r30, MANAGER(r31)
     la r28, SLOTS_ADDR
@@ -370,6 +498,7 @@ out:
     addi r1, r1, FRAME
     lwz r12, -8(r1)
     mtlr r12
+    ld r22, -0x58(r1)
     ld r23, -0x50(r1)
     ld r24, -0x48(r1)
     ld r25, -0x40(r1)
@@ -390,6 +519,8 @@ FMT_POSITION:
     .string "rs-bots: bot %08x soldier position %08x %08x %08x limit %08x throttle %08x dt %08x"
 FMT_SPAWNED:
     .string "rs-bots: spawned %08x team %d at spawn id %08x soldier %08x"
+FMT_MAILBOX:
+    .string "rs-bots: host mailbox v2 at %08x"
 '''
 
 
@@ -401,6 +532,16 @@ def string_record(text, at):
     return struct.pack('>III', chars, chars + len(text) + 1, chars + len(text) + 1) + raw
 
 
+def assembler_symbols(table=0):
+    """The names CODE_SOURCE uses: the data area's, the stack frame's and the mailbox's; BOTS is the table's address."""
+    symbols = {'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS, 'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4,
+               'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
+               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'BUF_STRAFE': BUF + 0x0C,
+               'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table}
+    symbols.update({name: globals()[name] for name in MAILBOX_NAMES})
+    return symbols
+
+
 def build(bots=DEFAULT_BOTS):
     """(patch words [(address, value, comment)], code bytes, data bytes) for the given [(team, class)]."""
     if not 1 <= len(bots) <= MAX_BOTS:
@@ -408,13 +549,7 @@ def build(bots=DEFAULT_BOTS):
     for side, kit in bots:
         if side not in (FRIENDLY, ENEMY) or kit not in KITS:
             raise ValueError(f'unknown bot {side} {kit}')
-    symbols = {'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS, 'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4,
-               'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
-               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'CMD_THROTTLE': CMD_THROTTLE, 'POSITIONS': POSITIONS,
-               'POSITIONS_4': POSITIONS + 4, 'POSITIONS_8': POSITIONS + 8,
-               'CMD_STRAFE': CMD_STRAFE, 'CMD_BUTTONS_HI': CMD_BUTTONS_HI, 'CMD_BUTTONS_LO': CMD_BUTTONS_LO,
-               'CMD_YAW': CMD_YAW, 'CMD_PITCH': CMD_PITCH, 'CMD_SLOT': CMD_SLOT, 'BUF_STRAFE': BUF + 0x0C,
-               'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': 0}
+    symbols = assembler_symbols()
     code, _ = ppcasm.assemble(CODE_SOURCE, CODE, symbols)
     table_at = CODE + len(code)
     strings_at = table_at + 16 * len(bots) + 4
@@ -452,7 +587,7 @@ def patch_toml(bots=DEFAULT_BOTS):
     lines = [HEADER + ' Experimental; addresses are for module hash 872BBE31C0FBA21B.',
              'title_name = "Battlefield 1943"', 'title_id = "5841097E"', 'hash = "872BBE31C0FBA21B"', '',
              '[[patch]]', '    name = "Experiment: offline bots (they stand until a host program drives them; no decisions yet)"',
-             f'    desc = "{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; they move only on a host program\'s commands (guestmem.py)."',
+             f'    desc = "{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; they move only on a host program\'s commands (navhost, guestmem.py)."',
              '    author = "bf1943-xenia-kit"', '    is_enabled = true', '']
     for address, value, comment in words:
         lines += ['    [[patch.be32]]', f'        # {comment}', f'        address = {address:#010x}', f'        value = {value:#010x}', '']

@@ -1,10 +1,10 @@
 r"""BF1943 spawn map: each level's objectives (bases and flags) with the soldier and vehicle spawns they own.
 
-  python -B spawnmap.py [<dist\xenon folder>] [level ...] [--json <file>]
+  python -B spawnmap.py [<dist\xenon folder>] [level ...] [--json <file>] [--navflags]
 
 <dist\xenon folder> is an extracted BF1943 game folder (default: bf1943-xenia-kit\output\title\dist\xenon,
 which `xeniakit.py build` makes from your own package). Levels default to every multiplayer level found
-(wake_island_s, guadal_canal, iwo_jima_s, coral_sea). Only reads; nothing is written except --json.
+(wake_island_s, guadal_canal, iwo_jima_s, coral_sea). Only reads; nothing is written except --json and --navflags.
 
 From each level's main partition (levels/<level>.dbx):
   CapturePointEntityData   an objective: Name, LocationName (text id), Index, InitialOwnerTeam, CaptureRadius,
@@ -14,6 +14,10 @@ From each level's main partition (levels/<level>.dbx):
                            AlternativeSpawnPoints (AlternateSpawnEntityData: more positions for the same spawn)
   VehicleSpawnEntityData   the vehicle blueprint and its team
 Positions are the Transform's translation (x, y, z; y is up), in metres.
+
+--navflags also writes <suite>\work\levels\<level>\navkit\<level>.flags.txt (BF1943_WORK sets another work folder)
+for each level: the objectives and the bases' soldier spawns as plain lines a C program reads (navhost and rsbot's
+tests, project-opfor-bf1943 TnT/Code/Engine/AI/Bots), in FLAGS_FORMAT below.
 """
 import argparse
 import json
@@ -29,6 +33,30 @@ from fbrb1943 import Bundle
 
 DEFAULT_GAME = os.path.join(SUITE, 'bf1943-xenia-kit', 'output', 'title', 'dist', 'xenon')
 LEVELS = ['wake_island_s', 'guadal_canal', 'iwo_jima_s', 'coral_sea']
+WORK = os.environ.get('BF1943_WORK') or os.path.join(SUITE, 'work')
+FLAGS_FORMAT = '''# rsflags 1 <level>: written by bf1943-spawn-map/spawnmap.py --navflags (from levels/<level>.dbx)
+# flag <index> <base|flag> <initial owner: 0 neutral, 1, 2> <x> <y> <z> <capture radius, 0: an area> <name>
+# spawn <team 1 or 2> <objective index> <x> <y> <z>   (a base's soldier spawn and its alternates)'''
+TEAM_NUMBER = {'TeamNeutral': 0, 'Team1': 1, 'Team2': 2}
+
+
+def flags_text(m):
+    """The level's objectives and base spawns as FLAGS_FORMAT lines."""
+    lines = FLAGS_FORMAT.replace('<level>', m['level'], 1).splitlines()
+    for o in m['objectives']:
+        x, y, z = o['position']
+        name = (o['name'] or o['location'] or '-').replace(' ', '_')
+        lines.append(f'flag {int(o["index"] or 0)} {o["role"]} {TEAM_NUMBER.get(o["initial_owner"], 0)} '
+                     f'{x:.2f} {y:.2f} {z:.2f} {float(o["capture_radius"] or 0):.2f} {name}')
+    for o in m['objectives']:
+        if o['role'] != 'base':
+            continue
+        for s in o['spawns']:
+            if s['kind'] != 'soldier' or TEAM_NUMBER.get(s['team'], 0) == 0:
+                continue
+            for p in [s['position']] + [a for a in s['alternates'] if isinstance(a, list)]:
+                lines.append(f'spawn {TEAM_NUMBER[s["team"]]} {int(o["index"] or 0)} {p[0]:.2f} {p[1]:.2f} {p[2]:.2f}')
+    return '\n'.join(lines) + '\n'
 
 
 def level_partition(game, level):
@@ -158,6 +186,7 @@ def main(argv):
     p.add_argument('game', nargs='?', default=DEFAULT_GAME)
     p.add_argument('levels', nargs='*')
     p.add_argument('--json')
+    p.add_argument('--navflags', action='store_true', help='also write work/levels/<level>/navkit/<level>.flags.txt')
     a = p.parse_args(argv[1:])
     if a.game in LEVELS:                      # spawnmap.py wake_island_s: the default game folder
         a.levels, a.game = [a.game] + a.levels, DEFAULT_GAME
@@ -170,6 +199,14 @@ def main(argv):
     if a.json:
         with open(a.json, 'w', encoding='utf-8', newline='\n') as f:
             json.dump(maps, f, indent=1)
+    if a.navflags:
+        for m in maps:
+            folder = os.path.join(WORK, 'levels', m['level'], 'navkit')
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, f'{m["level"]}.flags.txt')
+            with open(path, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(flags_text(m))
+            print(f'wrote {path}')
     return 0
 
 

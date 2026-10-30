@@ -81,13 +81,25 @@ Once you have a soldier in a match, the bot code adds 23 bots for a full 24-play
 
 | Working (2026-10-23) | Not yet |
 |---|---|
-| The bots join (the game announces "Bot 1 USMC Rifleman connected."), take their team's kit and appear on the scoreboard | No decisions yet: their forward input is a mailbox word (`CMD_THROTTLE` in `bots.py`), zero until a host program writes it (`guestmem.py throttle 1` in the test harness walks them, 2026-10-30), so they stand; with test input (walk forward, jump) they walked and jumped, and some walked off their carrier |
+| The bots join (the game announces "Bot 1 USMC Rifleman connected."), take their team's kit and appear on the scoreboard | No decisions in the guest: each bot's input is its command record in the host mailbox (below), so they stand until a host program writes it (navhost, or `guestmem.py input` in the test harness) |
 | Each server tick they get an input frame and their soldier is stepped with it, as a human's is when that player's input arrives | No aiming, navigation or objectives yet: nothing in the build decides what to send |
-| A host mailbox (2026-10-30): throttle, strafe, the button bits, an absolute facing, and one slot or all, written from outside Xenia (`guestmem.py` in the test harness); every tick each bot's position goes back to it. In game: walk, strafe, facing, sprint (button 22), jump and crouch work | |
+| A host mailbox written from outside Xenia (2026-10-30; v1 in game: walk, strafe, facing, sprint (button 22), jump and crouch work). Mailbox v2 (N4, 2026-10-30): a command record per bot, each bot's state, the capture points' owners | v2 is tested offline only, not yet in game |
 | Each spawns at its own team's base and respawns after dying | A fixed 23 bots; a chosen count comes later |
 | They are friendly or hostile to you according to their side, and stand on the deck | |
 
-The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): each bot created, each spawn (with the spawn point's ID) and, every 64 ticks (about 2 s), each soldier's position. The research behind each step is in `operation-rising-sun/research/AGENT_PROGRESS.md` (2026-10-23).
+The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): the mailbox's address, each bot created, each spawn (with the spawn point's ID) and, every 64 ticks (about 2 s), each soldier's position. The research behind each step is in `operation-rising-sun/research/AGENT_PROGRESS.md` (2026-10-23, 2026-10-30).
+
+### Host mailbox v2 (milestone N4)
+
+v1 (probe N0) was one command for every bot, in the bot code's small data area. v2 gives every bot its own:
+
+- **The block.** Once per match, when the bots are made, the bot code allocates one block of `BLOCK_SIZE` (0x780) bytes with the game's allocator (`82627d10`, as for the bots' input states), clears it and writes its header (magic `RSM2`, version 2, the record counts and sizes, the match's player manager). Then it stores the block's address (`MBOX`) and the magic (`MBOX_MAGIC`) in its data area. A new match clears both. Without a block no bots are made; the next tick tries again.
+- **Per bot slot** (`BOT0 + 0x40 * slot`):
+  - the guest writes a state record every tick: the tick, then player, soldier (0 while dead), team and position, then the tick again. A reader that sees the two ticks differ read the record while it was being written;
+  - the host writes a command record: throttle, strafe, absolute yaw and pitch, the two button words, and last the stamp (the tick it answered). The bot code uses a command only while `tick - stamp` (unsigned) is at most `STALE` (10) ticks; otherwise the frame stays neutral, so the bots stand when the host stops.
+- **Per capture point** (`FLAG0 + 0x30 * k`, up to 8, in the game's own iteration order: `825c5470` / `825c1290` over type `82d57850`): the tick, the entity, owner (`+0x80`), control (`+0xa0`), enabled (`+0xad`), radius (data `+0x114`), position, the tick again. The header's tick is written after all of them.
+
+The code, table and names take 0xbf8 of the cave's 0xe40 bytes (0x248 free). The readers are navhost (project-opfor-bf1943 `TnT/Code/Engine/AI/Bots/navhost`; its `rsmbox.h` is a copy of this layout that its tests check against `bots.py`) and `guestmem.py`.
 
 ## Tests
 
@@ -95,6 +107,6 @@ The bot code reports to Xenia's log (`DbgPrint`, lines starting `rs-bots:`): eac
 - With `--game` it also runs a full build from your package into a temporary folder, against a scratch Xenia folder holding only a copy of `xenia_canary.exe` (so your Xenia folder is never written): every edited file must match `known.json`, the patch file must reach the scratch folder, `verify` must accept the build and must notice a changed file. Afterwards it checks that your Xenia folder's patch files and `xenia_canary_netfix.exe` are unchanged. Without your package or Xenia it skips.
 
 - `python -B tests\test_ppcasm.py` checks the PowerPC assembler against capstone (an independent decoder; skipped with a note when capstone is not installed).
-- `python -B tests\test_bots.py` checks that the bots code assembles, fits its code cave, and that the hook branches to it; `--image` also checks it against the decoded BF1943 image.
+- `python -B tests\test_bots.py` checks that the bots code assembles, fits its code cave, and that the hook branches to it, and the mailbox: the layout fits, and capstone decodes the code's mailbox reads and writes as the layout names them (state and command records, header, flag records, the stale check, the allocation, the capture-point iteration); `--image` also checks it against the decoded BF1943 image.
 
 All of them are in the suite's `run_tests.py`: the three without game data in the quick tier, `test_xeniakit.py --game` in the bf1943 tier.
