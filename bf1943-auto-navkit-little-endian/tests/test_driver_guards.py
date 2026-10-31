@@ -1,4 +1,4 @@
-r"""navkit.py and its tools: the guards of the second review (2026-10-31), on a made-up Project OPFOR folder in a temp
+r"""navkit_le.py and its tools: the guards of the second review (2026-10-31), on a made-up Project OPFOR folder in a temp
 folder (no game, no game data; the game is never started, nothing is sampled, navbuild.build is a stand-in):
   - apply --out naming the game's own path data is refused before anything is built or written;
   - an apply that fails in the builder (BuildError) is a clear error and its report says so, not an old success;
@@ -35,7 +35,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     suitepath.use(suitepath.NAVKIT_LE)
 import detailed  # noqa: E402
 import navbuild  # noqa: E402
-import navkit  # noqa: E402
+import navkit_le as navkit  # noqa: E402
 import navregress  # noqa: E402
 from bfbc2core import navtune  # noqa: E402
 from test_navkit_driver import project, touch  # noqa: E402
@@ -180,8 +180,8 @@ def command_line(root):
     with patched(navkit, sample=lambda pr, lv, **k: calls.append(('sample', k)) or True,
                  sample_level=lambda pr, lv, **k: calls.append(('level', k)) or True):
         with contextlib.redirect_stdout(io.StringIO()):
-            rc1 = navkit.main(['navkit.py', 'sample', 'sp_y', '--budget', '800', '--opfor', root, '--yes'])
-            rc2 = navkit.main(['navkit.py', 'sample', 'sp_y', '--pitch', '0.2', '--budget', '650', '--opfor', root,
+            rc1 = navkit.main(['navkit_le.py', 'sample', 'sp_y', '--budget', '800', '--opfor', root, '--yes'])
+            rc2 = navkit.main(['navkit_le.py', 'sample', 'sp_y', '--pitch', '0.2', '--budget', '650', '--opfor', root,
                                '--yes'])
         check(rc1 == 0 and rc2 == 0 and [c[1].get('budget_ms') for c in calls] == [800, 650],
               f'--budget reaches the sampling runs ({[(c[0], c[1].get("budget_ms")) for c in calls]})')
@@ -190,7 +190,7 @@ def command_line(root):
                            (['--budget', '0'], '--budget 0')):
             n = len(calls)
             with contextlib.redirect_stdout(io.StringIO()):
-                rc = navkit.main(['navkit.py', 'sample', 'sp_y'] + args + ['--opfor', root, '--yes'])
+                rc = navkit.main(['navkit_le.py', 'sample', 'sp_y'] + args + ['--opfor', root, '--yes'])
             check(rc == 2 and len(calls) == n, f'{what}: exit code 2, nothing sampled ({rc})')
 
 

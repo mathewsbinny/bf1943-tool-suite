@@ -56,11 +56,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Quick tier (strict)
-        # in a console with Windows' default OEM code page (437), as launch.cmd assumes: cmd.exe reads a batch file in
-        # the console's code page, and the Xenia kit writes launch.cmd in the OEM one (a UTF-8 console, 65001, fails
-        # its accented-path test; see the README's CI notes)
-        shell: cmd
-        run: chcp 437 >nul & python -B run_tests.py quick --strict
+        run: python -B run_tests.py quick --strict
 
       - name: The package installs, and an install changes nothing for the tools
         # after the tests, so they ran without it; hatchling comes from PyPI

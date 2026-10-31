@@ -1,4 +1,4 @@
-r"""navkitGUI.pyw's Cancel and close while a step runs (a made-up project and a sleeping child process stand in for a
+r"""navkitGUI_le.pyw's Cancel and close while a step runs (a made-up project and a sleeping child process stand in for a
 step; the game is never looked for or started): the window does not freeze while the clean-up (ending the step and what
 it started, closing the game, restoring opfor.ini) runs, the clean-up runs off the window's thread, the step's process
 ends, and closing the window during a step closes it after the clean-up.
@@ -26,8 +26,8 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use(suitepath.NAVKIT_LE)
-loader = importlib.machinery.SourceFileLoader('navkitGUI', os.path.join(KIT, 'navkitGUI.pyw'))
-spec = importlib.util.spec_from_loader('navkitGUI', loader)
+loader = importlib.machinery.SourceFileLoader('navkitGUI_le', os.path.join(KIT, 'navkitGUI_le.pyw'))
+spec = importlib.util.spec_from_loader('navkitGUI_le', loader)
 gui = importlib.util.module_from_spec(spec)
 loader.exec_module(gui)
 navkit = gui.navkit

@@ -35,7 +35,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
+    suitepath.use(suitepath.NAVKIT_BE)
 import soldier1943  # noqa: E402
 
 JUMP_HEIGHT = 0.95        # m: the soldier's JumpStateData.JumpHeight (objects/soldiers/common/defaultsoldierphysics.dbx);

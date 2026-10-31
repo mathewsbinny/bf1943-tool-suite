@@ -10,7 +10,7 @@
   python navkit.py build   wake_island_s      the navigation build with BF1943's soldier (soldier1943.py):
                                               0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn
                                               seeds, ladder links, jump links to ships' AA gun platforms
-                                              (jumplinks1943.py), seam gap nodes (navbuild.SEAM_GAP_NODES)
+                                              (jumplinks1943.py), seam gap nodes (soldier1943.SETTINGS seam_gap_nodes)
   python navkit.py check   wake_island_s      structure (hpdcheck.py) and routes (routecheck1943.py): every
                                               spawn on the network, a route between every pair of flags
   python navkit.py all     wake_island_s      prepare, sample, build, check
@@ -63,7 +63,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
+    suitepath.use(suitepath.NAVKIT_BE)
 from bfbc2core import game1943  # noqa: E402
 import navkitjson1943 as nj  # noqa: E402
 

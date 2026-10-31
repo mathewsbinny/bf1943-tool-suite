@@ -26,7 +26,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
+    suitepath.use(suitepath.NAVKIT_BE)
     # the log and error reports start before the heavy imports,
     from bfbc2core import errors                 # so a missing library is reported too
     errors.setup('navigation-studio', gui='--screenshot' not in sys.argv)

@@ -2,6 +2,8 @@
 
 > **This variant reads little-endian data:** BFBC2 PC levels, as OPFOR's NavKit does, and later BF1943's levels converted for the PC port. Its twin `bf1943-auto-navkit-big-endian` reads BF1943's Xbox 360 data. It is kept in step with OPFOR's NavKit through `tools/import_opfor.py --update bf1943-auto-navkit-little-endian`.
 
+> **2026-10-31: the modules both variants use are one copy in [`bf1943-auto-navkit-common`](../bf1943-auto-navkit-common/README.md)** (the builder `navbuild`, now a package, `navwalk`, `navsample`, `navedits`, `hpdtool`, `kymesh`, `hpdcheck`, `hpdview`, `navdiff`, `hkpack`, `havok461`, `levelobjects`, `detailed`; the spec `KYNAPSE_SPEC.md`; the rule tests), merged with the big-endian copies: this variant's builds take NavKit's defaults (`navbuild.BFBC2`) and come out byte for byte as before (sp_009 and ONS_MP_004 through `navregress.py`). The driver and window are `navkit_le.py` and `navkitGUI_le.pyw` (were `navkit.py`, `navkitGUI.pyw`), so no module name is in both variants. `tools/import_opfor.py --update` leaves the moved files out and reports an OPFOR change to one as a conflict to merge by hand at its new place. Below, `tools\<shared module>` means the common folder's.
+
 Part of the BF1943 Tool Suite. **BF1943 status: partly adapted.** Today it is OPFOR's BFBC2 NavKit: it reads BFBC2
 PC levels from Project OPFOR's copy, and everything below, including the measurements, is on BFBC2 data. Its
 `tools\hkpack.py` also reads Havok 4.6.1 packfiles (byte order from the file, 20-byte member records, layouts given
@@ -18,8 +20,8 @@ navigation-data generator of the BFBC2 suite. It measures levels through Project
 so it needs an OPFOR install, plus FbrbTool and DbxEdit (FbrbTool from OPFOR's `tools\` folder: this suite's
 `bf1943-fbrb-tool` no longer has it; DbxEdit from this suite's `bf1943-dbx-tools` or OPFOR's `tools\`).
 
-**To use it, start with [QUICKSTART.md](QUICKSTART.md).** Double-click `navkitGUI.pyw` for the window, or
-run `python navkit.py` from a command prompt.
+**To use it, start with [QUICKSTART.md](QUICKSTART.md).** Double-click `navkitGUI_le.pyw` for the window, or
+run `python navkit_le.py` from a command prompt.
 
 ## Why
 
@@ -49,44 +51,48 @@ licence error. NavKit replaces it with independent code.
 
 ```
 QUICKSTART.md        how to build path data for a level, step by step
-navkitGUI.pyw        the NavKit window (Tkinter): the steps below as buttons
-navkit.py            driver: levels / prepare / sample / build / check / apply / install / restore / status / all /
-                     compare
-research\            specification (KYNAPSE_SPEC.md) and images (img\)
-tools\               NavKit tools (Python 3.13 + numpy / matplotlib)
-  hpdtool.py         pathdata.hpd: info / sector / roundtrip / coverage / meshtrip
-  kymesh.py          per-sector runtime mesh: parse_mesh / write_mesh (byte-exact)
-  hpdview.py         render a sector to PNG (outlines, portals, graph)
-  navsample.py       read in-game collision samples; compare with a pathdata.hpd
-  hkpack.py          Havok binary packfile reader (the level's *_Havok.res collision assets): Havok 5.5
-                     (BFBC2) and 4.6.1 (BF1943), byte order from the file
-  havok461.py        class layouts for Havok 4.6.1 packfiles, which have no __types__ section
-  levelobjects.py    object placements, pathfinding flags, forbidden-object triangles of a level
-                     (reads the level XML through core's bfbc2core/xmlinst.py: instances and field refs in any
-                     attribute order - DICE's tools write guid / ref first, Napisal's type / name first)
-  navwalk.py         walkability rules + scoring against existing path data
-  navbuild.py        the generator: samples + level objects -> pathdata.hpd
+navkitGUI_le.pyw     the NavKit window (Tkinter): the steps below as buttons (navkitGUI.pyw until 2026-10-31)
+navkit_le.py         driver: levels / prepare / sample / build / check / apply / install / restore / status / all /
+                     compare (navkit.py until 2026-10-31)
+tools\               this variant's own NavKit tools (Python 3.13 + numpy / matplotlib)
   ordercheck.py      scoring: AI order positions on the areas, pairwise route check, self-check
   navcompare.py      two files on a level's AI positions: coverage, main network, pairwise, size
-  navdiff.py         two files layer by layer: sectors, walkable cells, areas, boundaries, route graph
   navparity.py       DICE-parity report over many levels, saved per named run
   navregress.py      regression test: rebuild levels with the current code, fail if a parity measure got worse
   navwater.py        water depth against path-data coverage (does the data leave out ground under water?)
   navboundary.py     area boundaries cell by cell against DICE's: matching / missing / extra edges, merged areas, portals; CSV + maps
-  navedits.py        the walkability edits of a navigation side file as generator inputs (navkit.py apply)
   navlinks.py        a side file's links and route edges written into a path-data file's route graph
   navtraversal.py    a side file's traversal annotations (ladders, jumps ...) as <level>.traversal.json
-  detailed.py        which sectors to build as detailed zones (pitch 0.2), from the level alone
   ladders.py         the level's ladders (ladders.json) for ladder links
   sample_all.py      sample several levels in one unattended run
   graphstats.py      route-graph statistics of .hpd files (no docstring; imports hpdtool from OPFOR's navkit\tools)
 src\                 (reserved for the generator proper)
-tests\               the rule tests on made-up data (water, edits, area links, portals, soldiers, headroom, bridges,
+tests\               navkit_le.py's steps on a made-up OPFOR folder (install / restore, apply, caches, unpack, game
+                     log, options), its apply / install / sampling guards, and the window's Cancel
+..\bf1943-auto-navkit-common\   the modules both variants use (one copy since 2026-10-31; its README):
+  research\           specification (KYNAPSE_SPEC.md) and images (img\)
+  tools\hpdtool.py    pathdata.hpd: info / sector / roundtrip / coverage / meshtrip
+  tools\kymesh.py     per-sector runtime mesh: parse_mesh / write_mesh (byte-exact)
+  tools\hpdview.py    render a sector to PNG (outlines, portals, graph)
+  tools\hpdcheck.py   structure checks (closed boundaries, edges, node order, zero-length edges)
+  tools\navsample.py  read in-game collision samples; compare with a pathdata.hpd
+  tools\hkpack.py     Havok binary packfile reader (the level's *_Havok.res collision assets): Havok 5.5
+                     (BFBC2) and 4.6.1 (BF1943), byte order from the file
+  tools\havok461.py   class layouts for Havok 4.6.1 packfiles, which have no __types__ section
+  tools\levelobjects.py  object placements, pathfinding flags, forbidden-object triangles of a level
+                     (reads the level XML through core's bfbc2core/xmlinst.py: instances and field refs in any
+                     attribute order - DICE's tools write guid / ref first, Napisal's type / name first)
+  tools\navwalk.py    walkability rules + scoring against existing path data
+  tools\navbuild\     the generator (a package): samples + level objects -> pathdata.hpd; this variant builds with
+                     NavKit's defaults (navbuild.BFBC2)
+  tools\navdiff.py    two files layer by layer: sectors, walkable cells, areas, boundaries, route graph
+  tools\navedits.py   the walkability edits of a navigation side file as generator inputs (navkit_le.py apply)
+  tools\detailed.py   which sectors to build as detailed zones (pitch 0.2), from the level alone
+  tests\              the rule tests on made-up data (water, edits, area links, portals, soldiers, headroom, bridges,
                      dynamic props, collision index, lips, roof pruning), the builder's edge cases (no ground, the
                      file put in place whole, detailed sectors without 0.2 m ground, short ladders, run grids),
-                     damaged files (hpdtool, kymesh, navsample), navkit.py's steps on a made-up OPFOR folder
-                     (install / restore, apply, caches, unpack, game log, options), the window's Cancel, and
-                     Havok 4.6.1 (and levelobjects' collision) on BF1943's Wake Island
+                     damaged files (hpdtool, kymesh, navsample), and Havok 4.6.1 (and levelobjects' collision) on
+                     BF1943's Wake Island
 ```
 
 ## Robustness rules (2026-10-30)
@@ -105,7 +111,7 @@ tests\               the rule tests on made-up data (water, edits, area links, p
   is a high-capsule or narrow run on another grid than the main run.
 - `hpdtool.parse` refuses truncated or overlapping files (so `hpdcheck` cannot pass one); all 267 shipped and built
   `.hpd` files on this PC still read back byte for byte.
-- `navkit.py`: an option without its value, or a malformed `--box` / `--y` / `--pitch`, is exit code 2; a declined
+- `navkit_le.py`: an option without its value, or a malformed `--box` / `--y` / `--pitch`, is exit code 2; a declined
   sampling run exit code 1. The window's Cancel and close end the step and what it started (`taskkill /T`), close the
   game and restore `opfor.ini` without freezing the window.
 
@@ -165,17 +171,17 @@ DICE has none).
   extra 8.36 -> 8.31; checked by `tests\test_bridge_union.py` (600 random patterns; the old method fails 107) and by
   `hpdcheck.py` on every regression build.
 
-- **The default pipeline:** `navkit.py sample` (and `all`, and the window's buttons) samples the level at 0.8 m, chooses
+- **The default pipeline:** `navkit_le.py sample` (and `all`, and the window's buttons) samples the level at 0.8 m, chooses
   its detailed zones from the level alone, then samples those at 0.2 m (`DETAILED_BUDGET_MS` = 400 ms of sampling per
   frame: a 0.2 m run is ten times the columns and must end before a round, or a campaign level with an idle player,
-  does). A run whose level ends first is reported, not waited out. `navkit.py build` builds the detailed sectors at
+  does). A run whose level ends first is reported, not waited out. `navkit_le.py build` builds the detailed sectors at
   0.2 and merges them with the normal build.
 - **Detailed zones (pitch 0.2):** chosen by `tools\detailed.py` without DICE's data - sectors near an object whose
   blueprint sets `NeedsDetailedPathfinding`, and sectors with 100+ stacked-floor columns in the 0.8 m samples (93 % of
   DICE's choice on 14 levels - measured 2026-10-21 with `ForbidPathfinding`, which the code tested until 2026-10-31;
   see "Second review" above). Built with 6 x 6 tiles, link step 0.3 m, a Gabriel-pruned route graph and coverage
   nodes every 4 m.
-- **Ladder links:** `navkit.py prepare` writes `ladders.json` (`tools\ladders.py`: placed ladder objects and their
+- **Ladder links:** `navkit_le.py prepare` writes `ladders.json` (`tools\ladders.py`: placed ladder objects and their
   collision boxes); the build seeds the far end of a ladder whose near end is walkable and links a node at each end.
   DICE's path data has none; the game puts any soldier who walks into a ladder on it.
 - **Walkability rules added 2026-10-22** (`tools\navwalk.py`, each with a switch and its measurements in the code):
@@ -315,9 +321,9 @@ DICE has none).
      vehicle data, ladder links (planned for MP bots, optional).
    - Then: MP maps (self-check, no DICE data); later a standalone mode that reads Havok collision
      directly instead of sampling in game.
-5. **Tooling – done (2026-10-15).** `navkit.py` runs the whole workflow from a level name (unpack, objects,
+5. **Tooling – done (2026-10-15).** `navkit_le.py` runs the whole workflow from a level name (unpack, objects,
    automatic sampling box and sector offsets, both in-game sampling runs with `opfor.ini` restored
-   afterwards, build, check, install / restore with the original kept); `navkitGUI.pyw` is a small window
+   afterwards, build, check, install / restore with the original kept); `navkitGUI_le.pyw` is a small window
    over it. Stock MP maps wait for MP support: the sampler needs the level's AI running.
 6. **DICE parity – the goal from 2026-10-16: 100 % of DICE's content, not identical bytes.**
    - **Measured by content:**
@@ -335,16 +341,16 @@ DICE has none).
    - **The earlier figures measured less:** the AI-position coverage in the table above counts only where
      the level's AI is ordered to go.
    - **Regression test (2026-10-16):** `tools\navregress.py` rebuilds levels with the current code (the
-     inputs of `navkit.py build`) and fails if any parity measure got worse than the reference run
+     inputs of `navkit_le.py build`) and fails if any parity measure got worse than the reference run
      (`regression`, made from the code of 2026-10-16 and compared with baseline A). Run it before and after
      every generator change; `--save regression` after an intended improvement.
      - **The reference against baseline A** (13 levels, 70 minutes): mostly within a few tenths of a point
        either way, from different build inputs (baseline A's files were built by hand, the reference uses
-       `navkit.py build`'s: spawns as seeds, no exclusion files). Larger: over-connection on SP_008
+       `navkit_le.py build`'s: spawns as seeds, no exclusion files). Larger: over-connection on SP_008
        (10.5 -> 35.5 %) and SP_008_B (32.2 -> 69.0 %), connectivity on SP_009 (85.9 -> 83.8 %), AI pairwise on
        SP_008_B (79.3 -> 76.6 %) and SP_02 (84.2 -> 82.7 %); connectivity better on SP_02 (+0.7) and SP_008
        (+1.2). Which input makes the SP_008 difference is still to find (likely the exclusion files).
-   - **Hand edits (2026-10-16): `navkit.py apply <level>`** builds the level with the edits of its
+   - **Hand edits (2026-10-16): `navkit_le.py apply <level>`** builds the level with the edits of its
      navigation side file (`work\navkit\<level>\<level>.navtune.json`, made in the Navigation Studio):
      unwalkable regions remove the sampled surfaces inside them before seeding (so a cut really
      disconnects), walkable regions force them in past the slope and clearance rules (they still join the
@@ -357,7 +363,7 @@ DICE has none).
      it (`tools\navtraversal.py`) for OPFOR's bot layer, not into the path data: the game's AI would plan
      through a ladder it cannot climb. Each has its ends, the route node and island at each end, and whether
      it joins two islands. The whole log is kept as `<output>.report.txt`. `--install` then installs the
-     result (`navkit.py install --from <file>` installs any built file), with the traversal file beside the
+     result (`navkit_le.py install --from <file>` installs any built file), with the traversal file beside the
      installed path data; `restore` removes both and puts DICE's file back. A full rebuild (about 1-8
      minutes a level); without edits the build is unchanged.
    - **Edge costs (fixed 2026-10-16):** every DICE edge costs `floor(distance * 16)` from the positions as
@@ -402,7 +408,7 @@ DICE has none).
      4. **a route node at each AI order position** (`ORDER_NODES`): the game resolves a go-to point to the
         nearest node within 15 m, and the request failed where that node was 3.6-6.3 m from the order
         point (DICE: 0.2 m). Order positions are the level's `AreaGeometryEntityData` points, written as
-        `work\levels\<level>\order_points.json` by `levelobjects.py` (part of `navkit.py prepare`).
+        `work\levels\<level>\order_points.json` by `levelobjects.py` (part of `navkit_le.py prepare`).
      A detour repair pass (`DETOUR_REPAIR`) is kept but off: shorter routes did not fix the stairs-top
      failure. How the game uses the file is written up in spec §4.5 and in OPFOR's
      `research\BFBC2_DECOMP_RESEARCH.md` §9.

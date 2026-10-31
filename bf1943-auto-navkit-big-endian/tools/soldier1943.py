@@ -7,12 +7,13 @@ that depend on them, with the rules BF1943's levels needed. The BF1943 tools pas
 
   import soldier1943
   navbuild.build(..., step=soldier1943.STEP, max_water_depth=soldier1943.WATER_DEPTH, settings=soldier1943.SETTINGS)
-  detailed.stacked_columns(samples, xoff, zoff, slope_max=soldier1943.SLOPE_MAX)
+  detailed.stacked_columns(samples, xoff, zoff, slope_max=soldier1943.SLOPE_MAX,
+                           cm_sectors=soldier1943.SETTINGS.column_sectors_cm)
 
 (Until 2026-10-31 configure() wrote these into navbuild's, navwalk's and detailed's module constants, and a build
 was BF1943's only when it had run first.)
 """
-import navbuild  # this kit's: the script lists suitepath.NAVKIT_BE first
+import navbuild  # bf1943-auto-navkit-common's (one copy for both NavKit variants since 2026-10-31)
 
 RADIUS = 0.35                   # PhysicalRadius
 STEP_HEIGHT = 0.3               # StepHeight
@@ -84,4 +85,11 @@ SETTINGS = navbuild.Settings(
     seam_far_links=True,
     # a sector's window grows 1 m past a mixed seam, so both grids' cells overlap there (2026-10-26)
     mixed_overlap=1.0,
+    # a shared node wherever kept ground meets a mixed seam on both grids and no carried node joins it (2026-10-24:
+    # Wake Island's Japanese carrier, Coral Sea's islets); a module constant on in the big-endian copy until
+    # 2026-10-31, a setting since the two copies were merged (the little-endian copy, BFBC2's, never had it)
+    seam_gap_nodes=True,
+    # a column's sector from its float position, as every BF1943 build so far: the whole-centimetre rule NavKit now
+    # defaults to (navbuild.COLUMN_SECTORS_CM) moves columns on a sector line, so it waits for a rebuild and an audit
+    column_sectors_cm=False,
 )

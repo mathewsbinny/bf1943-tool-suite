@@ -249,7 +249,7 @@ evidence). *Where* is `<type> <guid> [<field path>]`, as above.
 
 - **Error:** two instances with the same GUID.
 - **Error:** an instance whose type (the part after the last `.`) is not a class (`c`) of `Bf1943Schema.Types` (the
-  reflection schema, generated into `DbxEdit.cs` by `schema1943.py`). Reported once per type.
+  reflection schema, generated into `DbxEdit.Schema1943.cs` by `schema1943.py`). Reported once per type.
 - **Error:** not exactly one LevelData, or the partition's `primaryInstance` is not its GUID.
 - **Error:** a local reference in a top-level field whose member is class-typed in `Bf1943Schema.Types`
   (looked up on the instance's class, then its bases) to an instance that is not that class or one derived from

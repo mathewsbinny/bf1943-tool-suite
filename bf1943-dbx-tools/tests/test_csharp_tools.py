@@ -1,8 +1,10 @@
 r"""The C# tools on made-up files (no game data):
 
-- core csbuild.py: an exe is rebuilt when a source compiled into it (DbxEdit.cs in LevelDiff) is newer than it, or
-  when the sources differ from those recorded at its build (a fake tool and build.bat in a temporary folder), and
-  the hub's tool() goes through it; then DbxEdit.exe and LevelDiff.exe are built from the current sources;
+- core csbuild.py: an exe is rebuilt when a source compiled into it (DbxEdit's sources in LevelDiff) is newer than
+  it, or when the sources differ from those recorded at its build (a fake tool and build.bat in a temporary folder),
+  and the hub's tool() goes through it; DbxEdit's sources are the files DbxEdit.rsp lists, every DbxEdit.*.cs of the
+  folder among them, and each build.bat compiles that list; then DbxEdit.exe and LevelDiff.exe are built from the
+  current sources;
 - DbxEdit xml: a folder of sound partitions exits 0; one with a damaged partition names it and exits 1;
 - LevelDiff: a list whose entries were only reordered is reported even when an earlier list of the same instance
   gained an entry;
@@ -131,15 +133,30 @@ def build_checks(tmp):
         open(sources[1], 'a').write('\n// changed again')
         age(sources[1], 20)
         got = hub.tool('leveldiff')
-        check(got == exe and builds(d) == 5, 'the hub rebuilds LevelDiff when DbxEdit.cs is newer than it')
+        check(got == exe and builds(d) == 5, 'the hub rebuilds LevelDiff when a DbxEdit source is newer than it')
     finally:
         csbuild.tools = saved
+
+
+def source_list_checks():
+    """DbxEdit.rsp names every DbxEdit source of its folder, each build.bat compiles it, csbuild follows it."""
+    listed = [os.path.basename(p) for p in csbuild.dbx_sources(HERE)]
+    present = sorted(n for n in os.listdir(HERE) if n == 'DbxEdit.cs' or (n.startswith('DbxEdit.') and n.endswith('.cs')))
+    check(listed[-1] == 'DbxEdit.rsp' and sorted(listed[:-1]) == present and all(os.path.isfile(os.path.join(HERE, n)) for n in listed),
+          f'DbxEdit.rsp lists every DbxEdit source in its folder and nothing else (missing {sorted(set(present) - set(listed))}, '
+          f'extra {sorted(set(listed[:-1]) - set(present))})')
+    for name, needs in (('dbxedit', []), ('dbxgui', ['DbxEditGUI.cs']), ('leveldiff', ['LevelDiff.cs'])):
+        exe, bat, sources = csbuild.tools()[name]
+        text = open(bat, encoding='utf-8').read()
+        check([os.path.basename(p) for p in sources] == needs + listed and '@DbxEdit.rsp' in text
+              and all(n in text for n in needs), f'{name}: csbuild and {os.path.relpath(bat, SUITE)} build it from DbxEdit.rsp{" and " + needs[0] if needs else ""}')
 
 
 def main():
     tmp = tempfile.mkdtemp(prefix='csharp_tools_')
     try:
         build_checks(tmp)
+        source_list_checks()
         exe, ldiff, gui = csbuild.ensure('dbxedit'), csbuild.ensure('leveldiff'), csbuild.ensure('dbxgui')
         check(all(csbuild.stale(*csbuild.tools()[n]) is None for n in ('dbxedit', 'leveldiff', 'dbxgui')),
               'DbxEdit.exe, DbxEditGUI.exe and LevelDiff.exe built from the current sources')

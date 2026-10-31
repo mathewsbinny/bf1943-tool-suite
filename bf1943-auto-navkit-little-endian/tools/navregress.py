@@ -3,7 +3,7 @@ worse than a saved reference run.
 
   navregress.py [--levels sp_004_b,sp_009] [--reference <run>] [--save <run>] [--tolerance 0.05] [--opfor <folder>]
 
-Per level: build with the same inputs as `navkit.py build` (in-game samples, ForbidPathfinding, dynamic-object
+Per level: build with the same inputs as `navkit_le.py build` (in-game samples, ForbidPathfinding, dynamic-object
 and stair triangles, the high-capsule samples, soldier spawns as seeds; the level's SectorOffsets), into
 OPFOR's work\navkit\regress\<level>.hpd; its structure (hpdcheck.py: closed boundaries, node order, edges - a
 problem fails the level); then navparity's measures (navparity.py) against DICE's file.
@@ -68,7 +68,7 @@ def sector_offsets(path):
 
 
 def inputs(root, lv):
-    """The build inputs of a level, as navkit.py build uses them; raises if something is missing."""
+    """The build inputs of a level, as navkit_le.py build uses them; raises if something is missing."""
     L = os.path.join(root, 'work', 'levels', lv)
     samples = None
     for name in (f'{lv}_navkit', f'{lv}_full'):
@@ -85,7 +85,7 @@ def inputs(root, lv):
     else:
         so = glob.glob(os.path.join(L, 'dist', 'levels', lv, 'Precomputed', 'Infantry', 'SectorOffsets.xml'))
         if not so:
-            raise RuntimeError(f'{lv}: no navkit.json and no SectorOffsets.xml (run navkit.py prepare {lv})')
+            raise RuntimeError(f'{lv}: no navkit.json and no SectorOffsets.xml (run navkit_le.py prepare {lv})')
         try:
             xoff, zoff = sector_offsets(so[0])
         except ValueError as e:
@@ -93,7 +93,7 @@ def inputs(root, lv):
     files = {k: os.path.join(L, k) for k in ('forbid_tris.npy', 'dynamic_tris.npy', 'stair_tris.npy', 'soldier_spawns.json')}
     missing = [k for k, p in files.items() if not os.path.isfile(p)]
     if missing:
-        raise RuntimeError(f'{lv}: {", ".join(missing)} missing (run navkit.py prepare {lv})')
+        raise RuntimeError(f'{lv}: {", ".join(missing)} missing (run navkit_le.py prepare {lv})')
     return samples, xoff, zoff, files
 
 
@@ -132,7 +132,7 @@ def order_points_of(root, lv):
 
 
 def detailed_of(root, lv, samples, xoff, zoff, chosen=None):
-    """The detailed-zone pass, as navkit.py build does it: the level's pitch-0.2 samples (navkit.py sample --pitch 0.2,
+    """The detailed-zone pass, as navkit_le.py build does it: the level's pitch-0.2 samples (navkit_le.py sample --pitch 0.2,
     work\\navsample\\<lv>_navkit_p02.bin, with _hi_p02) and its detailed sectors chosen from the level alone
     (detailed.py; chosen: that choice when the caller already has it); None without pitch-0.2 samples. Raises
     RuntimeError when the 0.2 m samples do not cover the sectors chosen now (detailed.sampled_problem: sampled before
@@ -148,12 +148,12 @@ def detailed_of(root, lv, samples, xoff, zoff, chosen=None):
     problem = detailed.sampled_problem(p02, samples, chosen, xoff, zoff)
     if problem:
         raise RuntimeError(f'{lv}: the 0.2 m samples are stale: {problem} - sample the detailed zones again '
-                           f'(navkit.py sample {lv} --pitch 0.2)')
+                           f'(navkit_le.py sample {lv} --pitch 0.2)')
     return dict(samples=p02, high=hi if os.path.isfile(hi) else None, sectors={tuple(s) for s in chosen})
 
 
 def ladders_of(root, lv):
-    """The level's ladders (ladders.py, written by navkit.py prepare), or None."""
+    """The level's ladders (ladders.py, written by navkit_le.py prepare), or None."""
     p = os.path.join(root, 'work', 'levels', lv, 'ladders.json')
     return json.load(open(p)) if os.path.isfile(p) else None
 

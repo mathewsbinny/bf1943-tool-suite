@@ -41,7 +41,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
+    suitepath.use(suitepath.NAVKIT_BE)
 from bfbc2core import game1943, rsnv  # noqa: E402
 
 SOLDIER = {'water_scale': (256, 384, 768), 'tight_extra': 800, 'kind_mask': (1 << 7) - 1 & ~(1 << rsnv.EDGE_BOARD)

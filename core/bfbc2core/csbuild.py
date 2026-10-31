@@ -3,9 +3,10 @@ the exe would not be the current code.
 
     exe = csbuild.ensure('leveldiff')         # LevelDiff.exe, rebuilt first if needed; RuntimeError if it cannot be
 
-An exe is rebuilt when it is missing, when any of its sources (compiled-in ones too: LevelDiff compiles DbxEdit.cs
-in) or its build.bat is newer than it, or when their SHA-256 differs from the one recorded at its last build here
-(<exe>.sources next to it, not committed). So a test or the hub never runs an exe built from older code.
+An exe is rebuilt when it is missing, when any of its sources (compiled-in ones too: DbxEditGUI and LevelDiff compile
+in DbxEdit's sources, the files bf1943-dbx-tools/DbxEdit.rsp lists, and the list itself) or its build.bat is newer
+than it, or when their SHA-256 differs from the one recorded at its last build here (<exe>.sources next to it, not
+committed). So a test or the hub never runs an exe built from older code.
 """
 import hashlib
 import json
@@ -18,15 +19,28 @@ LEVEL_DIFF = os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
+def dbx_sources(folder):
+    """DbxEdit's sources in folder: the files its DbxEdit.rsp lists (the C# compiler's response file the build.bat files
+    compile them with: one name per line, # comments), then DbxEdit.rsp itself."""
+    rsp = os.path.join(folder, 'DbxEdit.rsp')
+    try:
+        with open(rsp, encoding='utf-8') as f:
+            names = [line.strip() for line in f if line.strip() and not line.lstrip().startswith('#')]
+    except FileNotFoundError:
+        raise FileNotFoundError(f"{rsp} not found: DbxEdit's list of sources is in the suite's bf1943-dbx-tools folder "
+                                f'(DBX_TOOLS, when set, must name that folder)') from None
+    return [os.path.join(folder, n) for n in names] + [rsp]
+
+
 def tools():
-    """name -> (exe, build.bat, sources compiled into it). LevelDiff's DbxEdit.cs follows DBX_TOOLS, as its build.bat."""
+    """name -> (exe, build.bat, sources compiled into it). LevelDiff's DbxEdit sources follow DBX_TOOLS, as its build.bat."""
     dbx_tools = os.environ.get('DBX_TOOLS') or DBX
     return {
-        'dbxedit': (os.path.join(DBX, 'DbxEdit.exe'), os.path.join(DBX, 'build.bat'), [os.path.join(DBX, 'DbxEdit.cs')]),
+        'dbxedit': (os.path.join(DBX, 'DbxEdit.exe'), os.path.join(DBX, 'build.bat'), dbx_sources(DBX)),
         'dbxgui': (os.path.join(DBX, 'DbxEditGUI.exe'), os.path.join(DBX, 'build.bat'),
-                   [os.path.join(DBX, 'DbxEditGUI.cs'), os.path.join(DBX, 'DbxEdit.cs')]),
+                   [os.path.join(DBX, 'DbxEditGUI.cs')] + dbx_sources(DBX)),
         'leveldiff': (os.path.join(LEVEL_DIFF, 'LevelDiff.exe'), os.path.join(LEVEL_DIFF, 'build.bat'),
-                      [os.path.join(LEVEL_DIFF, 'LevelDiff.cs'), os.path.join(dbx_tools, 'DbxEdit.cs')]),
+                      [os.path.join(LEVEL_DIFF, 'LevelDiff.cs')] + dbx_sources(dbx_tools)),
     }
 
 

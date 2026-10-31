@@ -12,7 +12,7 @@ r"""DbxEdit's level check with BF1943's rules, on your BF1943 copy (BF1943_GAME 
 
 The game copy is only read (through game1943); every file is written to a temporary folder in the suite's work folder
 (short, for .NET Framework's 260-character limit), removed afterwards. DbxEdit.exe is built (build.bat) when missing
-or not from the current DbxEdit.cs (core csbuild.py).
+or not from the current DbxEdit sources (DbxEdit.rsp; core csbuild.py).
 """
 import os
 import re

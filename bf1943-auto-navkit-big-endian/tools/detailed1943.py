@@ -20,7 +20,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
+    suitepath.use(suitepath.NAVKIT_BE)
 import detailed  # noqa: E402
 import soldier1943  # noqa: E402
 
@@ -40,9 +40,11 @@ def flagged_sectors(level_dir, xoff, zoff, margin=detailed.MARGIN):
 def choose(level_dir, samples_path, xoff, zoff, margin=detailed.MARGIN, stacked_min=detailed.STACKED_MIN):
     """(sorted [(X, Z)], counts) - the detailed sectors of a BF1943 level."""
     flag = flagged_sectors(level_dir, xoff, zoff, margin)
-    # standable at BF1943's slope limit (45 deg), not NavKit's BFBC2 40
-    stacked = {k for k, n in detailed.stacked_columns(samples_path, xoff, zoff, slope_max=soldier1943.SLOPE_MAX).items()
-               if n >= stacked_min}
+    # standable at BF1943's slope limit (45 deg), not NavKit's BFBC2 40; a column's sector by the rule BF1943's builds
+    # take (soldier1943.SETTINGS: the float position)
+    counts = detailed.stacked_columns(samples_path, xoff, zoff, slope_max=soldier1943.SLOPE_MAX,
+                                      cm_sectors=soldier1943.SETTINGS.column_sectors_cm)
+    stacked = {k for k, n in counts.items() if n >= stacked_min}
     return sorted(flag | stacked), {'flag': len(flag), 'stacked': len(stacked), 'stacked only': len(stacked - flag)}
 
 

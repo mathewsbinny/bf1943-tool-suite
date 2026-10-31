@@ -1,7 +1,7 @@
-r"""Writes BF1943's reflection schema into DbxEdit.cs (the block between "BEGIN GENERATED BF1943 SCHEMA" and "END
-GENERATED BF1943 SCHEMA") for the level check's BF1943 rules: every reflected class (with its base class), value type
-(struct) and enum, with its members - each member's type when it is a class, struct or enum, and an array's element
-type - and each enum's value names.
+r"""Writes BF1943's reflection schema into DbxEdit.Schema1943.cs (the block between "BEGIN GENERATED BF1943 SCHEMA"
+and "END GENERATED BF1943 SCHEMA") for the level check's BF1943 rules: every reflected class (with its base class),
+value type (struct) and enum, with its members - each member's type when it is a class, struct or enum, and an array's
+element type - and each enum's value names.
 
   python -B schema1943.py [<bf1943-reflection-schema-full.json>]
 
@@ -86,7 +86,7 @@ def main(argv):
         raise FileNotFoundError(f'no reflection schema at {path}: pass bf1943-reflection-schema-full.json, or set '
                                 f'BF1943_RESEARCH to the research workspace that has research\\evidence\\'
                                 f'bf1943-reflection-schema-full.json')
-    target = os.path.join(HERE, 'DbxEdit.cs')
+    target = os.path.join(HERE, 'DbxEdit.Schema1943.cs')
     text = open(target, encoding='utf-8', newline='').read()
     new, counts, members = block(path)
     if BEGIN not in text:

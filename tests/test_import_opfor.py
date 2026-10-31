@@ -2,8 +2,9 @@ r"""tools\import_opfor.py --update on made-up trees only: a temporary git reposi
 a temporary folder for this suite (the module's SOURCE_SUITE, SUITE and MANIFEST are pointed at them; the real
 suites are never read or written). An updated single-file import (run_tests.py, and a renamed one) replaces that
 file, not <file>\<file>; a folder import updates the changed file in the folder; a file changed here too is left
-as a conflict. The command line on runs that cannot finish (partial_runs): checked before anything is written, and
-what a run stopped part-way wrote is recorded (marked incomplete).
+as a conflict; a file recorded as moved elsewhere in this suite (merged) is not brought back, and a change to it in
+the source is a conflict naming its new place. The command line on runs that cannot finish (partial_runs): checked
+before anything is written, and what a run stopped part-way wrote is recorded (marked incomplete).
 
   python -B tests\test_import_opfor.py
 """
@@ -286,6 +287,21 @@ def main():
               and open(os.path.join(dst, 'tool', 'b.py'), 'rb').read() == b'changed here\n',
               f'update of a folder import: the file changed only there is replaced, the one changed here too is a conflict')
         check(sorted(os.listdir(dst)) == ['New Suite.pyw', 'run_tests.py', 'tool'], f'nothing else written ({sorted(os.listdir(dst))})')
+        # a file moved out of the folder import (2026-10-31: NavKit's shared modules to bf1943-auto-navkit-common)
+        os.remove(os.path.join(dst, 'tool', 'a.py'))
+        manifest['imports'].append({'items': [item]})
+        manifest['imports'].append({'kind': 'move', 'destination': 'tool', 'paths': {'a.py': 'common/a.py'}})
+        item = import_opfor.update_one(second, manifest, 'tool')
+        check(not os.path.exists(os.path.join(dst, 'tool', 'a.py')) and not item['files'] and item['conflicts'] == ['b.py'],
+              f'a moved file unchanged in the source is not brought back ({item["files"]}, {item["conflicts"]})')
+        write(os.path.join(src, 'tool', 'a.py'), b'third a\n')
+        git(src, 'commit', '-q', '-am', 'third (a moved file changed)')
+        third = git(src, 'rev-parse', 'HEAD').decode().strip()
+        item = import_opfor.update_one(third, manifest, 'tool')
+        check(not os.path.exists(os.path.join(dst, 'tool', 'a.py')) and not item['files']
+              and item['conflicts'] == ['a.py (moved to common/a.py)', 'b.py'],
+              f'a moved file changed in the source is a conflict at its new place ({item["conflicts"]})')
+        git(src, 'reset', '-q', '--hard', second)
         partial_runs(tmp, src)
         second_review(tmp)
     finally:

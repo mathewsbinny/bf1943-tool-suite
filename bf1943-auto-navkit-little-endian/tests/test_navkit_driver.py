@@ -1,4 +1,4 @@
-r"""navkit.py's steps on a made-up Project OPFOR folder in a temp folder (no game, no game data; the game is never started,
+r"""navkit_le.py's steps on a made-up Project OPFOR folder in a temp folder (no game, no game data; the game is never started,
 nothing is sampled, and navbuild.build is replaced by a recorder):
   - install where the level had no path data: a marker, so the file is never taken for DICE's (dice_pathdata,
     navparity.reference_of) and restore removes it; over an original: backup kept once, restore puts it back;
@@ -28,7 +28,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import suitepath
     suitepath.use(suitepath.NAVKIT_LE)
 import detailed  # noqa: E402
-import navkit  # noqa: E402
+import navkit_le as navkit  # noqa: E402
 import navparity  # noqa: E402
 import navregress  # noqa: E402
 
@@ -244,13 +244,13 @@ def command_line(root):
                              (['sample', 'sp_y', '--box', '5,0,1,10'], 2, '--box min above max'),
                              (['sample', 'sp_y', '--y', 'a,b'], 2, '--y not numbers')):
         with contextlib.redirect_stdout(io.StringIO()):
-            rc = navkit.main(['navkit.py'] + args + ['--opfor', root])
+            rc = navkit.main(['navkit_le.py'] + args + ['--opfor', root])
         check(rc == code, f'{what}: exit code {code} ({rc})')
     saved = navkit.sample_level
     navkit.sample_level = lambda *a, **k: False             # the user declined the game launches
     try:
         with contextlib.redirect_stdout(io.StringIO()):
-            rc = navkit.main(['navkit.py', 'sample', 'sp_y', '--opfor', root])
+            rc = navkit.main(['navkit_le.py', 'sample', 'sp_y', '--opfor', root])
         check(rc == 1, f'a declined sampling run: exit code 1 ({rc})')
     finally:
         navkit.sample_level = saved

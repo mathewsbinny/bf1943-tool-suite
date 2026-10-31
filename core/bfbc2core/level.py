@@ -147,13 +147,13 @@ def blueprint_of(e):
 
 
 def load(level, opfor=None, terrain_stride=2, log=print):
-    import navkit
+    import navkit_le as navkit
     import levelobjects
     root = navkit.find_opfor(opfor)
     lv = level.replace('\\', '/').split('/')[-1].lower()
     base = os.path.join(root, 'work', 'levels', lv)
     if not os.path.isdir(os.path.join(base, 'dist')):           # first use: NavKit's offline prepare step
-        log(f'{lv}: not prepared yet - unpacking it (navkit.py prepare {lv}, once)')
+        log(f'{lv}: not prepared yet - unpacking it (navkit_le.py prepare {lv}, once)')
         pr = navkit.Project(root)
         navkit.prepare(pr, pr.level(lv), log=log)
     bases = [os.path.join(base, 'pkg'), os.path.join(base, 'dist')]
@@ -376,7 +376,7 @@ def heightfield_of(root, lv, log=print, name=None):
     """The level's terrain height field, unpacking its terrain-00.fbrb into work\\levels\\<lv>\\terrain once.
     name: from terrain_name(); read from the level partition if not given."""
     import subprocess
-    import navkit
+    import navkit_le as navkit
     if name is None:
         part = None
         for b in ('pkg', 'dist'):

@@ -1,0 +1,16 @@
+# DbxEdit's sources, one per line: compiled together into DbxEdit.exe and DbxEditGUI.exe (build.bat) and LevelDiff.exe
+# (..\bf1943-diff-workbench\level-diff\build.bat) as this response file of the C# compiler, from this folder (csc reads
+# the names relative to the current folder); core csbuild.py reads it to know what each exe is built from.
+DbxEdit.cs
+DbxEdit.Format.cs
+DbxEdit.Writer.cs
+DbxEdit.XmlExport.cs
+DbxEdit.XmlImport.cs
+DbxEdit.Values.cs
+DbxEdit.Editor.cs
+DbxEdit.LevelCheck.cs
+DbxEdit.LevelRules1943.cs
+DbxEdit.CullTrees1943.cs
+DbxEdit.Schema1943.cs
+DbxEdit.SafeWrite.cs
+DbxEdit.ToolLog.cs

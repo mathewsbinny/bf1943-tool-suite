@@ -15,9 +15,10 @@ Get the partitions out of a bundle with `..\..\bf1943-fbrb-tool\fbrb1943.py extr
 ## Build
 
 Run `build.bat`. It compiles `LevelDiff.exe` with the C# compiler that ships with Windows. It reads files
-with the suite's DbxEdit code (`..\..\bf1943-dbx-tools`; or set `DBX_TOOLS` to
-that folder). The hub and the tests build it through core `csbuild.py`: again whenever `LevelDiff.cs`, the
-compiled-in `DbxEdit.cs` or `build.bat` is newer than the exe or differs from what it was built from.
+with the suite's DbxEdit code: the sources `DbxEdit.rsp` lists in `..\..\bf1943-dbx-tools` (or set `DBX_TOOLS` to
+that folder). The hub and the tests build it through core `csbuild.py`: again whenever `LevelDiff.cs`, a
+compiled-in DbxEdit source, `DbxEdit.rsp` or `build.bat` is newer than the exe or differs from what it was built
+from.
 
 ## Use
 

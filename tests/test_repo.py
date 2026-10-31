@@ -7,7 +7,8 @@ r"""The repository's own rules, checked before anything is pushed (no game data 
 - every Python file compiles;
 - sys.path is changed only by the suite's bootstrap (core/suitepath.py): no other edit in any Python file, and the
   bootstrap only where a script runs (under `if __name__ == '__main__':`); the folders it puts on sys.path share no
-  module name, but for the two NavKit variants, which a script chooses between.
+  module name, the two NavKit variants included (their shared modules are one copy in bf1943-auto-navkit-common
+  since 2026-10-31), so the order a script names them in changes nothing it imports.
 
   python tests\test_repo.py
 """
@@ -67,20 +68,19 @@ def path_edits(tree):
 
 
 def shared_names():
-    """Module names found in more than one of the bootstrap's folders, the two NavKit variants apart."""
+    """Module names (a .py / .pyw file, or a package folder) found in more than one of the bootstrap's folders: the
+    shared ones and both NavKit variants' (until 2026-10-31 the variants were let share 14 names)."""
     import suitepath
     seen, clashes = {}, []
-    groups = [('shared', [rel]) for rel in suitepath.SHARED] + [('NavKit', suitepath.NAVKIT_BE + suitepath.NAVKIT_LE)]
-    for kind, rels in groups:
-        for rel in rels:
-            folder = suitepath.folder(rel)
-            for n in sorted(os.listdir(folder)):
-                name, ext = os.path.splitext(n)
-                if ext not in ('.py', '.pyw') and not os.path.isfile(os.path.join(folder, n, '__init__.py')):
-                    continue
-                if name in seen and not (kind == 'NavKit' and seen[name][0] == 'NavKit'):
-                    clashes.append(f'{name}: {seen[name][1]} and {rel}')
-                seen.setdefault(name, (kind, rel))
+    for rel in suitepath.SHARED + suitepath.NAVKIT_BE + suitepath.NAVKIT_LE:
+        folder = suitepath.folder(rel)
+        for n in sorted(os.listdir(folder)):
+            name, ext = os.path.splitext(n)
+            if ext not in ('.py', '.pyw') and not os.path.isfile(os.path.join(folder, n, '__init__.py')):
+                continue
+            if name in seen:
+                clashes.append(f'{name}: {seen[name]} and {rel}')
+            seen.setdefault(name, rel)
     return clashes
 
 
@@ -124,7 +124,7 @@ def main(argv):
     broken = []
     with tempfile.TemporaryDirectory() as tmp:
         for t in tracked:
-            if t.endswith(('.py', '.pyw')):
+            if t.endswith(('.py', '.pyw')) and os.path.isfile(os.path.join(SUITE, t)):    # not one deleted, uncommitted
                 try:
                     py_compile.compile(os.path.join(SUITE, t), cfile=os.path.join(tmp, 'x.pyc'), doraise=True)
                 except py_compile.PyCompileError as e:
@@ -140,7 +140,7 @@ def main(argv):
                 continue                                    # reported above
             edits += [f'{t}:{line}: {what}' for line, what in path_edits(tree)]
     results.append(('sys.path changed only by the bootstrap (core/suitepath.py), and only where a script runs', edits))
-    results.append(("the bootstrap's folders share no module name (but the two NavKit variants)", shared_names()))
+    results.append(("the bootstrap's folders share no module name (the two NavKit variants included)", shared_names()))
     import suitepath
     import tomllib
     with open(os.path.join(SUITE, 'pyproject.toml'), 'rb') as f:

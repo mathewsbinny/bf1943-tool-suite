@@ -238,33 +238,44 @@ def launch_args(manifest, gpu):
     return [manifest['netfix'], f'--gpu={gpu}', '--license_mask=1', os.path.join(manifest['title'], 'default.xex')]
 
 
-# cmd.exe reads a batch file in the console's code page, the OEM one unless changed (437 or 850 on most Windows):
-# launch.cmd is written in it, and a path it cannot hold is refused. Before 2026-10-30 the file was UTF-8, so a folder
-# such as "Xenia José" became another name and launch.cmd failed ("The system cannot find the path specified").
-LAUNCHER_ENCODING = 'oem' if os.name == 'nt' else 'ascii'
+# cmd.exe reads a batch file line by line, each line in the console's code page at the time it reads it: the OEM one
+# (437, 850...) by default, UTF-8 (65001) in a console set to it, as Windows increasingly is. launch.cmd is written in
+# UTF-8 and its first lines, plain ASCII, note the console's page and switch it to 65001, so every line naming a path
+# is read as written, whatever the page was; the last line switches it back (the page is the console's, and outlives
+# the batch file). Before 2026-10-30 the file was UTF-8 without the switch, so in an OEM console a folder such as
+# "Xenia José" became another name ("The system cannot find the path specified"); until 2026-10-31 it was written in
+# the OEM code page, which failed the same way in a UTF-8 console and refused folders the OEM page cannot hold
+# (Cyrillic, CJK). tests/test_xeniakit.py runs it under both pages.
+LAUNCHER_ENCODING = 'utf-8'
 
 
 def cmd_quoted(path):
     """A path as one quoted cmd.exe argument: '%' doubled (cmd expands %...% even inside quotes, so a folder such as
-    "50%off" broke the line before 2026-10-30); a path the batch file's code page cannot hold is refused."""
+    "50%off" broke the line before 2026-10-30); a path with a double quote, or one UTF-8 cannot write (a lone
+    surrogate), is refused."""
     try:
-        if path.encode(LAUNCHER_ENCODING).decode(LAUNCHER_ENCODING) != path:
-            raise UnicodeError
+        path.encode(LAUNCHER_ENCODING)
     except UnicodeError:
-        raise ValueError(f'launch.cmd cannot name {path!r}: cmd.exe reads it in code page {LAUNCHER_ENCODING!r}, which '
-                         'cannot hold every character of that path; use a folder whose name it can (for example plain '
-                         'letters and digits)') from None
+        raise ValueError(f'launch.cmd cannot name {path!r}: it is not valid Unicode (UTF-8 cannot write it); '
+                         'use a folder with another name') from None
     if '"' in path:
         raise ValueError(f'a path with a double quote cannot be passed on: {path!r}')
     return '"' + path.replace('%', '%%') + '"'
 
 
 def launcher_text(manifest, gpu):
-    """launch.cmd's text (raises ValueError when a path cannot be written in it)."""
+    """launch.cmd's text (raises ValueError when a path cannot be written in it). The lines before "chcp 65001" are
+    ASCII: they are read in whatever code page the console has."""
     netfix_exe, gpu_flag, license_flag, title = launch_args(manifest, gpu)
     cmd = ' '.join([cmd_quoted(netfix_exe), gpu_flag, license_flag, cmd_quoted(title)])
-    return ('@echo off\r\nrem Made by bf1943-xenia-kit: Battlefield 1943 in Xenia, offline with Local Match.\r\n'
-            f'cd /d {cmd_quoted(os.path.dirname(netfix_exe))}\r\nstart "" {cmd}\r\n')
+    return ('@echo off\r\nsetlocal\r\n'
+            'rem Made by bf1943-xenia-kit: Battlefield 1943 in Xenia, offline with Local Match.\r\n'
+            'rem This file is UTF-8: the console reads it in UTF-8 (code page 65001) from the chcp line on, then gets\r\n'
+            'rem its own code page back.\r\n'
+            'for /f "tokens=2 delims=:." %%p in (\'chcp\') do set "KIT_CODE_PAGE=%%p"\r\n'
+            'chcp 65001 >nul\r\n'
+            f'cd /d {cmd_quoted(os.path.dirname(netfix_exe))}\r\nstart "" {cmd}\r\n'
+            'if defined KIT_CODE_PAGE chcp %KIT_CODE_PAGE% >nul 2>nul\r\n')
 
 
 def write_launcher(out, manifest, gpu):

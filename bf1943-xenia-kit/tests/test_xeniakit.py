@@ -191,40 +191,66 @@ def build_bots_patch():
 
 
 def launcher():
-    """launch.cmd as cmd.exe reads it (Windows): in folders whose names hold an accented letter and a '%', its cd line
-    reaches the Xenia folder and its start line names the paths whole (run with the start line turned into an echo:
-    nothing is launched); a path the batch file's code page cannot hold is refused before any work. Before 2026-10-30
-    the file was UTF-8 and '%' was not doubled: cd failed on "Xenia José", and "%" paths were cut."""
+    """launch.cmd as cmd.exe reads it (Windows), in a console set to the OEM code page (437) and to UTF-8 (65001): in
+    folders whose names hold an accented letter, a '%' and letters no OEM page holds (Cyrillic, CJK), its cd line
+    reaches the Xenia folder, its start line names the paths whole (run with the start line turned into an echo:
+    nothing is launched), and the console has its own code page back afterwards. Each run is in a new, hidden console,
+    so the test's own is never switched. A control: the same file without its chcp line fails in the OEM console, so
+    the lines after chcp are read in the page it sets. Before 2026-10-30 the file was UTF-8 without the switch and '%'
+    was not doubled (cd failed on "Xenia José" in an OEM console, "%" paths were cut); until 2026-10-31 it was in the
+    OEM page, which failed the same way in a UTF-8 console."""
     import xeniakit
     if os.name != 'nt':
         print('skip launch.cmd under cmd.exe: Windows only')
         return
-    enc = xeniakit.LAUNCHER_ENCODING
+    hidden = subprocess.STARTUPINFO()
+    hidden.dwFlags |= subprocess.STARTF_USESHOWWINDOW          # wShowWindow 0: SW_HIDE
     with tempfile.TemporaryDirectory() as tmp:
-        xenia, out = os.path.join(tmp, 'Xenia José 50%off'), os.path.join(tmp, 'out 100% été')
+        xenia, out = os.path.join(tmp, 'Xenia José 50%off Ж 中'), os.path.join(tmp, 'out 100% été')
         os.makedirs(xenia)
         os.makedirs(out)
         m = dict(netfix=os.path.join(xenia, netfix.FIXED), title=os.path.join(out, 'title'))
         xeniakit.write_launcher(out, m, 'vulkan')
         text = open(os.path.join(out, 'launch.cmd'), 'rb').read()
-        head, start = text.split(b'start ""')
+        head, tail = text.split(b'start ""')
+        check(head.split(b'chcp 65001')[0].isascii() and text.decode('utf-8'),
+              'launch.cmd is UTF-8, plain ASCII up to its chcp 65001 line')
         probe = os.path.join(tmp, 'probe.cmd')          # cmd /c itself expands % in the file's own path
-        open(probe, 'wb').write(head + b'echo CD=%CD%\r\necho ARGS=' + start)
-        r = subprocess.run(['cmd', '/d', '/c', probe], capture_output=True, cwd=tmp)
-        lines = r.stdout.decode(enc, 'replace').splitlines()
-        cd = [l[3:] for l in lines if l.startswith('CD=')]
-        args = [l[5:].strip() for l in lines if l.startswith('ARGS=')]
-        check(r.returncode == 0 and cd == [xenia] and not r.stderr.strip(),
-              f'launch.cmd: cmd.exe changes to a Xenia folder named with an accent and a % ({ascii(cd)}, {r.stderr[:80]!r})')
+        open(probe, 'wb').write(head + b'echo CD=%CD%\r\necho ARGS=' + tail)
+        control = os.path.join(tmp, 'control.cmd')
+        open(control, 'wb').write(head.replace(b'chcp 65001 >nul\r\n', b'') + b'echo CD=%CD%\r\n')
         want = f'"{m["netfix"]}" --gpu=vulkan --license_mask=1 "{os.path.join(out, "title", "default.xex")}"'
-        check(args == [want], f'launch.cmd: the start line names the fixed Xenia and the title whole ({ascii(args)})')
-        for bad in ('Xenia Ж', 'Xenia 中'):            # letters the OEM code page (437, 850...) cannot hold
+
+        def run(page, batch):
+            """batch run in a new hidden console set to page; its CD= and ARGS= lines and the page after it."""
+            wrapper = os.path.join(tmp, 'wrapper.cmd')
+            open(wrapper, 'wb').write(f'@chcp {page} >nul\r\n@call "{batch}"\r\n@chcp\r\n'.encode('ascii'))
+            r = subprocess.run(['cmd', '/d', '/c', wrapper], capture_output=True, cwd=tmp, startupinfo=hidden,
+                               creationflags=subprocess.CREATE_NEW_CONSOLE, timeout=60)
+            lines = r.stdout.decode('utf-8', 'replace').splitlines()    # echoed while the page is 65001
+            cd = [ln[3:] for ln in lines if ln.startswith('CD=')]
+            args = [ln[5:].strip() for ln in lines if ln.startswith('ARGS=')]
+            after = re.findall(r'(\d+)\D*$', lines[-1]) if lines else []
+            return r, cd, args, after
+
+        for page in (437, 65001):
+            r, cd, args, after = run(page, probe)
+            check(r.returncode == 0 and cd == [xenia] and not r.stderr.strip(),
+                  f'launch.cmd in code page {page}: cmd.exe changes to a Xenia folder named with an accent, a % and '
+                  f'Cyrillic and CJK letters ({ascii(cd)}, {r.stderr[:80]!r})')
+            check(args == [want], f'launch.cmd in code page {page}: the start line names the fixed Xenia and the title '
+                                  f'whole ({ascii(args)})')
+            check(after == [str(page)], f'launch.cmd in code page {page}: the console has its code page back ({after})')
+        r, cd, _args, _after = run(437, control)
+        check(cd != [xenia], 'control: without its chcp line, the same file does not reach the folder in code page 437 '
+                             f'({ascii(cd)})')
+        for bad in ('Xenia "q"', 'Xenia \udc80'):          # a double quote; a lone surrogate (not Unicode)
             try:
                 xeniakit.launcher_text(dict(netfix=os.path.join(tmp, bad, netfix.FIXED), title=m['title']), 'vulkan')
-                ok = bad.encode(enc, 'strict').decode(enc) == bad      # only when this code page does hold them
-            except (ValueError, UnicodeError):
+                ok = False
+            except ValueError:
                 ok = True
-            check(ok, f'launch.cmd: a folder its code page cannot hold ({ascii(bad)}) is refused')
+            check(ok, f'launch.cmd: a folder it cannot name ({ascii(bad)}) is refused')
 
 
 def full_build():

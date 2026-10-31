@@ -27,7 +27,7 @@ import numpy as np
 
 import navaudit1943 as A  # noqa: E402
 import navkitjson1943 as nj  # noqa: E402
-import navbuild  # noqa: E402  (this variant's: the script lists suitepath.NAVKIT_BE first)
+import navbuild  # noqa: E402  (bf1943-auto-navkit-common, a shared folder)
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, materialmap1943, terrain  # noqa: E402
 

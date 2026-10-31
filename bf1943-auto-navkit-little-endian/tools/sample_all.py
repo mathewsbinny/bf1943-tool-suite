@@ -2,7 +2,7 @@
 
   sample_all.py [--pitch 0.2] [--levels sp_009,sp_01,...] [--smoke sp_009] [--budget <ms per frame>] [--log <file>]
 
-For each level, navkit.py's sample (normal and high-capsule runs). With --pitch 0.2 only the level's detailed
+For each level, navkit_le.py's sample (normal and high-capsule runs). With --pitch 0.2 only the level's detailed
 sectors are sampled (detailed.py); a level without 0.8 m samples gets its 0.8 m runs first (the detailed choice and
 the build need them). --smoke: that level first; if it fails, nothing else runs (a broken sampler stops the night's
 run at once). Other failures are logged and the run goes on. A summary at the end.
@@ -19,7 +19,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use(suitepath.NAVKIT_LE)
-import navkit  # noqa: E402
+import navkit_le as navkit  # noqa: E402
 
 LEVELS = ['sp_01', 'sp_02', 'sp_03', 'sp_04', 'sp_003_b', 'sp_004_b', 'sp_005', 'sp_005_b', 'sp_006', 'sp_007', 'sp_008',
           'sp_008_b', 'sp_009', 'ons_mp_002', 'ons_mp_004']

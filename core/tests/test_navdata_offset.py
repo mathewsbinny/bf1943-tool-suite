@@ -17,9 +17,9 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_LE)
+    suitepath.use()
 from bfbc2core import navdata  # noqa: E402
-import navdiff  # noqa: E402  (the little-endian tools, suitepath.NAVKIT_LE)
+import navdiff  # noqa: E402  (bf1943-auto-navkit-common, a shared folder)
 
 failures = []
 

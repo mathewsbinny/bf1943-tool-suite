@@ -8,6 +8,7 @@ sectors are not joined at all (Wake Island's Japanese carrier, Coral Sea's islet
 
   python -B test_mixed_seam.py
 """
+import dataclasses
 import os
 import shutil
 import struct
@@ -23,7 +24,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
+    suitepath.use(suitepath.NAVKIT_BE)
 import hpdcheck  # noqa: E402
 import hpdtool  # noqa: E402
 import navbuild  # noqa: E402
@@ -73,13 +74,15 @@ def islands(path):
 
 
 def build(tmp, gap_nodes):
-    navbuild.SEAM_GAP_NODES = gap_nodes
+    # BF1943's settings, with the seam gap nodes as given (a setting since 2026-10-31: navbuild.SEAM_GAP_NODES, which
+    # this test switched, was a module constant)
+    settings = dataclasses.replace(soldier1943.SETTINGS, seam_gap_nodes=gap_nodes)
     out = os.path.join(tmp, f'seam_{int(gap_nodes)}.hpd')
     lines = []
     navbuild.build(os.path.join(tmp, 's08.bin'), os.path.join(tmp, 'forbid.npy'), 0, 0, out, step=soldier1943.STEP,
                    seeds=[(50.0, 0.0, 50.0), (150.0, 0.0, 50.0)], max_water_depth=None,
                    detailed={'samples': os.path.join(tmp, 's02.bin'), 'high': None, 'sectors': {(1, 0)}},
-                   log=lines.append, settings=soldier1943.SETTINGS)
+                   log=lines.append, settings=settings)
     return out, lines
 
 
@@ -114,24 +117,22 @@ if __name__ == '__main__':
         # 0.2 m: sector (1, 0) and 4 m of its neighbour; the wall 99.2-102.4 with the real opening at z 28.6-29.4
         write_samples(os.path.join(tmp, 's02.bin'), 0.2, 96.0, 0.0, 520, 500,
                       lambda x, z: 99.1 <= x <= 102.5 and not 28.55 <= z <= 29.45)
-        old = navbuild.SEAM_GAP_NODES
-        try:
-            for gap_nodes in (False, True):
-                path, log = build(tmp, gap_nodes)
-                isl, pos = islands(path)
-                west = min(pos, key=lambda i: (pos[i][0] - 50) ** 2 + (pos[i][2] - 50) ** 2)
-                east = min(pos, key=lambda i: (pos[i][0] - 150) ** 2 + (pos[i][2] - 50) ** 2)
-                joined = isl[west] == isl[east]
-                if not gap_nodes:
-                    check(not joined, 'without seam gap nodes the two sectors are not joined (the break reproduced)')
-                else:
-                    check(joined, 'with seam gap nodes the two sectors are joined through the 0.8 m opening')
-                    added = [l for l in log if 'seam gap nodes' in l]
-                    check(bool(added), f"the build reports them: {added[0] if added else 'nothing'}")
-                    bad = {k: v for k, v in hpdcheck.check(path).items() if v}
-                    check(not bad, f'hpdcheck passes ({bad or "clean"})')
-        finally:
-            navbuild.SEAM_GAP_NODES = old
+        check(soldier1943.SETTINGS.seam_gap_nodes and not navbuild.BFBC2.seam_gap_nodes,
+              "seam gap nodes: on in BF1943's settings, off in NavKit's defaults (BFBC2)")
+        for gap_nodes in (False, True):
+            path, log = build(tmp, gap_nodes)
+            isl, pos = islands(path)
+            west = min(pos, key=lambda i: (pos[i][0] - 50) ** 2 + (pos[i][2] - 50) ** 2)
+            east = min(pos, key=lambda i: (pos[i][0] - 150) ** 2 + (pos[i][2] - 50) ** 2)
+            joined = isl[west] == isl[east]
+            if not gap_nodes:
+                check(not joined, 'without seam gap nodes the two sectors are not joined (the break reproduced)')
+            else:
+                check(joined, 'with seam gap nodes the two sectors are joined through the 0.8 m opening')
+                added = [l for l in log if 'seam gap nodes' in l]
+                check(bool(added), f"the build reports them: {added[0] if added else 'nothing'}")
+                bad = {k: v for k, v in hpdcheck.check(path).items() if v}
+                check(not bad, f'hpdcheck passes ({bad or "clean"})')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('all passed' if not failures else f'{len(failures)} failed')

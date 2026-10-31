@@ -4,7 +4,7 @@ NavKit makes a navigation build for a level of your Battlefield 1943 copy: walka
 route graph, saved as `<level>.hpd`. The build is the input of our own navigation runtime for bots; BF1943 has no
 Kynapse runtime, so nothing is installed in the game. This page shows how to make one from start to finish.
 
-To learn how it works inside, read [README.md](README.md) and the [specification](research/KYNAPSE_SPEC.md).
+To learn how it works inside, read [README.md](README.md) and the [specification](../bf1943-auto-navkit-common/research/KYNAPSE_SPEC.md).
 
 ## Before you start
 

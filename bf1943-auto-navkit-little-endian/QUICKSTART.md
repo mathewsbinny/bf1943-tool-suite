@@ -7,7 +7,7 @@ way around a level. You choose a level, NavKit measures the level in the running
 file. This page shows how to do that from start to finish.
 
 To learn how it works inside, read [README.md](README.md) and the
-[specification](research/KYNAPSE_SPEC.md).
+[specification](../bf1943-auto-navkit-common/research/KYNAPSE_SPEC.md).
 
 ## What works today
 
@@ -17,7 +17,7 @@ To learn how it works inside, read [README.md](README.md) and the
 | Onslaught maps (`ons_mp_*`) | Yes. They have AI, so they can be measured. These are Napisal's co-op Rush levels. They ship without the file that tells the game how the path data is numbered, so in game set OPFOR's `[dev] sector_offsets` (ONS_MP_002: `-3,-7`) - with either file, DICE's or NavKit's - or many AI route requests fail. |
 | Stock multiplayer maps (`mp_*`) | **Not yet.** NavKit measures a level while its AI is running, and stock multiplayer maps start without AI. Support is planned. |
 
-The GUI and `navkit.py levels` mark the levels you can use today as *samplable*.
+The GUI and `navkit_le.py levels` mark the levels you can use today as *samplable*.
 
 ## Before you start
 
@@ -46,7 +46,7 @@ Close the game before you use NavKit. Two steps start and close the game on thei
 
 ## The easy way: the NavKit window
 
-Double-click **`navkitGUI.pyw`** in the `bf1943-auto-navkit-little-endian` folder. The window has a level list at the top, the sampling area below
+Double-click **`navkitGUI_le.pyw`** in the `bf1943-auto-navkit-little-endian` folder. The window has a level list at the top, the sampling area below
 it, then the steps, and a log of what NavKit is doing at the bottom.
 
 1. **Pick a level** in the *Level* list, for example `sp_01`. Leave *Only levels with AI* ticked to list
@@ -79,17 +79,17 @@ level. **Open output folder** shows that level's files.
 Run these from the `bf1943-auto-navkit-little-endian` folder:
 
 ```
-python navkit.py levels            list levels; "yes (samplable)" = NavKit can build it
-python navkit.py prepare sp_01
-python navkit.py sample  sp_01     asks before it starts the game; add --yes to skip the question
+python navkit_le.py levels            list levels; "yes (samplable)" = NavKit can build it
+python navkit_le.py prepare sp_01
+python navkit_le.py sample  sp_01     asks before it starts the game; add --yes to skip the question
                                    (--pitch 0.8 or --pitch 0.2: only the normal or only the fine measurement;
                                    --budget 800: more sampling per frame, when a run says the level ended first)
-python navkit.py build   sp_01
-python navkit.py check   sp_01
-python navkit.py install sp_01     restore sp_01 puts the original back
-python navkit.py status  sp_01     what has been done for a level
-python navkit.py all     sp_01     prepare, sample, build and check in one go
-python navkit.py compare sp_01     the original against NavKit's file; --reference / --candidate for any two files
+python navkit_le.py build   sp_01
+python navkit_le.py check   sp_01
+python navkit_le.py install sp_01     restore sp_01 puts the original back
+python navkit_le.py status  sp_01     what has been done for a level
+python navkit_le.py all     sp_01     prepare, sample, build and check in one go
+python navkit_le.py compare sp_01     the original against NavKit's file; --reference / --candidate for any two files
 ```
 
 ## Reading the check
@@ -139,12 +139,12 @@ regions - see the parity tools in [README.md](README.md) (`tools\navparity.py`, 
 
 ## Trying it in game
 
-1. Click **Install in game** (or `python navkit.py install <level>`).
+1. Click **Install in game** (or `python navkit_le.py install <level>`).
 2. Start Project OPFOR as usual (`OPFOR.exe`) and, for a campaign level, start the mission from the
    campaign menu. (OPFOR's developer trigger, `[dev] level=` / `testrun.bat`, often leaves a campaign level
    on a black screen.)
 3. Play, watching the AI soldiers.
-4. Quit, then click **Restore original** (or `python navkit.py restore <level>`).
+4. Quit, then click **Restore original** (or `python navkit_le.py restore <level>`).
 
 State of NavKit's files today (2026-10-22): on SP_004_B the friendly squad follows the player and moves
 through the mission on NavKit's file, and leaving a level no longer crashes the game. Measured against
@@ -187,7 +187,7 @@ level are missing at the edges, make the area larger. In the window, type new va
 *Sampling area* before you click Prepare or Sample in game. From a command prompt, add the area like this:
 
 ```
-python navkit.py prepare sp_01 --box -900,-620,440,520 --y -30,600
+python navkit_le.py prepare sp_01 --box -900,-620,440,520 --y -30,600
 ```
 
 `--box` is the west, south, east and north edge in metres (min X, min Z, max X, max Z). `--y` is the
@@ -202,7 +202,7 @@ bottom and top height. Make the top higher than the tallest roof. A larger area 
 | "sampling did not finish: timed out" | The run took over an hour. Use a smaller area or check that the level loads at all. |
 | "...has no AI path data, so its AI (and the sampler) may not start" | The level is a stock multiplayer map, which is not supported yet. See [What works today](#what-works-today). |
 | A run was cancelled or the PC crashed during sampling | NavKit edits `game\opfor.ini` while sampling and puts it back afterwards. If that was interrupted, the next Sample puts it back, and **Cancel** in the window does too. The saved copy is `work\navkit\opfor.ini.backup`. |
-| The AI acts oddly with NavKit's file installed | Click **Restore original** (or `navkit.py restore <level>`). The level is back to its original data. |
+| The AI acts oddly with NavKit's file installed | Click **Restore original** (or `navkit_le.py restore <level>`). The level is back to its original data. |
 | "FbrbTool.exe not found" / "DbxEdit.exe not found" | Run OPFOR's `build_menus.bat`, which puts both in OPFOR's `tools\` folder; DbxEdit can also be built with `build.bat` in the suite's `bf1943-dbx-tools` folder (see [Before you start](#before-you-start)). |
 | "Project OPFOR not found" / "no game copy" | Tell NavKit where OPFOR is (`OPFOR_ROOT` or `--opfor`), and run OPFOR's `setup_game.bat` if it has no `game\` folder yet. |
 

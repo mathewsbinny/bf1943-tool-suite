@@ -11,6 +11,9 @@ is refreshed. Destinations must not exist yet. Every written file is checked aga
 and the commit, blob ids and SHA-256 hashes are recorded in provenance/opfor-imports.json.
 
 A folder renamed in this suite is recorded as {"kind": "rename", "from", "to", "date"}; --update follows renames.
+Files moved out of an import (merged into a copy elsewhere in this suite) are recorded as {"kind": "move",
+"destination", "paths": {path: where it is now}, "moved", "note"}: --update never brings them back to the import, and
+a change to one in the source is reported as a conflict to merge by hand at its new place.
 --update brings earlier imports up to the source suite's current commit. For each file, its last recorded
 version (import or update) is compared with the source: a file changed there is replaced only where this
 suite's copy is still exactly that recorded version; a file changed in both places is left alone and reported
@@ -121,9 +124,11 @@ def import_one(commit, source, destination, note, item=None):
     return item
 
 
-def recorded(manifest, destination):
+def recorded(manifest, destination, moves=None):
     """(source, {path: file record}, removed paths): the last recorded version of each file imported to destination,
-    and the files removed here since (records {"kind": "remove", "destination", "paths"}), which updates leave out."""
+    and the files removed here since (records {"kind": "remove", "destination", "paths"}) or moved elsewhere in this
+    suite (records {"kind": "move", "destination", "paths": {path: new place}}), which updates leave out. moves: a dict
+    that gets {path: new place} of the moved ones."""
     names = {destination}                               # and the names it had before a rename
     for entry in reversed(manifest['imports']):
         if entry.get('kind') == 'rename' and entry['to'] in names:
@@ -132,6 +137,10 @@ def recorded(manifest, destination):
     for entry in manifest['imports']:
         if entry.get('kind') == 'remove' and entry['destination'] in names:
             removed.update(entry['paths'])
+        if entry.get('kind') == 'move' and entry['destination'] in names:
+            removed.update(entry['paths'])
+            if moves is not None:
+                moves.update(entry['paths'])
         for item in entry.get('items', ()):
             if item['destination'] in names:
                 source = item['source']
@@ -147,11 +156,17 @@ def update_one(commit, manifest, destination, item=None):
     in as each file is written, so a failure part-way still leaves the files written on record."""
     destination = destination.replace('\\', '/').strip('/')
     dst = os.path.normpath(os.path.join(SUITE, destination))
-    source, known, removed = recorded(manifest, destination)
+    moves = {}
+    source, known, removed = recorded(manifest, destination, moves)
     updated, conflicts = [], []
     item = item if item is not None else {}
     item.update({'source': source, 'destination': destination, 'note': 'update', 'files': updated, 'conflicts': conflicts})
     for path, rel, blob in tracked(commit, source):
+        if rel in moves:
+            old = known.get(rel)
+            if not old or old['git_blob'] != blob:      # changed in the source since: merge it by hand where it went
+                conflicts.append(f'{rel} (moved to {moves[rel]})')
+            continue
         if rel in removed:
             continue                                    # removed here on purpose
         old = known.get(rel)

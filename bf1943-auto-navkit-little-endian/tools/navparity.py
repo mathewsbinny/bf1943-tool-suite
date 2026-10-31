@@ -45,13 +45,13 @@ NEAR_DY = 1.0                   # height tolerance of a node match (both files' 
 
 
 def opfor_root(given=None):
-    import navkit
+    import navkit_le as navkit
     return navkit.find_opfor(given)
 
 
 def reference_of(root, lv):
     """DICE's path data for the level: the kept original while NavKit's file is installed. A level that had none
-    (navkit.py install left its .opfor-none marker) gives the backup's path, which does not exist: the installed
+    (navkit_le.py install left its .opfor-none marker) gives the backup's path, which does not exist: the installed
     file is NavKit's own, not a reference."""
     path = os.path.join(root, 'game', 'Output', 'win32', 'ai', 'levels', lv, 'infantry', 'pathdata.hpd')
     if os.path.isfile(path + '.opfor-orig') or os.path.isfile(path + '.opfor-none'):
@@ -64,7 +64,7 @@ def level_xml(root, lv):
     for name in os.listdir(folder):
         if name.lower() == lv + '.xml':
             return os.path.join(folder, name)
-    raise FileNotFoundError(f'{lv}: converted level partition not found in {folder} (navkit.py prepare {lv})')
+    raise FileNotFoundError(f'{lv}: converted level partition not found in {folder} (navkit_le.py prepare {lv})')
 
 
 def terrain_bounds(root, lv):

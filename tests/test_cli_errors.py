@@ -77,8 +77,7 @@ def main(argv):
                  'bf1943-automated-map-and-bot-test-harness/xenia-run/udp_join_probe.py',
                  'bf1943-automated-map-and-bot-test-harness/xenia-run/xeniarun.py',
                  'bf1943-automated-map-and-bot-test-harness/xenia-run/guestmem.py']
-        helps += [f'bf1943-auto-navkit-{v}-endian/tools/{n}.py' for v in ('big', 'little')
-                  for n in ('detailed', 'hpdcheck', 'hpdview')]
+        helps += [f'bf1943-auto-navkit-common/tools/{n}.py' for n in ('detailed', 'hpdcheck', 'hpdview')]
         for tool in helps:
             path = os.path.join(SUITE, *tool.split('/'))
             first = open(path, encoding='utf-8').read().split('"""')[1].strip().splitlines()[0]

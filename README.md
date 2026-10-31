@@ -46,7 +46,8 @@ Status: **ready** = works on BF1943 data today; **partly** = some parts read BF1
 | `bf1943-spawn-map/` | each level's bases and flags with the soldier and vehicle spawns they own (`spawnmap.py`) | **ready** | new; uses `core/bfbc2core/dbx.py` and `bf1943-fbrb-tool` |
 | `bf1943-console-readers/` | read-only STFS package reader (`stfs/stfs.py`) | **ready** (STFS only: it extracts BF1943's package for the Xenia kit; the disc image reader was removed, BF1943 is download-only) | OPFOR console readers |
 | `bf1943-auto-navkit-big-endian/` | NavKit for BF1943's Xbox 360 levels (big-endian; Havok 4.6.1): `navkit.py` / `navkitGUI.pyw` prepare, sample (offline), build and check a level's navigation; `tools/navaudit1943.py` audits a build against its level; `tools/navexport1943.py` exports it as the navigation runtime's RSNV file (`tools/rsnvtool.py` inspects one); `tools/navexport_vehicles1943.py` builds the vehicle worlds (ground: `groundnav1943.py`, sea: `seanav1943.py`, planes: `airnav1943.py`) | **ready** (the BF1943 pipeline; all four MP maps built and audited 2026-10-24: every flag pair routed (Coral Sea has one flag), `hpdcheck` passes, every required position on land reachable but Coral Sea's South Base flag, whose walkable ground is 2.1 m away against the audit's 2 m reach) | a copy of the little-endian variant |
-| `bf1943-auto-navkit-little-endian/` | NavKit for little-endian levels: BFBC2 PC today, later BF1943 converted for the PC port | **partly** (reads Havok 4.6.1; otherwise OPFOR's BFBC2 NavKit; its `prepare` needs BFBC2's FbrbTool, which this suite no longer has: it uses OPFOR's `tools\` copy) | OPFOR NavKit (kept in step with `tools/import_opfor.py --update`) |
+| `bf1943-auto-navkit-little-endian/` | NavKit for little-endian levels: BFBC2 PC today, later BF1943 converted for the PC port (`navkit_le.py` / `navkitGUI_le.pyw`, named so since 2026-10-31) | **partly** (reads Havok 4.6.1; otherwise OPFOR's BFBC2 NavKit; its `prepare` needs BFBC2's FbrbTool, which this suite no longer has: it uses OPFOR's `tools\` copy) | OPFOR NavKit (kept in step with `tools/import_opfor.py --update`) |
+| `bf1943-auto-navkit-common/` | the NavKit modules both variants use, one copy (2026-10-31): the builder `navbuild` (a package, with explicit `Settings`: BFBC2's defaults or BF1943's `soldier1943.SETTINGS`), walkability rules, samples, the `.hpd` reader and writer, the Havok reader, level objects, the detailed-sector rule, `navdiff`; the format spec; their rule tests | **ready** (both variants' builds byte for byte as before the merge: four BF1943 maps with their RSNV exports, two BFBC2 levels) | the two variants' copies, merged |
 | `core/` | shared readers (DBX, terrain, water, ground materials), the game copy and its bundles (`game1943.py`), level loaders, vehicle entry points, the navigation runtime's RSNV file and its reference search and planners, 3D view | **ready for BF1943**: `dbx.py`, `terrain.py`, `water.py`, `materialmap1943.py`, `game1943.py`, `level1943.py`, `vehicles1943.py`, `navdata.py`, `navpath.py`, `rsnv.py`, `rsnvtrip.py`, `rsnvhybrid.py`; `level.py`, `xmlinst.py` and `navtune.py` stay BFBC2 | OPFOR `core/` |
 | `bf1943-dbx-tools/` | view, edit and check binary `.dbx` (DbxEdit, DbxEditGUI; `schema1943.py` writes the executable's reflection schema into DbxEdit for the level check) | **ready** (reads, writes and edits BF1943 partitions: all of Wake Island's round-trip byte for byte; the level check uses BF1943's own rules - what all five shipped levels satisfy, the executable's completed reflection schema (members, reference and element classes, enum values) and, with `--bundle`, the level's static cull trees - chosen from the file, BFBC2's on request; the slot fixer repairs BF1943 cull slots; the rules' in-game effects are not tried) | OPFOR DbxEdit |
 | `bf1943-map-inspector/`, `bf1943-navigation-studio/` | 3D views of BF1943 levels (bases, flags, spawns by team) and of NavKit's navigation builds (path test; no editing) | **ready** | OPFOR tools of the same names |
@@ -65,18 +66,22 @@ glfw and imgui-bundle for the 3D tools; capstone for the executable tools and th
 for rsnvtool's pictures. `pip install --group ci` (pip 25.1 or later, in the suite folder) installs all of them at the
 versions CI uses.
 
-**How the tools find each other.** The suite's folders are not packages (their names have hyphens, and the two NavKit
-variants have modules of the same names), so a script that imports from another folder starts with the suite's
-bootstrap, the same lines in every one ([core/suitepath.py](core/suitepath.py) has them): under
+**How the tools find each other.** The suite's folders are not packages (their names have hyphens), so a script that
+imports from another folder starts with the suite's bootstrap, the same lines in every one
+([core/suitepath.py](core/suitepath.py) has them): under
 `if __name__ == '__main__':` it finds the suite root above the script, puts `core` on `sys.path`, and
 `suitepath.use(...)` adds the shared folders (core, the bundle and APT tools, the spawn map, the STFS reader, the Xenia
-kit, the Xenia run tools, the executable tools) and, first, the NavKit variant(s) the script names, in its order.
+kit, the Xenia run tools, the executable tools, NavKit's shared modules) and, first, the NavKit variant(s) the script
+names.
 Libraries (core, the tools' importable modules) never change `sys.path`; they import plainly, so what they get is
 decided by the script that was run, never by what happened to be imported first. `tests/test_repo.py` fails on any
-other `sys.path` edit and on a module name shared by two of those folders (the NavKit variants apart).
+other `sys.path` edit and on a module name shared by two of those folders, the NavKit variants included: what both
+use is one copy in `bf1943-auto-navkit-common` (a shared folder), so the order a script names the variants in changes
+nothing it imports.
 
 **Installing (development).** `pip install -e .` puts `core` (`bfbc2core`, `suitepath`) and the shared folders on
-`sys.path` for that environment, so the bootstrap adds nothing for them; a script still chooses its NavKit variant.
+`sys.path` for that environment, so the bootstrap adds nothing for them; a script still names the NavKit variant whose
+own modules it uses.
 The tools need no install, and CI runs them without one.
 
 **From another project** (operation-rising-sun's investigations): put the suite's `core` on `sys.path`, then
@@ -88,8 +93,8 @@ The tools need no install, and CI runs them without one.
 
 | Tier | Needs | Covers |
 |---|---|---|
-| `quick` | nothing (69 tests, two to three minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules in both variants; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
-| `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 23, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace, the VMX recorder's checks among them (skipped without one) |
+| `quick` | nothing (58 tests, two to three minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules (the shared modules: rules, edge cases, damaged files) and the little-endian driver's steps; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
+| `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 22, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace, the VMX recorder's checks among them (skipped without one) |
 
 Run `quick` before every commit and `bf1943 --strict` before every push.
 
@@ -99,9 +104,8 @@ points `BF1943_GAME` and `BF1943_RESEARCH` at empty folders, builds the C# tools
 Framework 4 compiler is part of the image) and runs the tools from the checkout, without an install; then it checks
 that the package installs (`pip install -e .`). It has no game copy, no research workspace and no Xenia, and downloads
 nothing but Python libraries: so every quick test runs without them, and a skip fails the run like a failure.
-The tests run in a console with the OEM code page (437), which the Xenia kit's `launch.cmd` assumes: cmd.exe reads a
-batch file in the console's code page, so in a UTF-8 console (65001) a Xenia folder with an accented name fails
-(`tests	est_xeniakit.py` shows it; not fixed yet).
+The console's code page does not matter: the Xenia kit's `launch.cmd` switches to UTF-8 itself, and its test runs it
+under both the OEM page (437) and UTF-8 (65001).
 
 A test whose data is missing is shown as SKIP, and one that skipped some of its checks as `ok*`. The summary counts
 both ("58 of 59 passed, 1 skipped", "..., 1 partly skipped") and lists them under "not fully run" with the reason, so

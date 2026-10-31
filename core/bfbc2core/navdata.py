@@ -1,6 +1,6 @@
 """A Kynapse path-data file (pathdata.hpd) as the suite's 3D tools draw it: walkable cells, area boundaries, the
-route graph and its islands. Read with NavKit's byte-exact reader (bf1943-auto-navkit-little-endian/tools: hpdtool, kymesh,
-navdiff); the format is in bf1943-auto-navkit-little-endian/research/KYNAPSE_SPEC.md.
+route graph and its islands. Read with NavKit's byte-exact reader (bf1943-auto-navkit-common/tools: hpdtool, kymesh,
+navdiff); the format is in bf1943-auto-navkit-common/research/KYNAPSE_SPEC.md.
 
     nav = load(path, heightfield=None, cache_dir=None, y_offset=Y_OFFSET)
     nav.areas[k]                 NavArea: sector, tile, layer, pitch, boundary pieces, island
@@ -34,8 +34,8 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import sys
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
-    suitepath.use(suitepath.NAVKIT_LE)
-# the little-endian NavKit's tools: the script that was run puts them on sys.path (suitepath.NAVKIT_LE)
+    suitepath.use()
+# NavKit's shared tools (bf1943-auto-navkit-common/tools, one of suitepath.SHARED: on sys.path from the script)
 import hpdtool  # noqa: E402
 import kymesh  # noqa: E402
 import navdiff  # noqa: E402

@@ -1071,6 +1071,42 @@
       ],
       "removed": "2026-10-23T19:34:14-04:00",
       "note": "BFBC2 PC's .fbrb tool; BF1943's FbRB v2 bundles are read and written by fbrb1943.py"
+    },
+    {
+      "kind": "move",
+      "destination": "bf1943-auto-navkit-little-endian",
+      "paths": {
+        "navkit.py": "bf1943-auto-navkit-little-endian/navkit_le.py",
+        "navkitGUI.pyw": "bf1943-auto-navkit-little-endian/navkitGUI_le.pyw",
+        "research/KYNAPSE_SPEC.md": "bf1943-auto-navkit-common/research/KYNAPSE_SPEC.md",
+        "research/img/sp02_infantry_0104.png": "bf1943-auto-navkit-common/research/img/sp02_infantry_0104.png",
+        "research/img/sp02_infantry_0705.png": "bf1943-auto-navkit-common/research/img/sp02_infantry_0705.png",
+        "tests/test_area_link.py": "bf1943-auto-navkit-common/tests/test_area_link.py",
+        "tests/test_bridge_union.py": "bf1943-auto-navkit-common/tests/test_bridge_union.py",
+        "tests/test_characters.py": "bf1943-auto-navkit-common/tests/test_characters.py",
+        "tests/test_dynamic_props.py": "bf1943-auto-navkit-common/tests/test_dynamic_props.py",
+        "tests/test_havok_index.py": "bf1943-auto-navkit-common/tests/test_havok_index.py",
+        "tests/test_headroom.py": "bf1943-auto-navkit-common/tests/test_headroom.py",
+        "tests/test_lips.py": "bf1943-auto-navkit-common/tests/test_lips.py",
+        "tests/test_navedits.py": "bf1943-auto-navkit-common/tests/test_navedits.py",
+        "tests/test_portal_symmetry.py": "bf1943-auto-navkit-common/tests/test_portal_symmetry.py",
+        "tests/test_roof_prune.py": "bf1943-auto-navkit-common/tests/test_roof_prune.py",
+        "tests/test_water_rule.py": "bf1943-auto-navkit-common/tests/test_water_rule.py",
+        "tools/detailed.py": "bf1943-auto-navkit-common/tools/detailed.py",
+        "tools/hkpack.py": "bf1943-auto-navkit-common/tools/hkpack.py",
+        "tools/hpdcheck.py": "bf1943-auto-navkit-common/tools/hpdcheck.py",
+        "tools/hpdtool.py": "bf1943-auto-navkit-common/tools/hpdtool.py",
+        "tools/hpdview.py": "bf1943-auto-navkit-common/tools/hpdview.py",
+        "tools/kymesh.py": "bf1943-auto-navkit-common/tools/kymesh.py",
+        "tools/levelobjects.py": "bf1943-auto-navkit-common/tools/levelobjects.py",
+        "tools/navdiff.py": "bf1943-auto-navkit-common/tools/navdiff.py",
+        "tools/navedits.py": "bf1943-auto-navkit-common/tools/navedits.py",
+        "tools/navsample.py": "bf1943-auto-navkit-common/tools/navsample.py",
+        "tools/navwalk.py": "bf1943-auto-navkit-common/tools/navwalk.py",
+        "tools/navbuild.py": "bf1943-auto-navkit-common/tools/navbuild/ (a package)"
+      },
+      "moved": "2026-10-31T17:18:23-04:00",
+      "note": "NavKit's modules both variants use are one copy in bf1943-auto-navkit-common, merged with the big-endian variant's copies (the builder with explicit Settings: BFBC2 NavKit's defaults, BF1943 soldier1943.SETTINGS); the driver and window renamed navkit_le.py / navkitGUI_le.pyw so no module name is in both variants; an OPFOR change to any of these is merged by hand at its new place"
     }
   ]
 }

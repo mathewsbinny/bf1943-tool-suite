@@ -2,6 +2,8 @@
 
 > **This variant reads big-endian data:** BF1943's Xbox 360 levels (terrain heightfields; Havok 4.6.1 packfiles). It began as a copy of `bf1943-auto-navkit-little-endian` on 2026-10-23. OPFOR's changes reach it through that variant, not directly.
 
+> **2026-10-31: the modules both variants use are one copy in [`bf1943-auto-navkit-common`](../bf1943-auto-navkit-common/README.md)** (the builder `navbuild`, now a package, `navwalk`, `navsample`, `navedits`, `hpdtool`, `kymesh`, `hpdcheck`, `hpdview`, `hkpack`, `havok461`, `levelobjects`, `detailed`, `navdiff`; the spec `KYNAPSE_SPEC.md`; the rule tests), merged with the little-endian copies. This variant keeps its BF1943 tools (`*1943.py`, `rsnvtool.py`) and builds with `soldier1943.SETTINGS`; every BF1943 build and RSNV export comes out byte for byte as before (all four maps rebuilt and exported, 2026-10-31). Below, `tools\<shared module>` means the common folder's.
+
 Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-24) - `navkit.py` and `navkitGUI.pyw` are the
 BF1943 pipeline: from a level of your BF1943 copy to a checked navigation build, and `tools\navaudit1943.py`
 audits a build against its level. **To use it, start with [QUICKSTART.md](QUICKSTART.md).**
@@ -34,7 +36,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   sectors (`tools\detailed1943.py`), then two runs at 0.2 m over them. *build* runs `tools\navbuild.py` with
   BF1943's soldier (`tools\soldier1943.py`): 0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn seeds,
   ladder links, jump links to ships' AA gun platforms (`tools\jumplinks1943.py`), and a shared node wherever the
-  two grids' ground meets a mixed-pitch seam with no node joining it (`navbuild.SEAM_GAP_NODES`). *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
+  two grids' ground meets a mixed-pitch seam with no node joining it (`seam_gap_nodes` in `soldier1943.SETTINGS`). *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
   to the route graph, and a route between every pair of flags; it fails when there was nothing to check (no
   soldier spawn, a flag without spawns while others have them, fewer than two flags; 2026-10-30). A Wake Island run
   takes about 45 minutes on 8 cores, most of it the 0.2 m sampling.
@@ -238,9 +240,10 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
 | `picture <level> --at X,Z [--radius R] [--y Y] [--route FROM TO]` | a top-down PNG: cells; edges (tight red, ladders orange, jumps cyan); a route in yellow |
 | `diff <a> <b>` | what changed between two exports |
 
-**Reading BF1943.** `tools\hkpack.py` reads Havok 4.6.1 packfiles (byte order from the file's layout rules,
-20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are given by
-`tools\havok461.py` (checked by `tests\test_havok461.py` on all 807 meshes of Wake Island's 97 Havok files).
+**Reading BF1943.** `hkpack.py` (`bf1943-auto-navkit-common\tools`) reads Havok 4.6.1 packfiles (byte order from
+the file's layout rules, 20-byte class-member records); BF1943's packfiles carry no `__types__`, so class layouts are
+given by `havok461.py` there (checked by its `tests\test_havok461.py` on all 807 meshes of Wake Island's 97 Havok
+files).
 `tools\levelobjects1943.py` reads object placements and collision straight from the bundles (meshes and
 `hkConvexVerticesShape` boxes; `hkBoxShape` and `hkConvexTranslateShape` are not read yet and are reported), and
 writes `ladders.json` from the placed objects whose blueprint has a `LadderEntityData` (Wake Island: 16). Core's
@@ -253,18 +256,23 @@ over the BFBC2 defaults (`navbuild.BFBC2`): slope limit, the detailed zones' lin
 and the headroom band (0.5-1.8 m); the water depth goes in as `build(max_water_depth=...)`. They also switch on
 BF1943's build rules (`ladder_all_ground`, and the seam and area rules of the 2026-10-26 entries above). Nothing
 rewrites NavKit's module constants at run time (`configure()` did until 2026-10-31). NavKit's other values were fitted
-to DICE's BFBC2 path data and are not checked on BF1943.
+to DICE's BFBC2 path data and are not checked on BF1943. Since the two variants' builders were merged (2026-10-31),
+two more settings say what this variant's copy always did: `seam_gap_nodes` on (the little-endian copy never had it),
+and `column_sectors_cm` off - a sample column's sector from its float position, as every BF1943 build so far; the
+whole-centimetre rule NavKit now defaults to moves columns on a sector line (17,172 of Wake Island's 0.8 m columns), so
+it waits for a rebuild and an audit (`detailed1943.py` counts stacked floors by the same rule).
 
-**Tools in this variant:** `detailed.py`, `detailed1943.py`, `havok461.py`, `hkpack.py`, `hpdcheck.py`,
-`hpdtool.py`, `hpdview.py`, `kymesh.py`, `levelobjects.py`, `levelobjects1943.py`, `navbuild.py`, `navedits.py`,
-`navsample.py`, `navsample1943.py`, `navwalk.py`, `routecheck1943.py`, `soldier1943.py`, `jumplinks1943.py`,
-`navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`, `rsnvtool.py`, `enclosure_probe1943.py`,
-`vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`, `airnav1943.py`, `rsnvgrid1943.py`,
-`navexport_vehicles1943.py`, `navkitjson1943.py` (navkit.json and its stamps, shared by `navkit.py` and the tools)
-(`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a spot is cut off from the network). Removed from this variant:
-`graphstats`, `sample_all`, `navwater`, `navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navdiff`,
-`navparity`, `navregress`, `ordercheck` and `ladders.py`. They remain in `bf1943-auto-navkit-little-endian`, which
-stays OPFOR's BFBC2 NavKit.
+**Tools in this variant:** `detailed1943.py`, `levelobjects1943.py`, `navsample1943.py`, `routecheck1943.py`,
+`soldier1943.py`, `jumplinks1943.py`, `navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`,
+`rsnvtool.py`, `enclosure_probe1943.py`, `vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`,
+`airnav1943.py`, `rsnvgrid1943.py`, `navexport_vehicles1943.py`, `navkitjson1943.py` (navkit.json and its stamps,
+shared by `navkit.py` and the tools) (`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a
+spot is cut off from the network). The modules it shares with the little-endian variant are in
+`bf1943-auto-navkit-common\tools` (one copy since 2026-10-31): `navbuild` (a package), `navwalk.py`, `navsample.py`,
+`navedits.py`, `hpdtool.py`, `kymesh.py`, `hpdcheck.py`, `hpdview.py`, `hkpack.py`, `havok461.py`,
+`levelobjects.py`, `detailed.py`, `navdiff.py`. Not in this variant: `graphstats`, `sample_all`, `navwater`,
+`navlinks`, `navtraversal`, `navboundary`, `navcompare`, `navparity`, `navregress`, `ordercheck` and `ladders.py`.
+They remain in `bf1943-auto-navkit-little-endian`, which stays OPFOR's BFBC2 NavKit.
 
 **Layout of this variant:**
 
@@ -272,24 +280,14 @@ stays OPFOR's BFBC2 NavKit.
 QUICKSTART.md        how to build a BF1943 level's navigation, step by step
 navkitGUI.pyw        the NavKit window (Tkinter): the steps as buttons
 navkit.py            driver: levels / prepare / sample / build / check / all / status
-research\            specification of the path-data format (KYNAPSE_SPEC.md) and images (img\)
-tools\               NavKit tools (Python 3 + numpy)
+tools\               this variant's NavKit tools (Python 3 + numpy); the shared ones (navbuild, navwalk, navsample,
+                     hpdtool, kymesh, hpdcheck, hpdview, hkpack, havok461, levelobjects, detailed, navedits, navdiff)
+                     and the spec (KYNAPSE_SPEC.md) are in ..\bf1943-auto-navkit-common
   levelobjects1943.py  BF1943: object placements, collision, flags and ladders straight from the level's bundles
-  havok461.py          class layouts for Havok 4.6.1 packfiles, which have no __types__ section
-  hkpack.py            Havok binary packfile reader: 5.5 (BFBC2) and 4.6.1 (BF1943), byte order from the file
-  levelobjects.py      the pathfinding-flag rules levelobjects1943.py shares (and BFBC2's XML reader)
   navsample1943.py     BF1943: collision samples computed offline (terrain + collision)
-  navsample.py         the samples file format: read, and compare with a path-data file
   detailed1943.py      BF1943: which sectors are built at 0.2 m (detailed.py's rule on BF1943 data)
-  detailed.py          the detailed-sector rule
-  soldier1943.py       BF1943's soldier and the NavKit settings that follow from it
+  soldier1943.py       BF1943's soldier and the NavKit settings that follow from it (navbuild.Settings)
   navkitjson1943.py    a level's navkit.json (settings and stamps): read, fresh read-modify-write; SHA-256, file identity
-  navwalk.py           walkability rules
-  navbuild.py          the generator: samples + level objects -> a navigation file (pathdata.hpd layout)
-  navedits.py          walkability edits as generator inputs
-  hpdtool.py           the navigation file: info / sector / roundtrip / coverage / meshtrip
-  kymesh.py            per-sector mesh: parse_mesh / write_mesh (byte-exact)
-  hpdcheck.py          structure checks (closed boundaries, edges, node order, zero-length edges)
   routecheck1943.py    BF1943: spawns and flags on the route graph, routes between every pair of flags
   jumplinks1943.py     BF1943: jump links from ships' decks to their AA gun platforms, and between a carrier's floors
                        a ledge apart (SHIP_LEDGES) (ladder records of kind 'jump'); a raised-floor rule
@@ -305,9 +303,9 @@ tools\               NavKit tools (Python 3 + numpy)
   rsnvgrid1943.py      BF1943: the vehicle worlds' RSNV writer (cells on a grid -> an RSNV world)
   navexport_vehicles1943.py  BF1943: builds and checks every vehicle world of a level, and its transfers
   enclosure_probe1943.py  BF1943: why a spot is cut off (flood fill over the 0.2 m samples, the blocking objects, a map)
-  hpdview.py           render one sector to PNG
-tests\               the rule tests (made-up data), the sampler, rsnvtool, jump links, mixed-pitch seams, vehicle
-                     navigation, Havok 4.6.1, Wake Island's objects and the RSNV export
+tests\               the sampler, rsnvtool, jump links, mixed-pitch seams (BF1943's settings), the steps and their
+                     stamps, vehicle navigation, Wake Island's objects and the RSNV export (the rule tests and the
+                     Havok 4.6.1 test are the common folder's)
 ```
 
 What follows is OPFOR's NavKit description, which this variant shares. Its commands, steps and tools are the
