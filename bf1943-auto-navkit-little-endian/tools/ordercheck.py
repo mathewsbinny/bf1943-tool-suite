@@ -30,45 +30,54 @@ Y_OFFSET = 0.95
 
 
 def order_points(xml_path):
-    x = open(xml_path, encoding='utf-8', errors='replace').read()
-    inst = {}
-    for typ, guid, body in xmlinst.instances(x):
+    text = open(xml_path, encoding='utf-8', errors='replace').read()
+    inst = {}           # guid -> (type, body)
+    for typ, guid, body in xmlinst.instances(text):
         inst[guid.lower()] = (typ, body)
 
     def pos(body):
-        t = re.search(r'<complex name="Transform">([^<]*)</complex>', body)
-        if not t:
+        """The instance's translation, or None where it has none (or sits at the origin)."""
+        transform = re.search(r'<complex name="Transform">([^<]*)</complex>', body)
+        if not transform:
             return None
-        v = [float(a) for a in t.group(1).split('/')]
-        return (v[12], v[13], v[14]) if any(abs(c) > 1e-3 for c in v[12:15]) else None
+        values = [float(a) for a in transform.group(1).split('/')]
+        if any(abs(c) > 1e-3 for c in values[12:15]):
+            return (values[12], values[13], values[14])
+        return None
 
-    pts = []
+    pts = []            # (kind, order name, position)
     for guid, (typ, body) in inst.items():
         short = typ.split('.')[-1]
         if short in ('AreaOrderEntityData', 'PatrolOrderEntityData', 'InterludeOrderEntityData',
                      'FireAtAreaOrderEntityData'):
-            name = (re.search(r'<field name="Name">([^<]*)</field>', body) or [None, ''])[1] if re.search(r'<field name="Name">([^<]*)</field>', body) else ''
+            name_field = re.search(r'<field name="Name">([^<]*)</field>', body)
+            name = name_field[1] if name_field else ''
             p = pos(body)
             if p:
                 pts.append((short.replace('EntityData', ''), name, p))
             if short == 'PatrolOrderEntityData':
+                # each referenced waypoint chain, followed through its Next fields
                 for ref in re.findall(r'ref="([0-9a-f-]{36})"', body):
                     seen = set()
-                    g = ref.lower()
-                    while g in inst and g not in seen and inst[g][0].endswith('AreaGeometryEntityData'):
-                        seen.add(g)
-                        q = pos(inst[g][1])
-                        if q:
-                            pts.append(('PatrolWaypoint', name, q))
-                        nxt = xmlinst.field_ref(inst[g][1], 'Next')
-                        g = nxt.lower() if nxt and re.fullmatch(r'[0-9a-f-]{36}', nxt) else ''
+                    waypoint = ref.lower()
+                    while (waypoint in inst and waypoint not in seen
+                           and inst[waypoint][0].endswith('AreaGeometryEntityData')):
+                        seen.add(waypoint)
+                        point = pos(inst[waypoint][1])
+                        if point:
+                            pts.append(('PatrolWaypoint', name, point))
+                        next_ref = xmlinst.field_ref(inst[waypoint][1], 'Next')
+                        if next_ref and re.fullmatch(r'[0-9a-f-]{36}', next_ref):
+                            waypoint = next_ref.lower()
+                        else:
+                            waypoint = ''
     # unique
     out, seen = [], set()
-    for k, n, p in pts:
-        key = (k, round(p[0], 1), round(p[2], 1))
+    for kind, name, p in pts:
+        key = (kind, round(p[0], 1), round(p[2], 1))
         if key not in seen:
             seen.add(key)
-            out.append((k, n, p))
+            out.append((kind, name, p))
     return out
 
 
@@ -76,9 +85,14 @@ def drop_cracks(segs):
     """Coincident segment pairs (in plan) are a zero-width crack inside an area - two adjacent cells of it that
     are not connected to each other (a step) - not its boundary; both are removed for the inside test."""
     from collections import Counter
-    key = lambda sg: tuple(sorted(((round(sg[0][0], 2), round(sg[0][2], 2)), (round(sg[1][0], 2), round(sg[1][2], 2)))))
-    n = Counter(key(sg) for sg in segs)
-    return [sg for sg in segs if n[key(sg)] % 2 == 1]
+
+    def key(seg):
+        """The segment in plan, direction-free."""
+        start, end = seg
+        return tuple(sorted(((round(start[0], 2), round(start[2], 2)), (round(end[0], 2), round(end[2], 2)))))
+
+    count = Counter(key(seg) for seg in segs)
+    return [seg for seg in segs if count[key(seg)] % 2 == 1]
 
 
 class PathData:
@@ -86,15 +100,18 @@ class PathData:
         """clip: (minX, minZ, maxX, maxZ) - route nodes outside it, and the edges touching them, are left out (a
         reference's ground beyond the level's terrain, which the game on PC does not have; navparity). drop: node ids
         left out the same way (a reference's nodes on ground PC does not have; navparity.stale_nodes)."""
-        f = hpdtool.parse(open(path, 'rb').read())
+        hpd = hpdtool.parse(open(path, 'rb').read())
         drop = drop or set()
-        in_box = (lambda p: clip[0] <= p[0] <= clip[2] and clip[1] <= p[2] <= clip[3]) if clip else (lambda p: True)
+
+        def in_box(p):
+            return not clip or clip[0] <= p[0] <= clip[2] and clip[1] <= p[2] <= clip[3]
+
         self.areas = []      # (minx, maxx, minz, maxz, miny, maxy, segs)
-        for s in f.sectors:
-            m = kymesh.parse_mesh(s.mesh)
-            for a in m.areas:
-                segs = [(l[k], l[k + 1]) for l in a.outline for k in range(len(l) - 1)]
-                segs += [(b.p0, b.p1) for b in a.portals] + [(c.p0, c.p1) for c in a.border_portals]
+        for sector in hpd.sectors:
+            mesh = kymesh.parse_mesh(sector.mesh)
+            for area in mesh.areas:
+                segs = [(line[k], line[k + 1]) for line in area.outline for k in range(len(line) - 1)]
+                segs += [(b.p0, b.p1) for b in area.portals] + [(c.p0, c.p1) for c in area.border_portals]
                 segs = drop_cracks(segs)
                 if not segs:
                     continue
@@ -111,15 +128,18 @@ class PathData:
                 a = parent[a]
             return a
         self.nodes = []
-        def inside(n):
-            return n.id not in drop and in_box(n.pos)
-        for s in f.sectors:
-            for e in s.edges:
-                if inside(s.nodes[e.src]) and inside(s.nodes[e.dst]):
-                    parent[find(s.nodes[e.src].id)] = find(s.nodes[e.dst].id)
-            for n in s.nodes:
-                if inside(n):
-                    self.nodes.append((n.id, n.pos))
+
+        def inside(node):
+            return node.id not in drop and in_box(node.pos)
+
+        for sector in hpd.sectors:
+            for e in sector.edges:
+                src, dst = sector.nodes[e.src], sector.nodes[e.dst]
+                if inside(src) and inside(dst):
+                    parent[find(src.id)] = find(dst.id)
+            for node in sector.nodes:
+                if inside(node):
+                    self.nodes.append((node.id, node.pos))
         self.group = {nid: find(nid) for nid, _ in self.nodes}
         sizes = Counter(self.group.values())
         self.group_size = sizes
@@ -144,13 +164,13 @@ class PathData:
     def nearest_group(self, p, radius=15.0):
         if not len(self.ids):                    # a file with no route nodes: none near anything
             return None, None
-        d = np.hypot(self.pos[:, 0] - p[0], self.pos[:, 2] - p[2])
-        d = np.where(np.abs(self.pos[:, 1] - Y_OFFSET - p[1]) <= 4.0, d, 1e9)
-        k = int(np.argmin(d))
-        if d[k] > radius:
+        dist = np.hypot(self.pos[:, 0] - p[0], self.pos[:, 2] - p[2])
+        dist = np.where(np.abs(self.pos[:, 1] - Y_OFFSET - p[1]) <= 4.0, dist, 1e9)    # within 4 m of height only
+        k = int(np.argmin(dist))
+        if dist[k] > radius:
             return None, None
-        g = self.group[self.ids[k]]
-        return g, self.group_size[g]
+        group = self.group[self.ids[k]]
+        return group, self.group_size[group]
 
 
 def main(argv):
@@ -163,45 +183,50 @@ def main(argv):
     for path in argv[2:]:
         pdata = PathData(path)
         biggest = max(pdata.group_size.values(), default=0)
-        res = []
-        for k, n, p in pts:
+        res = []            # per point: (on an area, size of the nearest node's route group or None)
+        for _kind, _name, p in pts:
             on = pdata.on_area(p)
-            g, size = pdata.nearest_group(p)
+            _group, size = pdata.nearest_group(p)
             res.append((on, size))
         results[path] = res
         on = sum(1 for o, _ in res if o)
         near = sum(1 for _, s in res if s)
         big = sum(1 for _, s in res if s and s >= 0.25 * biggest)
-        print(f'{os.path.basename(os.path.dirname(os.path.dirname(path))) or path}: {os.path.basename(path)}  on an area: {on}/{len(pts)}  '
+        label = os.path.basename(os.path.dirname(os.path.dirname(path))) or path
+        print(f'{label}: {os.path.basename(path)}  on an area: {on}/{len(pts)}  '
               f'node within 15 m: {near}  in a large route group (>= 25% of largest): {big}')
     groups = {}
     for path in argv[2:]:
         pdata = PathData(path)
         groups[path] = [pdata.nearest_group(p)[0] if pdata.on_area(p) else None for _, _, p in pts]
     if len(argv) == 3:
-        g = groups[argv[2]]
-        idx = [i for i in range(len(pts)) if g[i] is not None]
+        group = groups[argv[2]]
+        idx = [i for i in range(len(pts)) if group[i] is not None]
         total = len(idx) * (len(idx) - 1) // 2
-        conn = sum(1 for a, b in itertools.combinations(idx, 2) if g[a] == g[b])
-        print(f'self-check: {conn}/{total} point pairs on areas are route-connected ({conn / max(total, 1) * 100:.1f}%)')
+        connected = sum(1 for a, b in itertools.combinations(idx, 2) if group[a] == group[b])
+        print(f'self-check: {connected}/{total} point pairs on areas are route-connected '
+              f'({connected / max(total, 1) * 100:.1f}%)')
     if len(argv) == 4:
-        gd, go = groups[argv[2]], groups[argv[3]]
-        idx = [i for i in range(len(pts)) if gd[i] is not None]
+        ref_group, other_group = groups[argv[2]], groups[argv[3]]
+        idx = [i for i in range(len(pts)) if ref_group[i] is not None]
         ref = both = extra = 0
         for a, b in itertools.combinations(idx, 2):
-            dc = gd[a] == gd[b]
-            oc = go[a] is not None and go[a] == go[b]
-            ref += dc
-            both += dc and oc
-            extra += oc and not dc
-        print(f'pairwise route check: {both}/{ref} reference-connected pairs also connected ({both / max(ref, 1) * 100:.1f}%); '
-              f'{extra} pairs connected only in the second file')
+            ref_connected = ref_group[a] == ref_group[b]
+            other_connected = other_group[a] is not None and other_group[a] == other_group[b]
+            ref += ref_connected
+            both += ref_connected and other_connected
+            extra += other_connected and not ref_connected
+        print(f'pairwise route check: {both}/{ref} reference-connected pairs also connected '
+              f'({both / max(ref, 1) * 100:.1f}%); {extra} pairs connected only in the second file')
     if len(results) == 2:
-        (pa, ra), (pb, rb) = list(results.items())
-        diff = [(pts[i], ra[i], rb[i]) for i in range(len(pts)) if ra[i][0] != rb[i][0] or bool(ra[i][1]) != bool(rb[i][1])]
-        print(f'\npoints that differ ({len(diff)}): first = {os.path.basename(pa)}, second = {os.path.basename(pb)}')
-        for (k, n, p), a, b in diff[:60]:
-            print(f'  {k:22s} {n[:34]:34s} ({p[0]:8.1f} {p[1]:6.1f} {p[2]:8.1f})  on-area {a[0]!s:5} / {b[0]!s:5}   group size {a[1]} / {b[1]}')
+        (path_a, res_a), (path_b, res_b) = list(results.items())
+        diff = [(pts[i], res_a[i], res_b[i]) for i in range(len(pts))
+                if res_a[i][0] != res_b[i][0] or bool(res_a[i][1]) != bool(res_b[i][1])]
+        print(f'\npoints that differ ({len(diff)}): first = {os.path.basename(path_a)}, '
+              f'second = {os.path.basename(path_b)}')
+        for (kind, name, p), a, b in diff[:60]:
+            print(f'  {kind:22s} {name[:34]:34s} ({p[0]:8.1f} {p[1]:6.1f} {p[2]:8.1f})  '
+                  f'on-area {a[0]!s:5} / {b[0]!s:5}   group size {a[1]} / {b[1]}')
     return 0
 
 

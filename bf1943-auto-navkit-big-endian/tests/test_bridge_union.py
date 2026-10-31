@@ -78,7 +78,7 @@ def main(argv):
             continue
         with_bridges += 1
         cell_k = {c: k for k, c in enumerate(sorted(cells))}
-        level = SimpleNamespace(y=[0.0] * len(cell_k))
+        level = SimpleNamespace(y=[0.0] * len(cell_k), settings=navbuild.BFBC2)
         drop, segs = navbuild.bridge_union(bridges, cell_k, level)
         diag = [((a[0], a[1]), (b[0], b[1])) for a, b in segs]
         if open_ends(cells, drop, diag):
@@ -98,7 +98,8 @@ def main(argv):
     # one bridge alone: exactly its two diagonals, from A's corners to B's corners
     cells = {(0, 0), (1, 1)}
     cell_k = {(0, 0): 0, (1, 1): 1}
-    drop, segs = navbuild.bridge_union(bridges_of(cells), cell_k, SimpleNamespace(y=[1.0, 2.0]))
+    pair = SimpleNamespace(y=[1.0, 2.0], settings=navbuild.BFBC2)
+    drop, segs = navbuild.bridge_union(bridges_of(cells), cell_k, pair)
     ends = sorted(((a[0], a[1], a[2]), (b[0], b[1], b[2])) for a, b in segs)
     check(ends == [((-0.5, 0.5, 1.0 + navbuild.Y_OFFSET), (0.5, 1.5, 2.0 + navbuild.Y_OFFSET)),
                    ((0.5, -0.5, 1.0 + navbuild.Y_OFFSET), (1.5, 0.5, 2.0 + navbuild.Y_OFFSET))],

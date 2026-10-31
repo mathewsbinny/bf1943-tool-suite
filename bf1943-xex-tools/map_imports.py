@@ -9,8 +9,8 @@ import struct
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
-ROOT = research_root()                  # the research workspace (workspace.py)
-LOADER = ROOT / 'work/tools/XEXLoaderWV/XEXLoaderWV/src/main/java/xexloaderwv'
+
+LOADER = 'work/tools/XEXLoaderWV/XEXLoaderWV/src/main/java/xexloaderwv'     # in the research workspace
 
 
 def require(condition, message):
@@ -23,8 +23,8 @@ def read(data, offset, fmt):
     return struct.unpack_from(fmt, data, offset)
 
 
-def provenance(path):
-    return dict(path=path.relative_to(ROOT).as_posix(), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+def provenance(path, root):
+    return dict(path=path.relative_to(root).as_posix(), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
 
 
 def names_from_java(text):
@@ -102,13 +102,15 @@ def parse(xex, image, tables):
 
 
 def main():
-    source = ROOT / 'work/extracted/default.xex'
-    image = ROOT / 'work/xex-analysis/default.checked.memory.bin'
-    reference = LOADER / 'ImportRenamer.java'
-    before = [provenance(p) for p in (source, image)]
+    root = research_root()              # the research workspace (workspace.py)
+    loader = root / LOADER
+    source = root / 'work/extracted/default.xex'
+    image = root / 'work/xex-analysis/default.checked.memory.bin'
+    reference = loader / 'ImportRenamer.java'
+    before = [provenance(path, root) for path in (source, image)]
     report = parse(source.read_bytes(), image.read_bytes(), names_from_java(reference.read_text()))
-    report['provenance'] = dict(inputs=before, parser=provenance(Path(__file__)),
-        references=[provenance(LOADER / p) for p in ('XEXHeader.java', 'ImportRenamer.java')],
+    report['provenance'] = dict(inputs=before, parser=provenance(Path(__file__), root),
+        references=[provenance(loader / name, root) for name in ('XEXHeader.java', 'ImportRenamer.java')],
         reference_repository='https://github.com/zeroKilo/XEXLoaderWV',
         reference_commit='4bcf58da4caa5260644fc19f5eef5ccde3b7ff46')
     report['summary'] = dict(libraries=len(report['libraries']), imports=len(report['imports']),
@@ -119,10 +121,10 @@ def main():
         'Slots without thunks are not automatically classified as data exports.',
         'Import thunk bytes retain loader fixup words and are not patched or treated as executable PowerPC here.',
         'No signatures, calling conventions, runtime resolution, or API behavior are established.']
-    require(before == [provenance(p) for p in (source, image)], 'Input changed during parsing')
-    output = ROOT / 'research/evidence/xex-imports.json'
+    require(before == [provenance(path, root) for path in (source, image)], 'Input changed during parsing')
+    output = root / 'research/evidence/xex-imports.json'
     output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8', newline='\n')
-    with (ROOT / 'work/xex-analysis/imports.tsv').open('w', encoding='utf-8', newline='') as stream:
+    with (root / 'work/xex-analysis/imports.tsv').open('w', encoding='utf-8', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=['library', 'ordinal', 'name', 'slot', 'thunk'],
                                 delimiter='\t', extrasaction='ignore', lineterminator='\n')
         writer.writeheader()

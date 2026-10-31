@@ -1,14 +1,23 @@
 """NavKit (big-endian): BF1943's soldier, and the NavKit settings that follow from it.
 
-NavKit's defaults come from BFBC2: some are BFBC2's soldier, some were fitted to DICE's BFBC2 path data. For BF1943
-the soldier's values come from the game (Objects/Soldiers/Common/DefaultSoldierPhysics: CharacterPhysicsData and the
-Stand pose; BFBC2's soldier has the same values), and configure() sets the NavKit settings that depend on them. The
-BF1943 tools (navsample1943, detailed1943) and BF1943 builds call it before they sample, choose sectors or build;
-NavKit's own defaults are unchanged for BFBC2.
+NavKit's defaults come from BFBC2: some are BFBC2's soldier, some were fitted to DICE's BFBC2 path data
+(navbuild.BFBC2). For BF1943 the soldier's values come from the game (Objects/Soldiers/Common/DefaultSoldierPhysics:
+CharacterPhysicsData and the Stand pose; BFBC2's soldier has the same values), and SETTINGS holds the NavKit settings
+that depend on them, with the rules BF1943's levels needed. The BF1943 tools pass them where they are used:
 
   import soldier1943
-  soldier1943.configure()        # before navbuild.build / detailed.stacked_columns
+  navbuild.build(..., step=soldier1943.STEP, max_water_depth=soldier1943.WATER_DEPTH, settings=soldier1943.SETTINGS)
+  detailed.stacked_columns(samples, xoff, zoff, slope_max=soldier1943.SLOPE_MAX)
+
+(Until 2026-10-31 configure() wrote these into navbuild's, navwalk's and detailed's module constants, and a build
+was BF1943's only when it had run first.)
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import navbuild  # noqa: E402  (this kit's: core's navdata puts the little-endian tools first on sys.path)
+
 RADIUS = 0.35                   # PhysicalRadius
 STEP_HEIGHT = 0.3               # StepHeight
 STEP_TOLERANCE = 0.07           # the soldier climbs a little more than StepHeight: in game he walks into Wake's beach
@@ -42,47 +51,41 @@ def sea_level_args(settings):
     return ['--sea-level', str(settings['sea_level'])] if has_water(settings) else []
 
 
-def configure():
-    """Set NavKit's soldier-dependent settings to BF1943's soldier (module attributes, for this process)."""
-    import detailed
-    import navbuild
-    import navwalk
-    navbuild.SLOPE_MAX = SLOPE_MAX          # BFBC2 NavKit: 40
-    detailed.SLOPE_MAX = SLOPE_MAX          # which 0.8 m surfaces count as standable when choosing detailed sectors
-    navbuild.MAX_WATER_DEPTH = WATER_DEPTH  # BFBC2 NavKit: 1.5 (build()'s default argument keeps 1.5: pass it)
-    # the height step that links straight neighbours in a detailed zone (one 0.2 m cell); NavKit's 0.3 is DICE's
-    # one-cell steps (p99 0.31): below the soldier's step, a lip he climbs would not link
-    navbuild.DETAILED_LINK_STEP = STEP
+SETTINGS = navbuild.Settings(
+    slope_max=SLOPE_MAX,                # BFBC2 NavKit: 40 (detailed.stacked_columns takes SLOPE_MAX too)
     # nodes and outlines stand half the soldier's height above the ground (EntityHeight / 2; BFBC2 NavKit: 1.9 / 2)
-    navbuild.Y_OFFSET = HEIGHT / 2
-    navwalk.OUTLINE_Y_OFFSET = HEIGHT / 2
+    y_offset=HEIGHT / 2,
     # NavKit's band (0.5, 2.0) is fitted to DICE's BFBC2 data; the soldier stands 1.8 m, and navsample1943's capsule
     # test already blocks less headroom. The 2.0 end removed open ground at Wake's airfield bunker door (1.94 m).
-    navwalk.HEADROOM_BAND = (0.5, HEIGHT)
+    headroom_band=(0.5, HEIGHT),
+    # the height step that links straight neighbours in a detailed zone (one 0.2 m cell); NavKit's 0.3 is DICE's
+    # one-cell steps (p99 0.31): below the soldier's step, a lip he climbs would not link
+    detailed_link_step=STEP,
     # a ladder links to each piece of ground beside its ends, not only the nearest surface (Wake's towers: the floor
     # enclosed by the frame is nearer the foot than the ground outside, from which the ladder is climbed)
-    navbuild.LADDER_ALL_GROUND = True
+    ladder_all_ground=True,
     # shared border nodes also on the seam line itself, for ground that reaches the seam but not the border line one
     # sample beyond (Coral Sea's three seam breaks, 2026-10-26)
-    navbuild.BORDER_SEAM_LINE = True
+    border_seam_line=True,
     # an area holds no cliff between plan-neighbouring cells (a bridge deck beside the ground under it): the RSNV height
     # grid cannot hold one (2026-10-26: 66 of Wake Island's 75 remaining tight edges lay in such areas). 0.6 m from
     # 2026-10-29 (was 1.0): a 0.2 m cell's 45-degree rise plus the step is 0.57 m straight, 0.65 m diagonal (the rule's
     # other term), so cells further apart are no walk; 34-44 areas per map held such pairs 0.6-1.0 m apart (Coral Sea
     # area 3133: 78.45 beside 79.41), the height grid read them as a ramp, and 5 of the 22 remaining tight pairs met one
-    navbuild.AREA_CLIFF = 0.6
+    area_cliff=0.6,
     # and between cells two apart across a cell the area does not hold (2026-10-29, round 5): the per-cell height grid
     # carried a floor across the empty cell to the floor 1.56 m below it (Iwo Jima (-92.0, 20.7, -17.4): kept 0.2 m
     # ground at 20.72-20.75 m along the edge, a strip at 19.16 m one empty row away in the same area)
-    navbuild.AREA_CLIFF_REACH = 2
+    area_cliff_reach=2,
     # join_groups floods 2 m past a sector's window: ground joined to the rest of its sector only round a corner of
     # the neighbour sector (Coral Sea's last seam break, 2026-10-26)
-    navbuild.JOIN_MARGIN = 2.0
+    join_margin=2.0,
     # beside a mixed seam, the 0.8 m graph is told where the 0.2 m samples join ground its step rule cannot (a lip the
     # coarse grid does not resolve: Coral Sea's last seam break, 2026-10-26)
-    navbuild.SEAM_FINE_LINKS = True
+    seam_fine_links=True,
     # ... and where that 0.2 m ground joins 0.8 m pieces two columns apart across columns the 0.8 m grid kept nothing in
     # (Iwo Jima's last seam break, 2026-10-29)
-    navbuild.SEAM_FAR_LINKS = True
+    seam_far_links=True,
     # a sector's window grows 1 m past a mixed seam, so both grids' cells overlap there (2026-10-26)
-    navbuild.MIXED_OVERLAP = 1.0
+    mixed_overlap=1.0,
+)

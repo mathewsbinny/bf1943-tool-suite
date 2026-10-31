@@ -17,8 +17,9 @@ import navbuild  # noqa: E402
 import navwalk  # noqa: E402
 
 
-def level(heights, keep=None, terrain=None):
-    """One surface per column; heights[j][i]. Normals from the height differences (a plane gets its slope)."""
+def level(heights, keep=None, terrain=None, pitch=0.8, **settings):
+    """One surface per column; heights[j][i]. Normals from the height differences (a plane gets its slope). The
+    Level is on the grid at pitch (its step rule), with NavKit's defaults but for settings (navbuild.Settings')."""
     h = np.array(heights, float)
     nz, nx = h.shape
     gx = np.gradient(h, 0.8, axis=1) if nx > 1 else np.zeros_like(h)
@@ -32,7 +33,8 @@ def level(heights, keep=None, terrain=None):
     s = SimpleNamespace(nx=nx, nz=nz, pitch=0.8, min_x=0.0, min_z=0.0, start=np.arange(h.size + 1),
                         y=h.ravel().astype(np.float32), normal=n.astype(np.float32), hit=hit)
     k = np.ones(h.size, bool) if keep is None else np.array(keep, bool).ravel()
-    return navbuild.Level(s, k, 0.28)
+    cfg = navbuild.Settings(**settings)
+    return navbuild.Level(s, k, 0.28, grid=navbuild.grid_at(pitch, cfg), settings=cfg)
 
 
 def main(argv):
@@ -70,54 +72,43 @@ def main(argv):
 
     # AREA_CLIFF: a ramp that turns back beside its own foot (row 0 rises to 0.9, row 1 climbs on to 2.1 above row
     # 0's start): one area without the rule; with it, no two side-by-side cells of one area over 1 m apart
-    ramp = level([[0.0, 0.3, 0.6, 0.9], [2.1, 1.8, 1.5, 1.2]])
+    ramp = [[0.0, 0.3, 0.6, 0.9], [2.1, 1.8, 1.5, 1.2]]
     members = {k: (k % 4, k // 4) for k in range(8)}
-    saved = navbuild.AREA_CLIFF
-    try:
-        navbuild.AREA_CLIFF = None
-        check(len(navbuild.components(ramp, members, 0, 0)) == 1, 'AREA_CLIFF off: the turning ramp is one area')
-        navbuild.AREA_CLIFF = 1.0
-        comps = navbuild.components(ramp, members, 0, 0)
-        y = ramp.y
-        worst = max((abs(y[a[2]] - y[b[2]]) for c in comps for a in c for b in c
-                     if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
-        check(len(comps) >= 2 and worst <= 1.0 + 1e-6, f'AREA_CLIFF 1.0: {len(comps)} areas, side-by-side cells of one '
-                                                       f'area at most {worst:.2f} m apart')
-        # BF1943's 0.6 m (2026-10-29) on 0.2 m cells: a ramp turning back with its foot 0.7 m beside its upper
-        # leg (between 0.6 and the old 1.0) is one area at 1.0 and split at 0.6; no straight pair over 0.6 m remains
-        navbuild.set_pitch(0.2)
-        ramp2 = level([[0.0, 0.1, 0.2, 0.3], [0.7, 0.6, 0.5, 0.4]])
-        navbuild.AREA_CLIFF = 1.0
-        one = navbuild.components(ramp2, members, 0, 0)
-        navbuild.AREA_CLIFF = 0.6
-        comps = navbuild.components(ramp2, members, 0, 0)
-        worst = max((abs(ramp2.y[a[2]] - ramp2.y[b[2]]) for c in comps for a in c for b in c
-                     if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
-        check(len(one) == 1 and len(comps) >= 2 and worst <= 0.6 + 1e-6,
-              f'AREA_CLIFF 0.6 at 0.2 m: {len(one)} area at 1.0, {len(comps)} at 0.6, side-by-side cells at most '
-              f'{worst:.2f} m apart')
-        # AREA_CLIFF_REACH 2 (2026-10-29) on 0.2 m cells: a floor reached round a ramp lies one empty row from the floor
-        # 1.4 m below it; no two cells of an area are side by side beyond the step, so the reach of 1 keeps one area,
-        # the reach of 2 splits it, and no two cells of one area two apart across an empty cell are over 0.77 m apart
-        h3 = [[0.0, 0.05, 0.1, 0.15], [9.0, 9.0, 9.0, 0.4], [1.4, 1.15, 0.9, 0.65]]
-        k3 = [[1, 1, 1, 1], [0, 0, 0, 1], [1, 1, 1, 1]]
-        turn = level(h3, keep=k3)
-        mem3 = {k: (k % 4, k // 4) for k in range(12) if k3[k // 4][k % 4]}
-        saved_r = navbuild.AREA_CLIFF_REACH
-        navbuild.AREA_CLIFF_REACH = 1
-        one = navbuild.components(turn, mem3, 0, 0)
-        navbuild.AREA_CLIFF_REACH = 2
-        comps = navbuild.components(turn, mem3, 0, 0)
-        navbuild.AREA_CLIFF_REACH = saved_r
-        worst = max((abs(turn.y[a[2]] - turn.y[b[2]]) for c in comps for a in c for b in c
-                     if {abs(a[0] - b[0]), abs(a[1] - b[1])} <= {0, 2} and (a[0] != b[0] or a[1] != b[1])
-                     and ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2) not in {(x[0], x[1]) for x in c}), default=0.0)
-        check(len(one) == 1 and len(comps) >= 2 and worst <= 0.77 + 1e-6,
-              f'AREA_CLIFF_REACH 2: {len(one)} area at reach 1, {len(comps)} at reach 2, cells two apart across an '
-              f'empty cell at most {worst:.2f} m apart')
-    finally:
-        navbuild.AREA_CLIFF = saved
-        navbuild.set_pitch(0.8)
+    check(len(navbuild.components(level(ramp, area_cliff=None), members, 0, 0)) == 1,
+          'AREA_CLIFF off: the turning ramp is one area')
+    cliff = level(ramp, area_cliff=1.0)
+    comps = navbuild.components(cliff, members, 0, 0)
+    y = cliff.y
+    worst = max((abs(y[a[2]] - y[b[2]]) for c in comps for a in c for b in c
+                 if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
+    check(len(comps) >= 2 and worst <= 1.0 + 1e-6, f'AREA_CLIFF 1.0: {len(comps)} areas, side-by-side cells of one '
+                                                   f'area at most {worst:.2f} m apart')
+    # BF1943's 0.6 m (2026-10-29) on 0.2 m cells: a ramp turning back with its foot 0.7 m beside its upper
+    # leg (between 0.6 and the old 1.0) is one area at 1.0 and split at 0.6; no straight pair over 0.6 m remains
+    ramp2 = [[0.0, 0.1, 0.2, 0.3], [0.7, 0.6, 0.5, 0.4]]
+    one = navbuild.components(level(ramp2, pitch=0.2, area_cliff=1.0), members, 0, 0)
+    tight = level(ramp2, pitch=0.2, area_cliff=0.6)
+    comps = navbuild.components(tight, members, 0, 0)
+    worst = max((abs(tight.y[a[2]] - tight.y[b[2]]) for c in comps for a in c for b in c
+                 if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1), default=0.0)
+    check(len(one) == 1 and len(comps) >= 2 and worst <= 0.6 + 1e-6,
+          f'AREA_CLIFF 0.6 at 0.2 m: {len(one)} area at 1.0, {len(comps)} at 0.6, side-by-side cells at most '
+          f'{worst:.2f} m apart')
+    # AREA_CLIFF_REACH 2 (2026-10-29) on 0.2 m cells: a floor reached round a ramp lies one empty row from the floor
+    # 1.4 m below it; no two cells of an area are side by side beyond the step, so the reach of 1 keeps one area,
+    # the reach of 2 splits it, and no two cells of one area two apart across an empty cell are over 0.77 m apart
+    h3 = [[0.0, 0.05, 0.1, 0.15], [9.0, 9.0, 9.0, 0.4], [1.4, 1.15, 0.9, 0.65]]
+    k3 = [[1, 1, 1, 1], [0, 0, 0, 1], [1, 1, 1, 1]]
+    mem3 = {k: (k % 4, k // 4) for k in range(12) if k3[k // 4][k % 4]}
+    one = navbuild.components(level(h3, keep=k3, pitch=0.2, area_cliff=0.6, area_cliff_reach=1), mem3, 0, 0)
+    turn = level(h3, keep=k3, pitch=0.2, area_cliff=0.6, area_cliff_reach=2)
+    comps = navbuild.components(turn, mem3, 0, 0)
+    worst = max((abs(turn.y[a[2]] - turn.y[b[2]]) for c in comps for a in c for b in c
+                 if {abs(a[0] - b[0]), abs(a[1] - b[1])} <= {0, 2} and (a[0] != b[0] or a[1] != b[1])
+                 and ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2) not in {(x[0], x[1]) for x in c}), default=0.0)
+    check(len(one) == 1 and len(comps) >= 2 and worst <= 0.77 + 1e-6,
+          f'AREA_CLIFF_REACH 2: {len(one)} area at reach 1, {len(comps)} at reach 2, cells two apart across an '
+          f'empty cell at most {worst:.2f} m apart')
     print('all passed' if not failed else f'{failed} check(s) failed')
     return 1 if failed else 0
 

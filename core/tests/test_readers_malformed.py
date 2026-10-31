@@ -95,7 +95,8 @@ if __name__ == '__main__':
     from bfbc2core import navdata, navpath
     pos = np.array([[0, 0, 0], [1.7, 0, 0], [3.4, 0, 0], [5.0, 0, 0]], float) + [0, navdata.Y_OFFSET, 0]
     nav = SimpleNamespace(node_pos=pos, edges=np.array([[0, 1], [1, 2], [2, 3], [0, 3]]),
-                          edge_cost=np.array([1.8, 2.0, 1.3125, 5.1875]), node_island=np.zeros(4, int))
+                          edge_cost=np.array([1.8, 2.0, 1.3125, 5.1875]), node_island=np.zeros(4, int),
+                          y_offset=navdata.Y_OFFSET)
     r = navpath.route(nav, (0, 0, 0), (5.0, 0, 0))
     check(r.found and r.nodes == [0, 1, 2, 3] and abs(r.cost - 5.1125) < 1e-9,
           f'navpath.route finds the cheapest route under rounded-down costs ({r.nodes}, {r.cost})')

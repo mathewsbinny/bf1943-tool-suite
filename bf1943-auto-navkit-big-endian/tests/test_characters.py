@@ -62,13 +62,11 @@ def main(argv):
     # a soldier no ray hit: only his spawn point is known (column 3 floor, blocked)
     s2 = grid()
     s2.hit[3, 0] = 0x1483B38                                   # the hit is not a character now
-    band = navwalk.HEADROOM_BAND                               # the object 1.5 m over the floor is in the headroom band
-    navwalk.HEADROOM_BAND = None                               # (test_headroom.py); here only the spawn point is tested
-    try:
-        keep_pt = navwalk.walkable(s2, step=0.28, stairs=False, extra_seeds=[(1.6, 0.0, 0.0)], soldier_points=[(2.4, 0.0, 0.0)])
-        keep_np = navwalk.walkable(s2, step=0.28, stairs=False, extra_seeds=[(1.6, 0.0, 0.0)])
-    finally:
-        navwalk.HEADROOM_BAND = band
+    # the object 1.5 m over the floor is in the headroom band (test_headroom.py): off, here only the spawn point is
+    # tested
+    keep_pt = navwalk.walkable(s2, step=0.28, stairs=False, extra_seeds=[(1.6, 0.0, 0.0)],
+                               soldier_points=[(2.4, 0.0, 0.0)], headroom_band=None)
+    keep_np = navwalk.walkable(s2, step=0.28, stairs=False, extra_seeds=[(1.6, 0.0, 0.0)], headroom_band=None)
     check(bool(keep_pt[5]) and not keep_np[5], 'a spawn point clears the floor at it (no character hit needed)')
     near = navwalk.near_points(s2, [(2.4, 0.0, 0.0)])
     check(bool(near[5] and near[2]) and not near[4] and not near[0], 'spawn point: the next cells at its height only')

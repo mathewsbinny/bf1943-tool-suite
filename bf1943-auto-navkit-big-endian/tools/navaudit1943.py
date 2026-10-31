@@ -40,13 +40,14 @@ OBJECTIVE_REACH = 2.0     # m (horizontal): a required position passes when walk
                           # (NAVIGATION_RUNTIME_DESIGN.md); 2 m is a soldier's arm's length plus his radius, chosen here
 FLOOR_DY = 0.6            # m: a nav cell is on a position's floor when its ground is within this of the floor's height
 LAYER_WINDOW = 3.0        # m: surfaces this far above or below a position's floor are its layers (check 5)
-VARIANTS = {
+VARIANTS = {                # each variant's rule turned off: navwalk.walkable's arguments, or an input left out
     'base': {},
-    'headroom': {'navwalk.HEADROOM_BAND': None},
-    'lips': {'navwalk.LIP_WIDTH': 0},
+    'headroom': {'headroom_band': None},
+    'lips': {'lip_width': 0},
     'water': {'water': None},
     'ladders': {'ladders': None},
 }
+WALKABLE_ARGS = ('headroom_band', 'lip_width')
 
 
 sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
@@ -143,15 +144,6 @@ def level_paths(lv):
             'hpd': os.path.join(root, 'navkit', f'{lv}.hpd'), 'settings': os.path.join(root, 'navkit', 'navkit.json')}
 
 
-def _set(name, value, saved):
-    import navbuild
-    import navwalk
-    mod, attr = name.split('.')
-    m = {'navwalk': navwalk, 'navbuild': navbuild}[mod]
-    saved.append((m, attr, getattr(m, attr)))
-    setattr(m, attr, value)
-
-
 def stage_keep(lv, which, variant='base', normal_keep=None, log=print):
     """The kept walkable surfaces (bool per surface) of one stage of a build, as navbuild.stage computes them for
     navkit.py build: which = 'normal' (the 0.8 m run) or 'detailed' (the 0.2 m run, seeded from the normal stage's
@@ -163,61 +155,54 @@ def stage_keep(lv, which, variant='base', normal_keep=None, log=print):
     p = level_paths(lv)
     st = nj.read(lv)
     o, sm = p['objects'], p['samples']
-    soldier1943.configure()
-    saved = []
+    settings = soldier1943.SETTINGS                 # what navkit.py build passes
     opts = dict(VARIANTS[variant])
-    try:
-        for k, v in list(opts.items()):
-            if '.' in k:
-                _set(k, v, saved)
-                del opts[k]
-        navbuild.set_pitch(0.8 if which == 'normal' else navbuild.DETAILED_PITCH)
-        s = load_samples(os.path.join(sm, 'samples.bin' if which == 'normal' else 'samples_02.bin'))
-        hi = load_samples(os.path.join(sm, 'samples_high.bin' if which == 'normal' else 'samples_02_high.bin'))
-        with open(os.path.join(o, 'soldier_spawns.json'), encoding='utf-8') as f:
-            seeds = json.load(f)
-        with open(os.path.join(o, 'ladders.json'), encoding='utf-8') as f:
-            ladders = json.load(f)
-        jp = os.path.join(p['navkit'], 'jump_links.json')            # navkit.py build adds them (jumplinks1943)
-        if os.path.isfile(jp):
-            with open(jp, encoding='utf-8') as f:
-                ladders += json.load(f)
-        if 'ladders' in opts:
-            ladders = opts['ladders']
-        wpath = os.path.join(o, 'water_mesh.res')
-        mesh = water_mod.read_mesh(wpath) if soldier1943.has_water(st) and os.path.isfile(wpath) else None
-        if 'water' in opts:
-            mesh = None
-        hand = {}
-        if mesh is not None:
-            hand['force_unwalkable'] = navbuild.deep_water(s, mesh, soldier1943.WATER_DEPTH)
-        seed_points = []
-        if which == 'detailed':
-            xoff, zoff = st['sector_offsets']
-            dset = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()}
-            sa, ka = normal_keep
-            col = np.repeat(np.arange(sa.nx * sa.nz), np.diff(sa.start))
-            for k in np.nonzero(ka)[0]:
-                c = col[k]
-                x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
-                if (int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff) in dset:
-                    seed_points.append((x, float(sa.y[k]), z))
-        tris = np.load(os.path.join(o, 'forbid_tris.npy'))
-        dyn = np.load(os.path.join(o, 'dynamic_tris.npy'))
-        ex = np.load(os.path.join(o, 'exclude_tris.npy'))
-        exf = np.load(os.path.join(o, 'exclude_footprint_tris.npy'))
-        t0 = time.time()
-        keep, _gx, _gz, _stair = navwalk.walkable(
-            s, tris, slope=navbuild.SLOPE_MAX, step=soldier1943.STEP, dynamic_tris=dyn, high_capsule=hi,
-            return_gradients=True, return_stairs=True, narrow_capsule=None, stair_tris=None, exclude_tris=ex,
-            exclude_footprint_tris=exf, extra_seeds=list(seeds) + seed_points, soldier_points=seeds,
-            ladders=ladders, **hand, anchors=list(seeds) + seed_points)
-        log(f'{lv} {which} {variant}: {len(s.y)} surfaces, {int(keep.sum())} walkable kept ({time.time() - t0:.0f} s)')
-        return s, keep
-    finally:
-        for m, attr, v in reversed(saved):
-            setattr(m, attr, v)
-        navbuild.set_pitch(0.8)
+    # navwalk's rules as the build has them, the variant's turned off (until 2026-10-31 the module constants were
+    # rewritten for the run and restored after it)
+    rules = {'headroom_band': settings.headroom_band, 'lip_width': navwalk.LIP_WIDTH}
+    rules.update((k, opts.pop(k)) for k in WALKABLE_ARGS if k in opts)
+    s = load_samples(os.path.join(sm, 'samples.bin' if which == 'normal' else 'samples_02.bin'))
+    hi = load_samples(os.path.join(sm, 'samples_high.bin' if which == 'normal' else 'samples_02_high.bin'))
+    with open(os.path.join(o, 'soldier_spawns.json'), encoding='utf-8') as f:
+        seeds = json.load(f)
+    with open(os.path.join(o, 'ladders.json'), encoding='utf-8') as f:
+        ladders = json.load(f)
+    jp = os.path.join(p['navkit'], 'jump_links.json')            # navkit.py build adds them (jumplinks1943)
+    if os.path.isfile(jp):
+        with open(jp, encoding='utf-8') as f:
+            ladders += json.load(f)
+    if 'ladders' in opts:
+        ladders = opts['ladders']
+    wpath = os.path.join(o, 'water_mesh.res')
+    mesh = water_mod.read_mesh(wpath) if soldier1943.has_water(st) and os.path.isfile(wpath) else None
+    if 'water' in opts:
+        mesh = None
+    hand = {}
+    if mesh is not None:
+        hand['force_unwalkable'] = navbuild.deep_water(s, mesh, soldier1943.WATER_DEPTH)
+    seed_points = []
+    if which == 'detailed':
+        xoff, zoff = st['sector_offsets']
+        dset = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()}
+        sa, ka = normal_keep
+        col = np.repeat(np.arange(sa.nx * sa.nz), np.diff(sa.start))
+        for k in np.nonzero(ka)[0]:
+            c = col[k]
+            x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
+            if (int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff) in dset:
+                seed_points.append((x, float(sa.y[k]), z))
+    tris = np.load(os.path.join(o, 'forbid_tris.npy'))
+    dyn = np.load(os.path.join(o, 'dynamic_tris.npy'))
+    ex = np.load(os.path.join(o, 'exclude_tris.npy'))
+    exf = np.load(os.path.join(o, 'exclude_footprint_tris.npy'))
+    t0 = time.time()
+    keep, _gx, _gz, _stair = navwalk.walkable(
+        s, tris, slope=settings.slope_max, step=soldier1943.STEP, dynamic_tris=dyn, high_capsule=hi,
+        return_gradients=True, return_stairs=True, narrow_capsule=None, stair_tris=None, exclude_tris=ex,
+        exclude_footprint_tris=exf, extra_seeds=list(seeds) + seed_points, soldier_points=seeds,
+        ladders=ladders, **hand, anchors=list(seeds) + seed_points, **rules)
+    log(f'{lv} {which} {variant}: {len(s.y)} surfaces, {int(keep.sum())} walkable kept ({time.time() - t0:.0f} s)')
+    return s, keep
 
 
 def masks(lv, variants, stages, log=print):

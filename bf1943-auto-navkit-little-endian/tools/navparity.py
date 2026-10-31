@@ -50,18 +50,18 @@ def reference_of(root, lv):
     """DICE's path data for the level: the kept original while NavKit's file is installed. A level that had none
     (navkit.py install left its .opfor-none marker) gives the backup's path, which does not exist: the installed
     file is NavKit's own, not a reference."""
-    p = os.path.join(root, 'game', 'Output', 'win32', 'ai', 'levels', lv, 'infantry', 'pathdata.hpd')
-    if os.path.isfile(p + '.opfor-orig') or os.path.isfile(p + '.opfor-none'):
-        return p + '.opfor-orig'
-    return p
+    path = os.path.join(root, 'game', 'Output', 'win32', 'ai', 'levels', lv, 'infantry', 'pathdata.hpd')
+    if os.path.isfile(path + '.opfor-orig') or os.path.isfile(path + '.opfor-none'):
+        return path + '.opfor-orig'
+    return path
 
 
 def level_xml(root, lv):
-    d = os.path.join(root, 'work', 'levels', lv, 'dist', 'levels')
-    for f in os.listdir(d):
-        if f.lower() == lv + '.xml':
-            return os.path.join(d, f)
-    raise FileNotFoundError(f'{lv}: converted level partition not found in {d} (navkit.py prepare {lv})')
+    folder = os.path.join(root, 'work', 'levels', lv, 'dist', 'levels')
+    for name in os.listdir(folder):
+        if name.lower() == lv + '.xml':
+            return os.path.join(folder, name)
+    raise FileNotFoundError(f'{lv}: converted level partition not found in {folder} (navkit.py prepare {lv})')
 
 
 def terrain_bounds(root, lv):
@@ -72,11 +72,11 @@ def terrain_bounds(root, lv):
     if core not in sys.path:
         sys.path.insert(0, core)
     from bfbc2core import terrain
-    d = os.path.join(root, 'work', 'levels', lv, 'terrain')
-    for r, _dirs, files in os.walk(d):
-        for f in files:
-            if f.lower().endswith('.heightfield-000.res'):
-                hf = terrain.read(os.path.join(r, f))
+    folder = os.path.join(root, 'work', 'levels', lv, 'terrain')
+    for dirpath, _dirs, files in os.walk(folder):
+        for name in files:
+            if name.lower().endswith('.heightfield-000.res'):
+                hf = terrain.read(os.path.join(dirpath, name))
                 return (float(hf.min[0]), float(hf.min[2]), float(hf.max[0]), float(hf.max[2]))
     return None
 
@@ -94,30 +94,33 @@ def stale_nodes(root, lv, reference, clip=None):
     import numpy as np
     import hpdtool
     import navsample
-    sp = next((p for p in (os.path.join(root, 'work', 'navsample', f'{lv}_navkit.bin'),
-                           os.path.join(root, 'work', 'navsample', f'{lv}_full.bin')) if os.path.isfile(p)), None)
-    if sp is None:
+    candidates = (os.path.join(root, 'work', 'navsample', f'{lv}_navkit.bin'),
+                  os.path.join(root, 'work', 'navsample', f'{lv}_full.bin'))
+    samples_path = next((p for p in candidates if os.path.isfile(p)), None)
+    if samples_path is None:
         return set()
-    s, _ = navsample.load(sp)
+    s, _ = navsample.load(samples_path)
     out = set()
-    for sec in hpdtool.parse(open(reference, 'rb').read()).sectors:
-        for n in sec.nodes:
-            x, y, z = n.pos
+    for sector in hpdtool.parse(open(reference, 'rb').read()).sectors:
+        for node in sector.nodes:
+            x, y, z = node.pos
             if clip and not (clip[0] <= x <= clip[2] and clip[1] <= z <= clip[3]):
                 continue
-            i, j = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
+            i = int(round((x - s.min_x) / s.pitch))
+            j = int(round((z - s.min_z) / s.pitch))
             if not (1 <= i < s.nx - 1 and 1 <= j < s.nz - 1):
                 continue
-            g = y - 0.95
-            ok = False
+            ground = y - 0.95
+            on_pc_ground = False
             for dj in (-1, 0, 1):
-                c0 = (j + dj) * s.nx + i
-                a, b = s.start[c0 - 1], s.start[c0 + 2]
-                if b > a and np.min(np.abs(s.y[a:b] - g)) <= STALE_DY:
-                    ok = True
+                # columns i-1..i+1 of row j+dj are consecutive, so their surfaces are one run of the sample arrays
+                column = (j + dj) * s.nx + i
+                first, end = s.start[column - 1], s.start[column + 2]
+                if end > first and np.min(np.abs(s.y[first:end] - ground)) <= STALE_DY:
+                    on_pc_ground = True
                     break
-            if not ok:
-                out.add(n.id)
+            if not on_pc_ground:
+                out.add(node.id)
     return out
 
 
@@ -129,13 +132,14 @@ def ladder_ground(reference, candidate, reference_cells):
         sys.path.insert(0, core)
     from bfbc2core import navdata
     import numpy as np
-    cn, rn = navdata.load(candidate), navdata.load(reference)
-    if not len(cn.cell_area) or not any(a.ladder for a in cn.areas):
+    cand_nav, ref_nav = navdata.load(candidate), navdata.load(reference)
+    if not len(cand_nav.cell_area) or not any(a.ladder for a in cand_nav.areas):
         return {'percent': 0.0, 'extra_cells': 0, 'cells': 0}
-    same_c, _ = navdata.compare_cells(cn, rn)
-    lad = np.array([a.ladder for a in cn.areas])[cn.cell_area]
-    return {'percent': round(100.0 * int(lad.sum()) / max(reference_cells, 1), 2), 'extra_cells': int((lad & ~same_c).sum()),
-            'cells': int(lad.sum())}
+    cand_in_ref, _ = navdata.compare_cells(cand_nav, ref_nav)
+    on_ladder_area = np.array([a.ladder for a in cand_nav.areas])[cand_nav.cell_area]     # per candidate cell
+    return {'percent': round(100.0 * int(on_ladder_area.sum()) / max(reference_cells, 1), 2),
+            'extra_cells': int((on_ladder_area & ~cand_in_ref).sum()),
+            'cells': int(on_ladder_area.sum())}
 
 
 def pairs(n):
@@ -143,38 +147,38 @@ def pairs(n):
 
 
 def islands(reference, candidate, clip=None, drop=None):
-    R, C = ordercheck.PathData(reference, clip, drop), ordercheck.PathData(candidate)
-    res = {'reference': len(R.group_size), 'candidate': len(C.group_size),
-           'large_reference': sum(1 for v in R.group_size.values() if v >= 25),
-           'large_candidate': sum(1 for v in C.group_size.values() if v >= 25)}
-    grid = defaultdict(list)
-    for k, (nid, p) in enumerate(C.nodes):
-        grid[(math.floor(p[0] / NEAR), math.floor(p[2] / NEAR))].append(k)
-    table = Counter()
+    ref_data, cand_data = ordercheck.PathData(reference, clip, drop), ordercheck.PathData(candidate)
+    res = {'reference': len(ref_data.group_size), 'candidate': len(cand_data.group_size),
+           'large_reference': sum(1 for v in ref_data.group_size.values() if v >= 25),
+           'large_candidate': sum(1 for v in cand_data.group_size.values() if v >= 25)}
+    grid = defaultdict(list)            # NEAR-sized square -> candidate node indices
+    for k, (_nid, pos) in enumerate(cand_data.nodes):
+        grid[(math.floor(pos[0] / NEAR), math.floor(pos[2] / NEAR))].append(k)
+    group_pairs = Counter()             # (reference group, candidate group) -> reference nodes matched across them
     matched = 0
-    for nid, p in R.nodes:
-        gx, gz = math.floor(p[0] / NEAR), math.floor(p[2] / NEAR)
-        best, best_d = None, None
+    for nid, pos in ref_data.nodes:
+        gx, gz = math.floor(pos[0] / NEAR), math.floor(pos[2] / NEAR)
+        best, best_dist2 = None, None
         for dx in (-1, 0, 1):
             for dz in (-1, 0, 1):
                 for k in grid.get((gx + dx, gz + dz), ()):
-                    q = C.nodes[k][1]
-                    if abs(q[1] - p[1]) > NEAR_DY:
+                    other = cand_data.nodes[k][1]
+                    if abs(other[1] - pos[1]) > NEAR_DY:
                         continue
-                    d = (q[0] - p[0]) ** 2 + (q[2] - p[2]) ** 2
-                    if d <= NEAR * NEAR and (best is None or d < best_d):
-                        best, best_d = k, d
+                    dist2 = (other[0] - pos[0]) ** 2 + (other[2] - pos[2]) ** 2
+                    if dist2 <= NEAR * NEAR and (best is None or dist2 < best_dist2):
+                        best, best_dist2 = k, dist2
         if best is not None:
             matched += 1
-            table[(R.group[nid], C.group[C.nodes[best][0]])] += 1
+            group_pairs[(ref_data.group[nid], cand_data.group[cand_data.nodes[best][0]])] += 1
     by_ref, by_cand = Counter(), Counter()
-    for (gr, gc), n in table.items():
-        by_ref[gr] += n
-        by_cand[gc] += n
-    both = sum(pairs(n) for n in table.values())
+    for (ref_group, cand_group), n in group_pairs.items():
+        by_ref[ref_group] += n
+        by_cand[cand_group] += n
+    both = sum(pairs(n) for n in group_pairs.values())
     ref_pairs = sum(pairs(n) for n in by_ref.values())
     cand_pairs = sum(pairs(n) for n in by_cand.values())
-    res['nodes_near'] = round(100.0 * matched / max(len(R.nodes), 1), 2)
+    res['nodes_near'] = round(100.0 * matched / max(len(ref_data.nodes), 1), 2)
     res['connectivity'] = round(100.0 * both / max(ref_pairs, 1), 2)
     res['over_connection'] = round(100.0 * (cand_pairs - both) / max(cand_pairs, 1), 2)
     return res
@@ -183,34 +187,39 @@ def islands(reference, candidate, clip=None, drop=None):
 def run_level(root, lv, candidate, log):
     ref = reference_of(root, lv)
     xml = level_xml(root, lv)
-    t = time.time()
+    started = time.time()
     clip = terrain_bounds(root, lv)
-    d, _, _, _ = navdiff.diff(ref, candidate, log=lambda *a: None, clip=clip)
-    a = navcompare.compare(xml, ref, candidate)
+    content, _, _, _ = navdiff.diff(ref, candidate, log=lambda *a: None, clip=clip)
+    ai = navcompare.compare(xml, ref, candidate)
     stale = stale_nodes(root, lv, ref, clip)
     isl = islands(ref, candidate, clip, stale)
-    lad = ladder_ground(ref, candidate, d['cells']['reference'])
+    ladder = ladder_ground(ref, candidate, content['cells']['reference'])
+    sectors, cells, areas = content['sectors'], content['cells'], content['areas']
+    bounds, graph = content['bounds_of_same_areas'], content['graph']
+    # extra ground without the ground reached by ladder links (its own column: DICE has no ladder links)
+    extra_cells = max(cells['only_candidate'] - ladder['extra_cells'], 0)
     row = {
         'level': lv, 'candidate': candidate, 'reference_clip': clip, 'stale_reference_nodes': len(stale),
-        'sectors_reference': d['sectors']['reference'], 'sectors_candidate': d['sectors']['candidate'],
-        'sectors_missing': len(d['sectors']['only_reference']), 'sectors_extra': len(d['sectors']['only_candidate']),
-        'ground': d['cells']['parity'],
-        # extra ground without the ground reached by ladder links (its own column: DICE has no ladder links)
-        'extra_ground': round(100.0 * max(d['cells']['only_candidate'] - lad['extra_cells'], 0) / max(d['cells']['reference'], 1), 2),
-        'ladder_ground': lad['percent'],
-        'areas_same': d['areas']['parity'], 'areas_reference': d['areas']['reference'], 'areas_candidate': d['areas']['candidate'],
-        'detailed_reference': d['areas']['detailed_reference'], 'detailed_candidate': d['areas']['detailed_candidate'],
-        'outline': d['bounds_of_same_areas']['outline'], 'portals': d['bounds_of_same_areas']['portals'],
-        'borders': d['bounds_of_same_areas']['borders'],
-        'nodes_same': d['graph']['node_parity'], 'edges_same': d['graph']['edge_parity'], 'costs': d['graph']['costs_same_of_same_edges'],
+        'sectors_reference': sectors['reference'], 'sectors_candidate': sectors['candidate'],
+        'sectors_missing': len(sectors['only_reference']), 'sectors_extra': len(sectors['only_candidate']),
+        'ground': cells['parity'],
+        'extra_ground': round(100.0 * extra_cells / max(cells['reference'], 1), 2),
+        'ladder_ground': ladder['percent'],
+        'areas_same': areas['parity'], 'areas_reference': areas['reference'], 'areas_candidate': areas['candidate'],
+        'detailed_reference': areas['detailed_reference'], 'detailed_candidate': areas['detailed_candidate'],
+        'outline': bounds['outline'], 'portals': bounds['portals'], 'borders': bounds['borders'],
+        'nodes_same': graph['node_parity'], 'edges_same': graph['edge_parity'],
+        'costs': graph['costs_same_of_same_edges'],
         'islands_reference': isl['reference'], 'islands_candidate': isl['candidate'],
         'large_islands_reference': isl['large_reference'], 'large_islands_candidate': isl['large_candidate'],
         'nodes_near': isl['nodes_near'], 'connectivity': isl['connectivity'], 'over_connection': isl['over_connection'],
-        'ai_coverage': a['coverage_percent'], 'ai_pairwise': a['pairwise']['percent'],
-        'ai_main_reference': a['main_network']['reference'], 'ai_main_candidate': a['main_network']['candidate'],
+        'ai_coverage': ai['coverage_percent'], 'ai_pairwise': ai['pairwise']['percent'],
+        'ai_main_reference': ai['main_network']['reference'], 'ai_main_candidate': ai['main_network']['candidate'],
     }
-    log(f"  {lv:9s} ground {row['ground']:6.2f} % (+{row['extra_ground']:.1f} % extra)  areas {row['areas_same']:6.2f} %  nodes {row['nodes_same']:6.2f} %  "
-        f"connectivity {row['connectivity']:6.2f} %  AI positions {row['ai_coverage']:5.1f} %  ({time.time() - t:.0f} s)")
+    log(f"  {lv:9s} ground {row['ground']:6.2f} % (+{row['extra_ground']:.1f} % extra)  "
+        f"areas {row['areas_same']:6.2f} %  nodes {row['nodes_same']:6.2f} %  "
+        f"connectivity {row['connectivity']:6.2f} %  AI positions {row['ai_coverage']:5.1f} %  "
+        f"({time.time() - started:.0f} s)")
     return row
 
 
@@ -218,61 +227,76 @@ COLUMNS = [
     ('ground', 'ground %', '{:.1f}'), ('extra_ground', 'extra %', '{:.1f}'), ('areas_same', 'areas %', '{:.1f}'),
     ('detailed_reference', 'det.ref', '{}'), ('detailed_candidate', 'det.ours', '{}'),
     ('portals', 'portals %', '{:.1f}'), ('nodes_same', 'nodes %', '{:.1f}'), ('edges_same', 'edges %', '{:.1f}'),
-    ('islands_reference', 'isl.ref', '{}'), ('islands_candidate', 'isl.ours', '{}'), ('connectivity', 'connect %', '{:.1f}'),
-    ('over_connection', 'over %', '{:.1f}'), ('ai_coverage', 'AI pos %', '{:.1f}'), ('ai_pairwise', 'pairwise %', '{:.1f}'),
+    ('islands_reference', 'isl.ref', '{}'), ('islands_candidate', 'isl.ours', '{}'),
+    ('connectivity', 'connect %', '{:.1f}'), ('over_connection', 'over %', '{:.1f}'),
+    ('ai_coverage', 'AI pos %', '{:.1f}'), ('ai_pairwise', 'pairwise %', '{:.1f}'),
     ('ladder_ground', 'ladder %', '{:.1f}'),
 ]
-TOTALS = ['ground', 'extra_ground', 'areas_same', 'portals', 'nodes_same', 'edges_same', 'connectivity', 'over_connection', 'ai_coverage', 'ai_pairwise',
-          'ladder_ground']
+TOTALS = ['ground', 'extra_ground', 'areas_same', 'portals', 'nodes_same', 'edges_same', 'connectivity',
+          'over_connection', 'ai_coverage', 'ai_pairwise', 'ladder_ground']
 
 
 def table(run, other=None, log=print):
     rows = {r['level']: r for r in run['levels']}
     base = {r['level']: r for r in other['levels']} if other else {}
     head = f"{'level':9s} " + ' '.join(f'{h:>10s}' for _, h, _ in COLUMNS)
-    log(f"run '{run['name']}' ({run['date']})" + (f" against '{other['name']}' ({other['date']}): value (change)" if other else ''))
+    against = f" against '{other['name']}' ({other['date']}): value (change)" if other else ''
+    log(f"run '{run['name']}' ({run['date']})" + against)
     log(head)
-    for lv in [l for l in LEVELS if l in rows] + sorted(set(rows) - set(LEVELS)):
-        r = rows[lv]
+    for lv in [name for name in LEVELS if name in rows] + sorted(set(rows) - set(LEVELS)):
+        row = rows[lv]
         cells = []
-        for key, _, f in COLUMNS:
-            if key in ('portals',) and r['areas_same'] == 0:
+        for key, _, fmt in COLUMNS:
+            if key in ('portals',) and row['areas_same'] == 0:
                 cells.append(f"{'n/a':>10s}")   # a share of matching areas, and none match
                 continue
-            v = f.format(r.get(key, 0))
-            if lv in base and isinstance(r.get(key, 0), (int, float)) and r.get(key, 0) != base[lv].get(key, 0):
-                delta = r.get(key, 0) - base[lv].get(key, 0)
-                v += f"({'+' if delta > 0 else ''}{f.format(delta) if isinstance(delta, float) else delta})"
-            cells.append(f'{v:>10s}')
+            value = row.get(key, 0)
+            text = fmt.format(value)
+            if lv in base and isinstance(value, (int, float)) and value != base[lv].get(key, 0):
+                delta = value - base[lv].get(key, 0)
+                text += f"({'+' if delta > 0 else ''}{fmt.format(delta) if isinstance(delta, float) else delta})"
+            cells.append(f'{text:>10s}')
         log(f'{lv:9s} ' + ' '.join(cells))
-    avg = {k: sum(r.get(k, 0) for r in rows.values()) / len(rows) for k in TOTALS}
+    mean = {k: sum(r.get(k, 0) for r in rows.values()) / len(rows) for k in TOTALS}
     if all(r['areas_same'] == 0 for r in rows.values()):
-        avg.pop('portals')
-    line = f"{'mean':9s} " + ' '.join(f"{(f.format(avg[k]) if k in avg else ''):>10s}" for k, _, f in COLUMNS)
+        mean.pop('portals')
+    line = f"{'mean':9s} " + ' '.join(f"{(fmt.format(mean[k]) if k in mean else ''):>10s}" for k, _, fmt in COLUMNS)
     log(line)
     if other:
-        bavg = {k: sum(r.get(k, 0) for r in other['levels']) / len(other['levels']) for k in TOTALS}
-        log(f"{'change':9s} " + ' '.join(f"{(('+' if avg[k] - bavg[k] > 0 else '') + f.format(avg[k] - bavg[k]) if k in avg and k in bavg else ''):>10s}" for k, _, f in COLUMNS))
+        base_mean = {k: sum(r.get(k, 0) for r in other['levels']) / len(other['levels']) for k in TOTALS}
+
+        def change(key, fmt):
+            if key not in mean or key not in base_mean:
+                return ''
+            delta = mean[key] - base_mean[key]
+            return ('+' if delta > 0 else '') + fmt.format(delta)
+
+        log(f"{'change':9s} " + ' '.join(f'{change(k, fmt):>10s}' for k, _, fmt in COLUMNS))
 
 
 def save_path(root, name):
-    d = os.path.join(root, 'work', 'navkit', 'parity')
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, name.replace(' ', '_') + '.json')
+    folder = os.path.join(root, 'work', 'navkit', 'parity')
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, name.replace(' ', '_') + '.json')
 
 
 def main(argv):
     args = argv[1:]
     opfor = None
     if '--opfor' in args:
-        i = args.index('--opfor'); opfor = args[i + 1]; del args[i:i + 2]
+        i = args.index('--opfor')
+        opfor = args[i + 1]
+        del args[i:i + 2]
     if len(args) < 2 or args[0] not in ('run', 'show'):
         print(__doc__)
         return 1
     root = opfor_root(opfor)
     if args[0] == 'show':
         runs = [json.load(open(save_path(root, n))) for n in args[1:3]]
-        table(runs[0], runs[1] if len(runs) > 1 else None) if len(runs) == 1 else table(runs[1], runs[0])
+        if len(runs) == 1:
+            table(runs[0])
+        else:
+            table(runs[1], runs[0])         # the second against the first
         return 0
     name = args[1]
     targets = []

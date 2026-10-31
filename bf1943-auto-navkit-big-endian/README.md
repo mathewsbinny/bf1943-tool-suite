@@ -80,7 +80,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   `research/NAVMESH_AUDIT.md`, update 2026-10-26.
 - **2026-10-26 build rules:** ships' ledges (`jumplinks1943.SHIP_LEDGES`: jump links between a carrier's floors a
   ledge apart, its deck-edge galleries 0.58 m and gun tubs 0.84 m under the deck; Wake 21, Iwo Jima 21, Coral Sea 41
-  links) and border nodes on the seam line (`navbuild.BORDER_SEAM_LINE`, set by `soldier1943.configure`: ground that
+  links) and border nodes on the seam line (`navbuild.BORDER_SEAM_LINE`, on in `soldier1943.SETTINGS`: ground that
   reaches a sector seam but not the border line one sample beyond gets a shared node; two of Coral Sea's three seam
   breaks closed).
 - **2026-10-26, round 2:** areas hold no cliff (`navbuild.AREA_CLIFF`: a surface beside a cell of its area more than
@@ -247,11 +247,13 @@ writes `ladders.json` from the placed objects whose blueprint has a `LadderEntit
 `terrain.py` and `water.py` detect the byte order.
 
 **BF1943's soldier.** `tools\soldier1943.py` holds the soldier's physics (`DefaultSoldierPhysics`: radius 0.35 m,
-step 0.3 m plus a 0.07 m tolerance, height 1.8 m, 45 deg, water depth 1.4 m), and its `configure()` sets the NavKit
-settings that follow from it over the BFBC2 defaults: slope limit, water depth, the detailed zones' link step
-(0.37 m), node height (0.9 m), and the headroom band (0.5-1.8 m). It also switches on BF1943's build rules
-(`LADDER_ALL_GROUND`, and the seam and area rules of the 2026-10-26 entries above). NavKit's other values were fitted to DICE's BFBC2 path data and
-are not checked on BF1943.
+step 0.3 m plus a 0.07 m tolerance, height 1.8 m, 45 deg, water depth 1.4 m), and its `SETTINGS` (a
+`navbuild.Settings`, which `navkit.py build` passes to `navbuild.build`) holds the NavKit settings that follow from it
+over the BFBC2 defaults (`navbuild.BFBC2`): slope limit, the detailed zones' link step (0.37 m), node height (0.9 m),
+and the headroom band (0.5-1.8 m); the water depth goes in as `build(max_water_depth=...)`. They also switch on
+BF1943's build rules (`ladder_all_ground`, and the seam and area rules of the 2026-10-26 entries above). Nothing
+rewrites NavKit's module constants at run time (`configure()` did until 2026-10-31). NavKit's other values were fitted
+to DICE's BFBC2 path data and are not checked on BF1943.
 
 **Tools in this variant:** `detailed.py`, `detailed1943.py`, `havok461.py`, `hkpack.py`, `hpdcheck.py`,
 `hpdtool.py`, `hpdview.py`, `kymesh.py`, `levelobjects.py`, `levelobjects1943.py`, `navbuild.py`, `navedits.py`,

@@ -75,7 +75,7 @@ def build(tmp, gap_nodes):
     navbuild.build(os.path.join(tmp, 's08.bin'), os.path.join(tmp, 'forbid.npy'), 0, 0, out, step=soldier1943.STEP,
                    seeds=[(50.0, 0.0, 50.0), (150.0, 0.0, 50.0)], max_water_depth=None,
                    detailed={'samples': os.path.join(tmp, 's02.bin'), 'high': None, 'sectors': {(1, 0)}},
-                   log=lines.append)
+                   log=lines.append, settings=soldier1943.SETTINGS)
     return out, lines
 
 
@@ -100,7 +100,6 @@ def fine_columns_check():
 
 
 if __name__ == '__main__':
-    soldier1943.configure()
     fine_columns_check()
     tmp = tempfile.mkdtemp(prefix='mixed_seam_')
     try:

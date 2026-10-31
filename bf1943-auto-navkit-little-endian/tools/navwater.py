@@ -27,8 +27,8 @@ import navdiff  # noqa: E402
 import navparity  # noqa: E402
 
 BANDS = [(-1e9, -0.5, 'dry (water more than 0.5 m below)'), (-0.5, 0.0, 'at the shore (0-0.5 m below)'),
-         (0.0, 0.5, 'under 0-0.5 m'), (0.5, 1.0, 'under 0.5-1 m'), (1.0, 1.5, 'under 1-1.5 m'), (1.5, 2.0, 'under 1.5-2 m'),
-         (2.0, 3.0, 'under 2-3 m'), (3.0, 1e9, 'under more than 3 m')]
+         (0.0, 0.5, 'under 0-0.5 m'), (0.5, 1.0, 'under 0.5-1 m'), (1.0, 1.5, 'under 1-1.5 m'),
+         (1.5, 2.0, 'under 1.5-2 m'), (2.0, 3.0, 'under 2-3 m'), (3.0, 1e9, 'under more than 3 m')]
 TILE = 16.0
 NO_WATER = -1e9
 
@@ -36,8 +36,8 @@ NO_WATER = -1e9
 def cells(path):
     """(i, j) -> list of ground height estimates, every area of every sector."""
     out = defaultdict(list)
-    for s in navdiff.load(path).values():
-        for area in s.cells():
+    for sector in navdiff.load(path).values():
+        for area in sector.cells():
             for ij, y in area.items():
                 out[ij].append(y)
     return out
@@ -48,26 +48,30 @@ def water_heights(points, water):
     top = np.full(len(points), NO_WATER)
     if water is None or not len(water):
         return top
-    tiles = defaultdict(list)
+    tiles = defaultdict(list)           # TILE square -> indices of the points in it
     keys = np.floor(points / TILE).astype(np.int64)
     for n, (a, b) in enumerate(keys):
         tiles[(a, b)].append(n)
     tiles = {k: np.array(v) for k, v in tiles.items()}
     tri = water.vertices[water.triangles].astype(np.float64)
-    lo = np.floor(tri[:, :, [0, 2]].min(axis=1) / TILE).astype(np.int64)
-    hi = np.floor(tri[:, :, [0, 2]].max(axis=1) / TILE).astype(np.int64)
+    # each triangle's first and last TILE square
+    tile_lo = np.floor(tri[:, :, [0, 2]].min(axis=1) / TILE).astype(np.int64)
+    tile_hi = np.floor(tri[:, :, [0, 2]].max(axis=1) / TILE).astype(np.int64)
     for t in range(len(tri)):
-        idx = [tiles[(a, b)] for a in range(lo[t, 0], hi[t, 0] + 1) for b in range(lo[t, 1], hi[t, 1] + 1) if (a, b) in tiles]
-        if not idx:
+        near = [tiles[(a, b)]
+                for a in range(tile_lo[t, 0], tile_hi[t, 0] + 1)
+                for b in range(tile_lo[t, 1], tile_hi[t, 1] + 1) if (a, b) in tiles]
+        if not near:
             continue
-        idx = np.concatenate(idx)
+        idx = np.concatenate(near)
         p = points[idx]
+        # barycentric coordinates l1, l2, l3 of each point in the triangle (a, b, c) on the xz plane
         (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri[t]
-        d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz)
-        if abs(d) < 1e-12:
+        det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz)
+        if abs(det) < 1e-12:
             continue
-        l1 = ((bz - cz) * (p[:, 0] - cx) + (cx - bx) * (p[:, 1] - cz)) / d
-        l2 = ((cz - az) * (p[:, 0] - cx) + (ax - cx) * (p[:, 1] - cz)) / d
+        l1 = ((bz - cz) * (p[:, 0] - cx) + (cx - bx) * (p[:, 1] - cz)) / det
+        l2 = ((cz - az) * (p[:, 0] - cx) + (ax - cx) * (p[:, 1] - cz)) / det
         l3 = 1 - l1 - l2
         inside = (l1 >= -1e-9) & (l2 >= -1e-9) & (l3 >= -1e-9)
         if inside.any():
@@ -91,20 +95,20 @@ def depths(entries, heightfield, water):
     """Per floor: water depth above its ground (NaN where there is no water above). The ground is the terrain
     height field's where the floor lies on terrain, else navdiff's estimate."""
     pts = np.array([(i * navdiff.GRID, j * navdiff.GRID) for (i, j), _ in entries], dtype=np.float64)
-    est = np.array([y for _, y in entries])
-    ground = est
+    estimate = np.array([y for _, y in entries])
+    ground = estimate
     if heightfield is not None and len(pts):
-        t = heightfield.height(pts[:, 0], pts[:, 1])
-        ground = np.where(np.abs(t - est) < 1.5, t, est)
-    w = water_heights(pts, water)
-    return np.where(w > NO_WATER / 2, w - ground, np.nan)
+        terrain_y = heightfield.height(pts[:, 0], pts[:, 1])
+        ground = np.where(np.abs(terrain_y - estimate) < 1.5, terrain_y, estimate)
+    surface = water_heights(pts, water)
+    return np.where(surface > NO_WATER / 2, surface - ground, np.nan)
 
 
-def band_of(d):
-    if np.isnan(d):
+def band_of(depth):
+    if np.isnan(depth):
         return 0
-    for n, (a, b, _) in enumerate(BANDS):
-        if a <= d < b:
+    for n, (low, high, _) in enumerate(BANDS):
+        if low <= depth < high:
             return n
     return len(BANDS) - 1
 
@@ -113,91 +117,113 @@ def level_report(root, lv, candidate, log=print):
     from bfbc2core import level as levelmod, terrain as terrainmod, water as watermod
     ref = navparity.reference_of(root, lv)
     name = None
-    for b in ('pkg', 'dist'):
+    for folder in ('pkg', 'dist'):
         import glob
-        for f in glob.glob(os.path.join(root, 'work', 'levels', lv, b, 'levels', '*.dbx')):
-            if os.path.splitext(os.path.basename(f))[0].lower() == lv:
+        for path in glob.glob(os.path.join(root, 'work', 'levels', lv, folder, 'levels', '*.dbx')):
+            if os.path.splitext(os.path.basename(path))[0].lower() == lv:
                 from bfbc2core import dbx
-                name = levelmod.terrain_name(dbx.read(f).instances)
+                name = levelmod.terrain_name(dbx.read(path).instances)
                 break
         if name:
             break
     hf = levelmod.heightfield_of(root, lv, log=lambda *a: None, name=name)
-    w = watermod.read(os.path.join(root, 'work', 'levels', lv, 'terrain'), name or lv)
-    if w is None or not len(w):
+    water = watermod.read(os.path.join(root, 'work', 'levels', lv, 'terrain'), name or lv)
+    if water is None or not len(water):
         log(f'{lv}: no water')
         return None
-    D, N = cells(ref), cells(candidate)
-    fn, fd = floors(N), floors(D)
-    dn, dd = depths(fn, hf, w), depths(fd, hf, w)
+    dice_cells, navkit_cells = cells(ref), cells(candidate)
+    navkit_floors, dice_floors = floors(navkit_cells), floors(dice_cells)
+    navkit_depth, dice_depth = depths(navkit_floors, hf, water), depths(dice_floors, hf, water)
     # the same ground, as navdiff pairs cells: one floor on each side is the same; stacked floors pair by
     # height, up to navdiff's STACK_TOL apart (the height estimates are rough on sloped areas)
-    floors_d = defaultdict(list)
-    for ij, y in fd:
-        floors_d[ij].append(y)
-    count_n = defaultdict(int)
-    for ij, _ in fn:
-        count_n[ij] += 1
-    has = np.array([bool(floors_d.get(ij)) and ((count_n[ij] == 1 and len(floors_d[ij]) == 1)
-                                                 or any(abs(y - yd) <= navdiff.STACK_TOL for yd in floors_d[ij]))
-                    for ij, y in fn])
-    bn = np.array([band_of(x) for x in dn])
-    bd = np.array([band_of(x) for x in dd])
+    dice_heights = defaultdict(list)            # (i, j) -> DICE's floor heights there
+    for ij, y in dice_floors:
+        dice_heights[ij].append(y)
+    navkit_count = defaultdict(int)             # (i, j) -> NavKit's floors there
+    for ij, _ in navkit_floors:
+        navkit_count[ij] += 1
+
+    def dice_has(ij, y):
+        if not dice_heights.get(ij):
+            return False
+        if navkit_count[ij] == 1 and len(dice_heights[ij]) == 1:
+            return True
+        return any(abs(y - dice_y) <= navdiff.STACK_TOL for dice_y in dice_heights[ij])
+
+    has = np.array([dice_has(ij, y) for ij, y in navkit_floors])
+    navkit_band = np.array([band_of(x) for x in navkit_depth])
+    dice_band = np.array([band_of(x) for x in dice_depth])
     rows = []
     for n, (_, _, label) in enumerate(BANDS):
-        sel = bn == n
-        rows.append({'band': label, 'navkit': int(sel.sum()), 'dice': int((bd == n).sum()), 'navkit_in_dice': int(has[sel].sum()),
+        sel = navkit_band == n
+        rows.append({'band': label, 'navkit': int(sel.sum()), 'dice': int((dice_band == n).sum()),
+                     'navkit_in_dice': int(has[sel].sum()),
                      'share': round(100.0 * has[sel].sum() / sel.sum(), 1) if sel.any() else None})
     extra = ~has
-    wet = extra & ~np.isnan(dn) & (dn >= 0)
-    dice_wet = dd[~np.isnan(dd) & (dd >= 0)]
+    wet = extra & ~np.isnan(navkit_depth) & (navkit_depth >= 0)
+    dice_wet = dice_depth[~np.isnan(dice_depth) & (dice_depth >= 0)]
     limit = float(np.percentile(dice_wet, 99.9)) if len(dice_wet) else None      # the deepest DICE goes
-    deep = ~np.isnan(dn) & (dn > (limit if limit is not None else 0.0))
-    return {'level': lv, 'bands': rows, 'navkit_cells': len(fn), 'dice_cells': len(fd), 'extra_cells': int(extra.sum()),
-            'extra_under_water': int(wet.sum()), 'extra_under_water_pct': round(100.0 * wet.sum() / max(extra.sum(), 1), 1),
+    deep = ~np.isnan(navkit_depth) & (navkit_depth > (limit if limit is not None else 0.0))
+    return {'level': lv, 'bands': rows, 'navkit_cells': len(navkit_floors), 'dice_cells': len(dice_floors),
+            'extra_cells': int(extra.sum()), 'extra_under_water': int(wet.sum()),
+            'extra_under_water_pct': round(100.0 * wet.sum() / max(extra.sum(), 1), 1),
             'dice_under_water': int(len(dice_wet)), 'dice_depth_limit': None if limit is None else round(limit, 2),
             'navkit_deeper_than_dice': int(deep.sum()),
-            'navkit_deeper_pct_of_extra': round(100.0 * deep.sum() / max(extra.sum(), 1), 1), 'water_triangles': len(w)}
+            'navkit_deeper_pct_of_extra': round(100.0 * deep.sum() / max(extra.sum(), 1), 1),
+            'water_triangles': len(water)}
 
 
 def main(argv):
     args = argv[1:]
-    opt = lambda k, d=None: args[args.index(k) + 1] if k in args else d
+
+    def opt(name, default=None):
+        return args[args.index(name) + 1] if name in args else default
+
     root = navparity.opfor_root(opt('--opfor'))
     pattern = opt('--candidate', os.path.join(root, 'work', 'navbuild', '{lv}_W.hpd'))
-    skip = {opt('--candidate'), opt('--json'), opt('--opfor')}
-    levels = [a for a in args if not a.startswith('--') and a not in skip] or [lv for lv in navparity.LEVELS if lv not in ('sp_006', 'sp_009')]
+    option_values = {opt('--candidate'), opt('--json'), opt('--opfor')}
+    levels = [a for a in args if not a.startswith('--') and a not in option_values]
+    if not levels:
+        levels = [lv for lv in navparity.LEVELS if lv not in ('sp_006', 'sp_009')]
     reports = []
-    totals = defaultdict(lambda: [0, 0, 0])
+    totals = defaultdict(lambda: [0, 0, 0])     # band -> [NavKit floors, of them in DICE's, DICE floors]
     for lv in levels:
-        r = level_report(root, lv, pattern.replace('{lv}', lv))
-        if r is None:
+        report = level_report(root, lv, pattern.replace('{lv}', lv))
+        if report is None:
             continue
-        reports.append(r)
-        lim = f'{r["dice_depth_limit"]:.2f} m' if r['dice_depth_limit'] is not None else 'n/a (no DICE ground under water)'
-        print(f'\n{lv}: NavKit {r["navkit_cells"]:,} floors, DICE {r["dice_cells"]:,}; DICE under water {r["dice_under_water"]:,}, '
-              f'99.9 % of it within {lim}; NavKit deeper than that: {r["navkit_deeper_than_dice"]:,} '
-              f'({r["navkit_deeper_pct_of_extra"]} % of NavKit\'s extra ground {r["extra_cells"]:,})')
-        for b in r['bands']:
-            t = totals[b['band']]
-            t[0] += b['navkit']; t[1] += b['navkit_in_dice']; t[2] += b['dice']
-            if b['navkit'] or b['dice']:
-                share = f'{b["share"]:5.1f} %' if b['share'] is not None else '   -   '
-                print(f'  {b["band"]:36s} NavKit {b["navkit"]:9,}  DICE has {share}   DICE cells {b["dice"]:9,}')
+        reports.append(report)
+        if report['dice_depth_limit'] is not None:
+            limit = f'{report["dice_depth_limit"]:.2f} m'
+        else:
+            limit = 'n/a (no DICE ground under water)'
+        print(f'\n{lv}: NavKit {report["navkit_cells"]:,} floors, DICE {report["dice_cells"]:,}; '
+              f'DICE under water {report["dice_under_water"]:,}, '
+              f'99.9 % of it within {limit}; NavKit deeper than that: {report["navkit_deeper_than_dice"]:,} '
+              f'({report["navkit_deeper_pct_of_extra"]} % of NavKit\'s extra ground {report["extra_cells"]:,})')
+        for band in report['bands']:
+            total = totals[band['band']]
+            total[0] += band['navkit']
+            total[1] += band['navkit_in_dice']
+            total[2] += band['dice']
+            if band['navkit'] or band['dice']:
+                share = f'{band["share"]:5.1f} %' if band['share'] is not None else '   -   '
+                print(f'  {band["band"]:36s} NavKit {band["navkit"]:9,}  DICE has {share}   '
+                      f'DICE cells {band["dice"]:9,}')
     print(f'\nall {len(reports)} levels:')
     for _, _, label in BANDS:
-        n, both, d = totals[label]
-        if n or d:
-            print(f'  {label:36s} NavKit {n:9,}  DICE has {100.0 * both / n if n else 0:5.1f} %   DICE cells {d:9,}')
-    ex = sum(r['extra_cells'] for r in reports)
+        navkit, both, dice = totals[label]
+        if navkit or dice:
+            print(f'  {label:36s} NavKit {navkit:9,}  DICE has {100.0 * both / navkit if navkit else 0:5.1f} %   '
+                  f'DICE cells {dice:9,}')
+    extra = sum(r['extra_cells'] for r in reports)
     wet = sum(r['extra_under_water'] for r in reports)
     deep = sum(r['navkit_deeper_than_dice'] for r in reports)
-    print(f'  NavKit extra ground under water: {wet:,} of {ex:,} floors ({100.0 * wet / max(ex, 1):.1f} %); '
-          f'deeper than DICE goes on the level: {deep:,} ({100.0 * deep / max(ex, 1):.1f} %)')
-    lims = [r['dice_depth_limit'] for r in reports if r['dice_depth_limit'] is not None]
-    if lims:
+    print(f'  NavKit extra ground under water: {wet:,} of {extra:,} floors ({100.0 * wet / max(extra, 1):.1f} %); '
+          f'deeper than DICE goes on the level: {deep:,} ({100.0 * deep / max(extra, 1):.1f} %)')
+    limits = [r['dice_depth_limit'] for r in reports if r['dice_depth_limit'] is not None]
+    if limits:
         print(f'  DICE\'s depth limit per level (99.9 % of its ground under water is within): '
-              f'{min(lims):.2f} - {max(lims):.2f} m, median {float(np.median(lims)):.2f} m')
+              f'{min(limits):.2f} - {max(limits):.2f} m, median {float(np.median(limits)):.2f} m')
     if opt('--json'):
         json.dump(reports, open(opt('--json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     return 0

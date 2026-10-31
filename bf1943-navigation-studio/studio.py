@@ -100,7 +100,7 @@ class Studio:
         self.layers.update(lay)
         self.ground_batch = self.scene.add_triangles(cell_quads(nav.cell_xz, nav.cell_y, lvl.heightfield),
                                                      np.repeat(ID_AREA + nav.cell_area, 2), lay['ground'])
-        drop = np.array([0, navdata.Y_OFFSET - 0.12, 0])
+        drop = np.array([0, nav.y_offset - 0.12, 0])
         lines = [(k, line) for k, a in enumerate(nav.areas) for line in a.outline]
         if lines:                                    # all outline polylines at once: segments within each line
             pts = np.concatenate([l for _, l in lines])
@@ -116,7 +116,7 @@ class Studio:
                                      np.array([ID_AREA + k for k, _, _ in segs]), lay[key])
         lad = nav.ladder_edge if nav.ladder_edge is not None else np.zeros(len(nav.edges), bool)
         if len(nav.edges):
-            p = nav.node_pos - np.array([0, navdata.Y_OFFSET - 0.2, 0])
+            p = nav.node_pos - np.array([0, nav.y_offset - 0.2, 0])
             e = nav.edges[~lad]
             self.scene.add_lines(np.stack([p[e[:, 0]], p[e[:, 1]]], axis=1), GRAPH_ID, lay['route graph'])
         lad_area = np.array([a.ladder for a in nav.areas], dtype=bool)
@@ -128,7 +128,7 @@ class Studio:
         if lad.any():
             self.layers['ladder links'] = L('ladder links', LADDER)
             e = nav.edges[lad]
-            p = nav.node_pos - np.array([0, navdata.Y_OFFSET - 0.3, 0])
+            p = nav.node_pos - np.array([0, nav.y_offset - 0.3, 0])
             self.scene.add_lines(np.stack([p[e[:, 0]], p[e[:, 1]]], axis=1), GRAPH_ID, self.layers['ladder links'])
         # points: soldier spawns (and their alternates), bases, flags; ladders as boxes
         for name, col in POINT_LAYERS:
@@ -324,7 +324,7 @@ class Studio:
         imgui.begin_child('islands', (0, 0))
         for k, isl in enumerate(nav.islands[:300]):
             if imgui.small_button(f'fly##is{k}'):
-                v.camera.focus(isl.centre - np.array([0, navdata.Y_OFFSET, 0]), 40.0 if k else 300.0)
+                v.camera.focus(isl.centre - np.array([0, nav.y_offset, 0]), 40.0 if k else 300.0)
             imgui.same_line()
             imgui.text(f'{k}: {isl.nodes:,} nodes, {isl.cells:,} cells')
         imgui.end_child()
@@ -407,8 +407,7 @@ def main(argv):
               f'(python navkit.py all {lvl.lv}), or pass --hpd <file>')
         return 1
     print(f'navigation: {hpd}')
-    navdata.Y_OFFSET = NODE_HEIGHT
-    nav = navdata.load(hpd, lvl.heightfield)
+    nav = navdata.load(hpd, lvl.heightfield, y_offset=NODE_HEIGHT)
     st = Studio(lvl, nav, checked['color'])
     st.triangles = st.scene.triangle_count()
     v = viewer.Viewer(st.scene, f'BF1943 Navigation Studio - {lvl.name}',

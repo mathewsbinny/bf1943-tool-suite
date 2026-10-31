@@ -62,28 +62,35 @@ SHIP_CLEAR = 0.3          # m: nothing between the two ends higher than the uppe
 SHIP_LINKS = 4            # links per piece
 
 
-def _clear(s, k, idx_pos, idx):
-    """Clear (capsule), flat enough, and with the soldier's headroom."""
+def _column_surfaces(s, col):
+    """The surface indices of column col (j-major) of samples s, top down."""
+    return list(range(s.start[col], s.start[col + 1]))
+
+
+def _clear(s, k, position, column):
+    """Clear (capsule), flat enough, and with the soldier's headroom. k is the surface at index position of column
+    (its surfaces, top down): the one above it must be at least the soldier's height higher."""
     if s.flags[k] & 1 or s.normal[k, 1] < math.cos(math.radians(soldier1943.SLOPE_MAX)) - 0.01:
         return False
-    q = idx_pos
-    return q == 0 or s.y[idx[q - 1]] - s.y[k] >= soldier1943.HEIGHT
+    return position == 0 or s.y[column[position - 1]] - s.y[k] >= soldier1943.HEIGHT
 
 
 def _wide(s, i, j, y, radius=0.6, share=0.7):
     """Floor, not a rail or a ledge: most columns within radius have a clear surface at this height (a platform's
     rail top lies at the deck's height and is one or two samples wide)."""
-    r = int(round(radius / s.pitch))
-    n = hit = 0
-    for b in range(j - r, j + r + 1):
-        for a in range(i - r, i + r + 1):
-            if (a - i) ** 2 + (b - j) ** 2 > r * r or not (0 <= a < s.nx and 0 <= b < s.nz):
+    reach = int(round(radius / s.pitch))
+    columns = with_floor = 0
+    for col_j in range(j - reach, j + reach + 1):
+        for col_i in range(i - reach, i + reach + 1):
+            if (col_i - i) ** 2 + (col_j - j) ** 2 > reach * reach:
                 continue
-            n += 1
-            cc = b * s.nx + a
-            ix = list(range(s.start[cc], s.start[cc + 1]))
-            hit += any(abs(s.y[k] - y) <= 0.1 and _clear(s, k, q, ix) for q, k in enumerate(ix))
-    return n and hit / n >= share
+            if not (0 <= col_i < s.nx and 0 <= col_j < s.nz):
+                continue
+            columns += 1
+            column = _column_surfaces(s, col_j * s.nx + col_i)
+            with_floor += any(abs(s.y[k] - y) <= 0.1 and _clear(s, k, position, column)
+                              for position, k in enumerate(column))
+    return columns and with_floor / columns >= share
 
 
 def platform_links(s, spawns, water_top, terrain, log=print):
@@ -91,92 +98,110 @@ def platform_links(s, spawns, water_top, terrain, log=print):
     water surface over a column and the terrain height."""
     out = []
     for name, (x, y, z) in spawns:
-        ci, cj = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
-        if not (0 <= ci < s.nx and 0 <= cj < s.nz):
+        spawn_i, spawn_j = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
+        if not (0 <= spawn_i < s.nx and 0 <= spawn_j < s.nz):
             continue
-        c = cj * s.nx + ci
-        idx = list(range(s.start[c], s.start[c + 1]))
-        below = [k for k in idx if s.y[k] <= y + 0.5]
+        spawn_col = spawn_j * s.nx + spawn_i
+        below = [k for k in _column_surfaces(s, spawn_col) if s.y[k] <= y + 0.5]
         if not below:
             continue
-        fk = max(below, key=lambda k: s.y[k])
-        fy = float(s.y[fk])
-        t = float(terrain(x, z))
-        if abs(fy - t) < 0.06 or water_top(c) - t <= soldier1943.WATER_DEPTH:
+        floor_k = max(below, key=lambda k: s.y[k])
+        floor_y = float(s.y[floor_k])
+        ground_y = float(terrain(x, z))
+        if abs(floor_y - ground_y) < 0.06 or water_top(spawn_col) - ground_y <= soldier1943.WATER_DEPTH:
             continue                                     # on terrain, or not over deep water: not a ship's gun
         # the platform: clear floor joined by the step rule, starting from clear floor nearest the spawn
-        n = int(PLATFORM_RADIUS / s.pitch)
-        seeds = []
-        for j in range(max(cj - 6, 0), min(cj + 7, s.nz)):
-            for i in range(max(ci - 6, 0), min(ci + 7, s.nx)):
-                cc = j * s.nx + i
-                ix = list(range(s.start[cc], s.start[cc + 1]))
-                for q, k in enumerate(ix):
-                    if abs(s.y[k] - fy) <= END_BAND and _clear(s, k, q, ix):
-                        seeds.append((math.hypot(i - ci, j - cj), k, i, j))
+        reach = int(PLATFORM_RADIUS / s.pitch)
+        seeds = []                                       # (distance in columns, surface, i, j)
+        for j in range(max(spawn_j - 6, 0), min(spawn_j + 7, s.nz)):
+            for i in range(max(spawn_i - 6, 0), min(spawn_i + 7, s.nx)):
+                column = _column_surfaces(s, j * s.nx + i)
+                for position, k in enumerate(column):
+                    if abs(s.y[k] - floor_y) <= END_BAND and _clear(s, k, position, column):
+                        seeds.append((math.hypot(i - spawn_i, j - spawn_j), k, i, j))
         if not seeds:
-            log(f'  {name}: no clear floor beside the gun at {fy:.2f}')
+            log(f'  {name}: no clear floor beside the gun at {floor_y:.2f}')
             continue
         _, k0, i0, j0 = min(seeds)
-        seen = {k0: (i0, j0)}
-        q = deque([k0])
-        while q:
-            k = q.popleft()
+        seen = {k0: (i0, j0)}                            # platform surface -> its column (i, j)
+        queue = deque([k0])
+        while queue:
+            k = queue.popleft()
             i, j = seen[k]
             for dj in (-1, 0, 1):
                 for di in (-1, 0, 1):
-                    a, b = i + di, j + dj
-                    if not (di or dj) or abs(a - ci) > n or abs(b - cj) > n or not (0 <= a < s.nx and 0 <= b < s.nz):
+                    col_i, col_j = i + di, j + dj
+                    if not (di or dj) or abs(col_i - spawn_i) > reach or abs(col_j - spawn_j) > reach:
                         continue
-                    cc = b * s.nx + a
-                    ix = list(range(s.start[cc], s.start[cc + 1]))
-                    for qq, m in enumerate(ix):
-                        if m not in seen and abs(s.y[m] - s.y[k]) <= soldier1943.STEP and _clear(s, m, qq, ix):
-                            seen[m] = (a, b)
-                            q.append(m)
-        plat_y = np.array([s.y[k] for k in seen])
-        P = np.array([[s.min_x + i * s.pitch, s.min_z + j * s.pitch] for i, j in seen.values()])
+                    if not (0 <= col_i < s.nx and 0 <= col_j < s.nz):
+                        continue
+                    column = _column_surfaces(s, col_j * s.nx + col_i)
+                    for position, m in enumerate(column):
+                        if m in seen or not abs(s.y[m] - s.y[k]) <= soldier1943.STEP:
+                            continue
+                        if _clear(s, m, position, column):
+                            seen[m] = (col_i, col_j)
+                            queue.append(m)
+        platform_y = np.array([s.y[k] for k in seen])
+        # each platform surface's (x, z), in the order of platform_y
+        platform_xz = np.array([[s.min_x + i * s.pitch, s.min_z + j * s.pitch] for i, j in seen.values()])
         # the deck: clear floor STEP..JUMP_HEIGHT above the platform within JUMP_GAP of it
-        g = int(math.ceil(JUMP_GAP / s.pitch))
-        ii = [i for i, _ in seen.values()]
-        jj = [j for _, j in seen.values()]
-        best = None
-        top = float(plat_y.mean())
-        for j in range(max(min(jj) - g, 0), min(max(jj) + g + 1, s.nz)):
-            for i in range(max(min(ii) - g, 0), min(max(ii) + g + 1, s.nx)):
-                cc = j * s.nx + i
-                ix = list(range(s.start[cc], s.start[cc + 1]))
-                for qq, m in enumerate(ix):
-                    rise = s.y[m] - top
-                    if not (soldier1943.STEP < rise <= JUMP_HEIGHT) or not _clear(s, m, qq, ix):
+        gap_cells = int(math.ceil(JUMP_GAP / s.pitch))
+        platform_i = [i for i, _ in seen.values()]
+        platform_j = [j for _, j in seen.values()]
+        best = None                                      # (gap, platform end (x, y, z), deck end (x, y, z))
+        platform_top = float(platform_y.mean())
+        for j in range(max(min(platform_j) - gap_cells, 0), min(max(platform_j) + gap_cells + 1, s.nz)):
+            for i in range(max(min(platform_i) - gap_cells, 0), min(max(platform_i) + gap_cells + 1, s.nx)):
+                column = _column_surfaces(s, j * s.nx + i)
+                for position, m in enumerate(column):
+                    rise = s.y[m] - platform_top
+                    if not (soldier1943.STEP < rise <= JUMP_HEIGHT) or not _clear(s, m, position, column):
                         continue
                     px, pz = s.min_x + i * s.pitch, s.min_z + j * s.pitch
-                    d = np.hypot(P[:, 0] - px, P[:, 1] - pz)
-                    a = int(np.argmin(d))
-                    if d[a] <= JUMP_GAP and (best is None or d[a] < best[0]) and _wide(s, i, j, float(s.y[m])):
-                        best = (float(d[a]), (float(P[a, 0]), float(plat_y[a]), float(P[a, 1])), (px, float(s.y[m]), pz))
+                    dist = np.hypot(platform_xz[:, 0] - px, platform_xz[:, 1] - pz)
+                    nearest = int(np.argmin(dist))
+                    if not (dist[nearest] <= JUMP_GAP and (best is None or dist[nearest] < best[0])):
+                        continue
+                    if _wide(s, i, j, float(s.y[m])):
+                        platform_end = (float(platform_xz[nearest, 0]), float(platform_y[nearest]),
+                                        float(platform_xz[nearest, 1]))
+                        best = (float(dist[nearest]), platform_end, (px, float(s.y[m]), pz))
         if best is None:
-            log(f'  {name}: platform of {len(seen)} cells at {top:.2f}, no deck within {JUMP_GAP} m and {JUMP_HEIGHT} m up')
+            log(f'  {name}: platform of {len(seen)} cells at {platform_top:.2f}, no deck within {JUMP_GAP} m and '
+                f'{JUMP_HEIGHT} m up')
             continue
-        d, (ax, ay, az), (bx, by, bz) = best
+        # a: the platform end, b: the deck end
+        gap, (ax, ay, az), (bx, by, bz) = best
         out.append({'bp': f'jump link: {name}', 'kind': 'jump', 'gun': [round(x, 2), round(y, 2), round(z, 2)],
                     'lo': [round(min(ax, bx), 3), round(ay, 3), round(min(az, bz), 3)],
                     'hi': [round(max(ax, bx), 3), round(by, 3), round(max(az, bz), 3)], 'box_lo_y': round(ay, 3),
-                    'platform': [round(ax, 2), round(ay, 2), round(az, 2)], 'deck': [round(bx, 2), round(by, 2), round(bz, 2)],
-                    'rise': round(by - ay, 2), 'gap': round(d, 2), 'platform_cells': len(seen),
+                    'platform': [round(ax, 2), round(ay, 2), round(az, 2)],
+                    'deck': [round(bx, 2), round(by, 2), round(bz, 2)],
+                    'rise': round(by - ay, 2), 'gap': round(gap, 2), 'platform_cells': len(seen),
                     'foot_band': [-END_BAND, END_BAND], 'top_band': [-END_BAND, END_BAND], 'reach': 0.5})
-        log(f'  {name} at ({x:.1f}, {y:.1f}, {z:.1f}): platform {top:.2f} ({len(seen)} cells), deck {by:.2f} '
-            f'(+{by - ay:.2f} m), gap {d:.2f} m')
+        log(f'  {name} at ({x:.1f}, {y:.1f}, {z:.1f}): platform {platform_top:.2f} ({len(seen)} cells), deck {by:.2f} '
+            f'(+{by - ay:.2f} m), gap {gap:.2f} m')
     return out
 
 
-def _record(name, ax, ay, az, bx, by, bz, d, cells, rule):
+def _record(name, ax, ay, az, bx, by, bz, gap, cells, rule):
+    """A jump-link record from its lower end a to its upper end b, gap apart horizontally, onto a piece of cells
+    samples, made by rule."""
     return {'bp': f'jump link: {name}', 'kind': 'jump', 'rule': rule,
             'lo': [round(min(ax, bx), 3), round(ay, 3), round(min(az, bz), 3)],
             'hi': [round(max(ax, bx), 3), round(by, 3), round(max(az, bz), 3)], 'box_lo_y': round(ay, 3),
             'platform': [round(ax, 2), round(ay, 2), round(az, 2)], 'deck': [round(bx, 2), round(by, 2), round(bz, 2)],
-            'rise': round(by - ay, 2), 'gap': round(d, 2), 'platform_cells': cells,
+            'rise': round(by - ay, 2), 'gap': round(gap, 2), 'platform_cells': cells,
             'foot_band': [-END_BAND, END_BAND], 'top_band': [-END_BAND, END_BAND], 'reach': 0.5}
+
+
+def _box_columns(s, box):
+    """The column range (i0, i1, j0, j1), inclusive, that an object box covers on samples s."""
+    lo, hi, pitch = box['min'], box['max'], s.pitch
+    i0, i1 = max(int((lo[0] - s.min_x) / pitch), 0), min(int((hi[0] - s.min_x) / pitch) + 1, s.nx - 1)
+    j0, j1 = max(int((lo[2] - s.min_z) / pitch), 0), min(int((hi[2] - s.min_z) / pitch) + 1, s.nz - 1)
+    return i0, i1, j0, j1
 
 
 def raised_floor_links(s, terrain, boxes, log=print):
@@ -188,91 +213,98 @@ def raised_floor_links(s, terrain, boxes, log=print):
     floor's edge, a link wherever clear, flat ground lies within LINK_REACH horizontally and more than STEP, at most
     JUMP_HEIGHT, below; at least LINK_SPACING apart, at most LINK_MAX per floor. s: samples; terrain(x, z) heights."""
     STEP = soldier1943.STEP
-    nx, nz, p = s.nx, s.nz, s.pitch
-    col_of = lambda k: int(np.searchsorted(s.start, k, side='right')) - 1
-    tcache = {}
+    nx, nz, pitch = s.nx, s.nz, s.pitch
 
-    def t_at(c):
-        if c not in tcache:
-            tcache[c] = float(terrain(s.min_x + (c % nx) * p, s.min_z + (c // nx) * p))
-        return tcache[c]
+    def column_of(k):
+        return int(np.searchsorted(s.start, k, side='right')) - 1
+    terrain_cache = {}
 
-    fcache = {}
+    def terrain_at(col):
+        if col not in terrain_cache:
+            terrain_cache[col] = float(terrain(s.min_x + (col % nx) * pitch, s.min_z + (col // nx) * pitch))
+        return terrain_cache[col]
 
-    def flat_clear(c):
+    floor_cache = {}
+
+    def flat_clear(col):
         """{surface: on terrain} of the column's clear, flat surfaces with headroom."""
-        if c not in fcache:
-            ix = list(range(s.start[c], s.start[c + 1]))
-            fcache[c] = {k: abs(s.y[k] - t_at(c)) < 0.06 for q, k in enumerate(ix) if _clear(s, k, q, ix)}
-        return fcache[c]
+        if col not in floor_cache:
+            column = _column_surfaces(s, col)
+            floor_cache[col] = {k: abs(s.y[k] - terrain_at(col)) < 0.06
+                                for position, k in enumerate(column) if _clear(s, k, position, column)}
+        return floor_cache[col]
     seen = set()
     out = []
-    r_link = max(1, int(round(LINK_REACH / p)))
-    for b in boxes:
-        lo, hi = b['min'], b['max']
-        i0, i1 = max(int((lo[0] - s.min_x) / p), 0), min(int((hi[0] - s.min_x) / p) + 1, nx - 1)
-        j0, j1 = max(int((lo[2] - s.min_z) / p), 0), min(int((hi[2] - s.min_z) / p) + 1, nz - 1)
+    link_cells = max(1, int(round(LINK_REACH / pitch)))
+    for box in boxes:
+        lo, hi = box['min'], box['max']
+        i0, i1, j0, j1 = _box_columns(s, box)
         if i0 > i1 or j0 > j1:
             continue
+        object_name = box['bp'].split('/')[-1]
         for j in range(j0, j1 + 1):
             for i in range(i0, i1 + 1):
-                c = j * nx + i
-                for k0, on_t in flat_clear(c).items():
-                    if on_t or k0 in seen or not (lo[1] - 0.5 <= s.y[k0] <= hi[1] + 0.5):
+                for k0, on_terrain in flat_clear(j * nx + i).items():
+                    if on_terrain or k0 in seen or not (lo[1] - 0.5 <= s.y[k0] <= hi[1] + 0.5):
                         continue
                     # flood one floor
-                    piece, q, touches_terrain = {k0}, deque([k0]), False
+                    piece, queue, touches_terrain = {k0}, deque([k0]), False
                     seen.add(k0)
-                    while q and len(piece) <= FLOOR_MAX:
-                        k = q.popleft()
-                        ck = col_of(k)
-                        ci, cj = ck % nx, ck // nx
+                    while queue and len(piece) <= FLOOR_MAX:
+                        k = queue.popleft()
+                        col_k = column_of(k)
+                        ci, cj = col_k % nx, col_k // nx
                         for dj in (-1, 0, 1):
                             for di in (-1, 0, 1):
-                                a, bb = ci + di, cj + dj
-                                if not (di or dj) or not (0 <= a < nx and 0 <= bb < nz):
+                                ni, nj = ci + di, cj + dj
+                                if not (di or dj) or not (0 <= ni < nx and 0 <= nj < nz):
                                     continue
-                                for n, n_t in flat_clear(bb * nx + a).items():
-                                    if abs(s.y[n] - s.y[k]) > STEP:
+                                for other, other_on_terrain in flat_clear(nj * nx + ni).items():
+                                    if abs(s.y[other] - s.y[k]) > STEP:
                                         continue
-                                    if n_t:
+                                    if other_on_terrain:
                                         touches_terrain = True
-                                    elif n not in seen:
-                                        seen.add(n)
-                                        piece.add(n)
-                                        q.append(n)
-                    area = len(piece) * p * p
+                                    elif other not in seen:
+                                        seen.add(other)
+                                        piece.add(other)
+                                        queue.append(other)
+                    area = len(piece) * pitch * pitch
                     if touches_terrain or len(piece) > FLOOR_MAX or area < FLOOR_MIN_AREA:
                         continue
-                    # links along its edge to ground below
-                    cand = []
+                    # links along its edge to ground below:
+                    # (drop, horizontal distance, floor surface, ground surface, floor column i, j, ground column i, j)
+                    candidates = []
                     for k in piece:
-                        ck = col_of(k)
-                        ci, cj = ck % nx, ck // nx
-                        for dj in range(-r_link, r_link + 1):
-                            for di in range(-r_link, r_link + 1):
-                                a, bb = ci + di, cj + dj
-                                if not (di or dj) or not (0 <= a < nx and 0 <= bb < nz) or math.hypot(di, dj) * p > LINK_REACH:
+                        col_k = column_of(k)
+                        ci, cj = col_k % nx, col_k // nx
+                        for dj in range(-link_cells, link_cells + 1):
+                            for di in range(-link_cells, link_cells + 1):
+                                ni, nj = ci + di, cj + dj
+                                if not (di or dj) or not (0 <= ni < nx and 0 <= nj < nz):
                                     continue
-                                for n in flat_clear(bb * nx + a):
-                                    drop = float(s.y[k] - s.y[n])
-                                    if n not in piece and STEP < drop <= JUMP_HEIGHT and _wide(s, a, bb, float(s.y[n]), 0.4, 0.5):
-                                        cand.append((drop, math.hypot(di, dj) * p, k, n, ci, cj, a, bb))
-                    cand.sort()
-                    chosen = []
-                    for drop, d, k, n, ci, cj, a, bb in cand:
-                        fx, fz = s.min_x + ci * p, s.min_z + cj * p
+                                if math.hypot(di, dj) * pitch > LINK_REACH:
+                                    continue
+                                for ground in flat_clear(nj * nx + ni):
+                                    drop = float(s.y[k] - s.y[ground])
+                                    if ground in piece or not (STEP < drop <= JUMP_HEIGHT):
+                                        continue
+                                    if _wide(s, ni, nj, float(s.y[ground]), 0.4, 0.5):
+                                        candidates.append((drop, math.hypot(di, dj) * pitch, k, ground, ci, cj, ni, nj))
+                    candidates.sort()
+                    chosen = []                       # the links' floor ends (x, z)
+                    for drop, gap, k, ground, ci, cj, ni, nj in candidates:
+                        fx, fz = s.min_x + ci * pitch, s.min_z + cj * pitch
                         if any(math.hypot(fx - cx, fz - cz) < LINK_SPACING for cx, cz in chosen):
                             continue
                         chosen.append((fx, fz))
-                        gx, gz = s.min_x + a * p, s.min_z + bb * p
-                        out.append(_record(f"raised floor ({b['bp'].split('/')[-1]})", gx, float(s.y[n]), gz, fx,
-                                           float(s.y[k]), fz, d, len(piece), 'raised floor'))
+                        gx, gz = s.min_x + ni * pitch, s.min_z + nj * pitch
+                        out.append(_record(f"raised floor ({object_name})", gx, float(s.y[ground]), gz, fx,
+                                           float(s.y[k]), fz, gap, len(piece), 'raised floor'))
                         if len(chosen) >= LINK_MAX:
                             break
                     if chosen:
-                        log(f"  raised floor of {area:.0f} m2 on {b['bp'].split('/')[-1]} at ({s.min_x + i * p:.1f}, "
-                            f"{s.y[k0]:.2f}, {s.min_z + j * p:.1f}): {len(chosen)} jump link(s)")
+                        log(f"  raised floor of {area:.0f} m2 on {object_name} at ({s.min_x + i * pitch:.1f}, "
+                            f"{s.y[k0]:.2f}, {s.min_z + j * pitch:.1f}): {len(chosen)} jump link(s)")
     return out
 
 
@@ -284,12 +316,12 @@ def ship_boxes(boxes, terrain, sea):
     deeper than the soldier's WATER_DEPTH at its centre, reaching SHIP_MIN_FREEBOARD above the sea (the carriers of
     Wake Island, Iwo Jima and Coral Sea; not Guadalcanal's wrecks, 888-1,827 m2, nor the bridges)."""
     out = []
-    for b in boxes:
-        lo, hi = b['min'], b['max']
+    for box in boxes:
+        lo, hi = box['min'], box['max']
         if (hi[0] - lo[0]) * (hi[2] - lo[2]) < SHIP_MIN_FOOTPRINT or hi[1] < sea + SHIP_MIN_FREEBOARD:
             continue
         if float(terrain((lo[0] + hi[0]) / 2, (lo[2] + hi[2]) / 2)) < sea - soldier1943.WATER_DEPTH:
-            out.append(b)
+            out.append(box)
     return out
 
 
@@ -306,90 +338,101 @@ def ship_ledge_links(s, ships, terrain, usable=lambda x, z: True, taken=(), log=
     end may lie there (the sampled grid's own sectors); taken: link ends already made (the AA platforms), whose pieces
     are left out. Returns (records, report per ship)."""
     STEP = soldier1943.STEP
-    nx, nz, p = s.nx, s.nz, s.pitch
+    nx, pitch = s.nx, s.pitch
     out, report = [], []
-    for b in ships:
-        lo, hi = b['min'], b['max']
-        i0, i1 = max(int((lo[0] - s.min_x) / p), 0), min(int((hi[0] - s.min_x) / p) + 1, nx - 1)
-        j0, j1 = max(int((lo[2] - s.min_z) / p), 0), min(int((hi[2] - s.min_z) / p) + 1, nz - 1)
+    for box in ships:
+        lo, hi = box['min'], box['max']
+        i0, i1, j0, j1 = _box_columns(s, box)
         floor = {}                                  # surface -> (i, j): the clear, flat floor on the ship
         for j in range(j0, j1 + 1):
             for i in range(i0, i1 + 1):
-                c = j * nx + i
-                ix = list(range(s.start[c], s.start[c + 1]))
-                if not ix:
+                column = _column_surfaces(s, j * nx + i)
+                if not column:
                     continue
-                t = float(terrain(s.min_x + i * p, s.min_z + j * p))
-                for q, k in enumerate(ix):
-                    if lo[1] - 0.5 <= s.y[k] <= hi[1] + 0.5 and abs(s.y[k] - t) >= 0.06 and _clear(s, k, q, ix):
+                ground_y = float(terrain(s.min_x + i * pitch, s.min_z + j * pitch))
+                for position, k in enumerate(column):
+                    if not (lo[1] - 0.5 <= s.y[k] <= hi[1] + 0.5 and abs(s.y[k] - ground_y) >= 0.06):
+                        continue
+                    if _clear(s, k, position, column):
                         floor[k] = (i, j)
         if not floor:
             continue
-        at = {}
+        floor_at = {}                               # (i, j) -> the floor surfaces in that column
         for k, ij in floor.items():
-            at.setdefault(ij, []).append(k)
-        piece_of, pieces = {}, []
+            floor_at.setdefault(ij, []).append(k)
+        # the pieces: floor joined by the step rule
+        piece_of, pieces = {}, []                   # surface -> piece number; per piece, its surfaces
         for k0 in floor:
             if k0 in piece_of:
                 continue
-            n_ = len(pieces)
-            piece_of[k0] = n_
-            members, q = [k0], deque([k0])
-            while q:
-                k = q.popleft()
+            piece = len(pieces)
+            piece_of[k0] = piece
+            members, queue = [k0], deque([k0])
+            while queue:
+                k = queue.popleft()
                 i, j = floor[k]
                 for dj in (-1, 0, 1):
                     for di in (-1, 0, 1):
-                        for m in at.get((i + di, j + dj), ()):
+                        for m in floor_at.get((i + di, j + dj), ()):
                             if m not in piece_of and abs(s.y[m] - s.y[k]) <= STEP:
-                                piece_of[m] = n_
+                                piece_of[m] = piece
                                 members.append(m)
-                                q.append(m)
+                                queue.append(m)
             pieces.append(members)
-        deck = max(range(len(pieces)), key=lambda n_: len(pieces[n_]))
-        skip = set()
+
+        def area(piece):
+            return len(pieces[piece]) * pitch * pitch
+        deck = max(range(len(pieces)), key=lambda piece: len(pieces[piece]))
+        taken_pieces = set()                        # the pieces holding a link end already made (the gun platforms)
         for x, y, z in taken:
-            ij = (int(round((x - s.min_x) / p)), int(round((z - s.min_z) / p)))
-            for k in at.get(ij, ()):
+            ij = (int(round((x - s.min_x) / pitch)), int(round((z - s.min_z) / pitch)))
+            for k in floor_at.get(ij, ()):
                 if abs(s.y[k] - y) <= END_BAND:
-                    skip.add(piece_of[k])
+                    taken_pieces.add(piece_of[k])
         # each piece's edge: its surfaces with a side column holding none of its surfaces
         edge = {}
-        for n_, members in enumerate(pieces):
+        for piece, members in enumerate(pieces):
             mine = set(members)
-            edge[n_] = [k for k in members
-                        if any(not any(m in mine for m in at.get((floor[k][0] + di, floor[k][1] + dj), ()))
-                               for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)))]
-        r = int(math.ceil(SHIP_REACH / p))
-        reached, frontier, linked = {deck}, [deck], {}
+
+            def on_edge(k):
+                i, j = floor[k]
+                return any(not any(m in mine for m in floor_at.get((i + di, j + dj), ()))
+                           for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            edge[piece] = [k for k in members if on_edge(k)]
+        reach = int(math.ceil(SHIP_REACH / pitch))
+        reached, frontier, linked = {deck}, [deck], {}  # linked: piece -> its number of links
         while frontier:
-            nxt = []
-            for src in frontier:
-                near = {}                           # column -> src's edge surfaces within SHIP_REACH of it
-                for k in edge[src]:
+            next_frontier = []
+            for source in frontier:
+                near = {}                           # column -> source's edge surfaces within SHIP_REACH of it
+                for k in edge[source]:
                     i, j = floor[k]
-                    for dj in range(-r, r + 1):
-                        for di in range(-r, r + 1):
-                            if math.hypot(di, dj) * p <= SHIP_REACH:
+                    for dj in range(-reach, reach + 1):
+                        for di in range(-reach, reach + 1):
+                            if math.hypot(di, dj) * pitch <= SHIP_REACH:
                                 near.setdefault((i + di, j + dj), []).append(k)
-                cand = {}
-                for n_, e in edge.items():
-                    if n_ in reached or n_ in skip or len(pieces[n_]) * p * p < SHIP_MIN_AREA:
+                # piece -> [(gap, |rise|, its edge surface, source's edge surface)]
+                candidates = {}
+                for piece, piece_edge in edge.items():
+                    if piece in reached or piece in taken_pieces or area(piece) < SHIP_MIN_AREA:
                         continue
-                    for m in e:
+                    for m in piece_edge:
                         for k in near.get(floor[m], ()):
                             rise = float(s.y[k] - s.y[m])
                             if STEP < abs(rise) <= JUMP_HEIGHT:
                                 (ia, ja), (ib, jb) = floor[m], floor[k]
-                                cand.setdefault(n_, []).append((math.hypot(ia - ib, ja - jb) * p, abs(rise), m, k))
-                for n_, cs in sorted(cand.items()):
-                    if n_ in reached:
+                                candidates.setdefault(piece, []).append(
+                                    (math.hypot(ia - ib, ja - jb) * pitch, abs(rise), m, k))
+                for piece, options in sorted(candidates.items()):
+                    if piece in reached:
                         continue
-                    cs.sort()
-                    chosen = []
-                    for d, _r, m, k in cs:
+                    options.sort()
+                    chosen = []                     # the links' ends (x, z) on this piece
+                    for gap, _rise, m, k in options:
+                        # a: the end on this piece (m), b: the end on the source piece (k)
                         (ia, ja), (ib, jb) = floor[m], floor[k]
-                        xa, za, xb, zb = s.min_x + ia * p, s.min_z + ja * p, s.min_x + ib * p, s.min_z + jb * p
+                        xa, za = s.min_x + ia * pitch, s.min_z + ja * pitch
+                        xb, zb = s.min_x + ib * pitch, s.min_z + jb * pitch
                         if not (usable(xa, za) and usable(xb, zb)):
                             continue
                         if any(math.hypot(xa - cx, za - cz) < LINK_SPACING for cx, cz in chosen):
@@ -397,48 +440,56 @@ def ship_ledge_links(s, ships, terrain, usable=lambda x, z: True, taken=(), log=
                         ya, yb = float(s.y[m]), float(s.y[k])
                         if not (_wide(s, ia, ja, ya, 0.4, 0.5) and _wide(s, ib, jb, yb, 0.4, 0.5)):
                             continue
+                        # nothing between the two ends higher than the upper floor plus SHIP_CLEAR (below headroom)
                         top, n_steps, clear = max(ya, yb), max(abs(ia - ib), abs(ja - jb)), True
-                        for t_ in range(1, n_steps):
-                            cc = (ja + round((jb - ja) * t_ / n_steps)) * nx + ia + round((ib - ia) * t_ / n_steps)
-                            if any(top + SHIP_CLEAR < s.y[q_] < top + soldier1943.HEIGHT
-                                   for q_ in range(s.start[cc], s.start[cc + 1])):
+                        for step in range(1, n_steps):
+                            col = ((ja + round((jb - ja) * step / n_steps)) * nx
+                                   + ia + round((ib - ia) * step / n_steps))
+                            if any(top + SHIP_CLEAR < s.y[above] < top + soldier1943.HEIGHT
+                                   for above in range(s.start[col], s.start[col + 1])):
                                 clear = False
                                 break
                         if not clear:
                             continue
                         chosen.append((xa, za))
-                        (lx, ly, lz), (ux, uy, uz) = sorted(((xa, ya, za), (xb, yb, zb)), key=lambda v: v[1])
-                        out.append(_record(f"ship ledge ({b['bp'].split('/')[-1]})", lx, ly, lz, ux, uy, uz, d,
-                                           len(pieces[n_]), 'ship ledge'))
+                        (lx, ly, lz), (ux, uy, uz) = sorted(((xa, ya, za), (xb, yb, zb)), key=lambda end: end[1])
+                        out.append(_record(f"ship ledge ({box['bp'].split('/')[-1]})", lx, ly, lz, ux, uy, uz, gap,
+                                           len(pieces[piece]), 'ship ledge'))
                         if len(chosen) >= SHIP_LINKS:
                             break
                     if chosen:
-                        reached.add(n_)
-                        nxt.append(n_)
-                        linked[n_] = len(chosen)
-            frontier = nxt
-        med = lambda n_: round(float(np.median([s.y[k] for k in pieces[n_]])), 2)
-        cen = lambda n_: [round(float(np.mean([s.min_x + floor[k][0] * p for k in pieces[n_]])), 1),
-                          round(float(np.mean([s.min_z + floor[k][1] * p for k in pieces[n_]])), 1)]
-        rest = [n_ for n_ in range(len(pieces)) if n_ not in reached and len(pieces[n_]) * p * p >= SHIP_MIN_AREA]
-        rep = {'ship': b['bp'].split('/')[-1], 'box': [round(v, 1) for v in lo] + [round(v, 1) for v in hi],
-               'deck': {'m2': round(len(pieces[deck]) * p * p, 1), 'y': med(deck)},
-               'linked': [{'m2': round(len(pieces[n_]) * p * p, 1), 'y': med(n_), 'centre': cen(n_), 'links': linked[n_]}
-                          for n_ in sorted(linked)],
-               'not linked': [{'m2': round(len(pieces[n_]) * p * p, 1), 'y': med(n_), 'centre': cen(n_),
-                               'gun platform': n_ in skip} for n_ in rest]}
-        report.append(rep)
-        log(f"  {rep['ship']}: deck {rep['deck']['y']} ({rep['deck']['m2']:.0f} m2); {len(linked)} piece(s) linked by "
-            f"{sum(linked.values())} jump link(s); {len(rest)} piece(s) of {SHIP_MIN_AREA:g} m2 or more not linked")
+                        reached.add(piece)
+                        next_frontier.append(piece)
+                        linked[piece] = len(chosen)
+            frontier = next_frontier
+
+        def median_y(piece):
+            return round(float(np.median([s.y[k] for k in pieces[piece]])), 2)
+
+        def centre(piece):
+            return [round(float(np.mean([s.min_x + floor[k][0] * pitch for k in pieces[piece]])), 1),
+                    round(float(np.mean([s.min_z + floor[k][1] * pitch for k in pieces[piece]])), 1)]
+        not_linked = [piece for piece in range(len(pieces))
+                      if piece not in reached and area(piece) >= SHIP_MIN_AREA]
+        ship = {'ship': box['bp'].split('/')[-1], 'box': [round(v, 1) for v in lo] + [round(v, 1) for v in hi],
+                'deck': {'m2': round(area(deck), 1), 'y': median_y(deck)},
+                'linked': [{'m2': round(area(piece), 1), 'y': median_y(piece), 'centre': centre(piece),
+                            'links': linked[piece]} for piece in sorted(linked)],
+                'not linked': [{'m2': round(area(piece), 1), 'y': median_y(piece), 'centre': centre(piece),
+                                'gun platform': piece in taken_pieces} for piece in not_linked]}
+        report.append(ship)
+        log(f"  {ship['ship']}: deck {ship['deck']['y']} ({ship['deck']['m2']:.0f} m2); {len(linked)} piece(s) linked "
+            f"by {sum(linked.values())} jump link(s); {len(not_linked)} piece(s) of {SHIP_MIN_AREA:g} m2 or more not "
+            f"linked")
     return out, report
 
 
 def current_detailed(st):
     """Whether navkit.json stamps a 0.2 m pass of the current preparation over the current detailed sectors (what
     navkit.py build builds the detailed sectors from)."""
-    s2 = (st.get('samples') or {}).get('0.2') or {}
-    return bool(st.get('preparation')) and s2.get('preparation') == st['preparation'] and \
-        s2.get('sectors') == st.get('detailed_sectors')
+    pass_02 = (st.get('samples') or {}).get('0.2') or {}
+    return (bool(st.get('preparation')) and pass_02.get('preparation') == st['preparation']
+            and pass_02.get('sectors') == st.get('detailed_sectors'))
 
 
 def level_links(lv, log=print, game=None, detailed=None):
@@ -453,86 +504,103 @@ def level_links(lv, log=print, game=None, detailed=None):
     import navkitjson1943 as nj
     import spawnmap
     from bfbc2core import game1943, terrain, water
-    p = navaudit1943.level_paths(lv)
-    st = nj.read(lv)
+    paths = navaudit1943.level_paths(lv)
+    st = nj.read(lv)                                 # navkit.json
     if detailed is None:
         detailed = current_detailed(st)
     game = game1943.find_game(game or st.get('game'))
-    g = game1943.Game(game, lv)
+    level_game = game1943.Game(game, lv)
     # the height field the level was prepared with; a game copy changed since is refused (second review)
-    hf = terrain.read(nj.prepared_heightfield(st, lv, g.data(f'terrains/{lv}/{lv}.heightfield-000.res')))
-    m = spawnmap.spawn_map(game, lv)
-    guns = [(s['name'], s['position']) for o in m['objectives'] for s in o['spawns'] if s.get('vehicle') in GUNS]
-    guns += [(s['name'], s['position']) for s in m.get('unowned_vehicle_spawns', []) if s.get('vehicle') in GUNS]
-    wpath = os.path.join(p['objects'], 'water_mesh.res')
-    mesh = water.read_mesh(wpath) if soldier1943.has_water(st) and os.path.isfile(wpath) else None
+    hf = terrain.read(nj.prepared_heightfield(st, lv, level_game.data(f'terrains/{lv}/{lv}.heightfield-000.res')))
+    spawns = spawnmap.spawn_map(game, lv)
+    guns = [(spawn['name'], spawn['position']) for objective in spawns['objectives'] for spawn in objective['spawns']
+            if spawn.get('vehicle') in GUNS]
+    guns += [(spawn['name'], spawn['position']) for spawn in spawns.get('unowned_vehicle_spawns', [])
+             if spawn.get('vehicle') in GUNS]
+    water_path = os.path.join(paths['objects'], 'water_mesh.res')
+    mesh = water.read_mesh(water_path) if soldier1943.has_water(st) and os.path.isfile(water_path) else None
     xoff, zoff = st['sector_offsets']
-    dset = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()} if detailed else set()
+    detailed_sectors = set()                         # (X, Z) of the sectors the build reads at 0.2 m
+    if detailed:
+        detailed_sectors = {(int(k[:2], 16), int(k[2:], 16)) for k in st.get('detailed_sectors') or ()}
     # objects whose blueprint says their tops are not floor are left out: ForbidPathfinding (Iwo Jima's jetties and
     # boardwalk, trees, razor wire), ExcludeFromPathfinding (vegetation), dynamic props - the build drops their surfaces
-    placed = json.load(open(os.path.join(p['objects'], 'objects.json'), encoding='utf-8'))
-    placed += json.load(open(os.path.join(p['objects'], 'group_instances.json'), encoding='utf-8'))
+    placed = json.load(open(os.path.join(paths['objects'], 'objects.json'), encoding='utf-8'))
+    placed += json.load(open(os.path.join(paths['objects'], 'group_instances.json'), encoding='utf-8'))
     # by blueprint (the flags are the blueprint's): a box's 'index' counts only the placements with collision, so it is
     # no index into objects.json + group_instances.json (before 2026-10-26 it was taken as one, and the wrong boxes -
     # Wake Island's carriers among them - were left out)
     no_floor = {o['bp'] for o in placed if o.get('flags') and (o['flags'][0] or o['flags'][1] or o['flags'][3])}
-    boxes = [b for b in json.load(open(os.path.join(p['objects'], 'object_boxes.json'), encoding='utf-8'))
-             if b['bp'] not in no_floor]
-    detailed_at = lambda x, z: (math.floor(x / 100) - xoff, math.floor(z / 100) - zoff) in dset
+    boxes = [box for box in json.load(open(os.path.join(paths['objects'], 'object_boxes.json'), encoding='utf-8'))
+             if box['bp'] not in no_floor]
+
+    def detailed_at(x, z):
+        return (math.floor(x / 100) - xoff, math.floor(z / 100) - zoff) in detailed_sectors
     out = []
-    for which, src in (('detailed', 'samples_02.bin'), ('normal', 'samples.bin')):
-        path = os.path.join(p['samples'], src)
+    for which, file_name in (('detailed', 'samples_02.bin'), ('normal', 'samples.bin')):
+        path = os.path.join(paths['samples'], file_name)
         if not os.path.isfile(path) or (which == 'detailed' and not detailed):
             continue
-        mine = [(n, q) for n, q in guns if detailed_at(q[0], q[2]) == (which == 'detailed')]
-        my_boxes = [b for b in boxes if detailed_at((b['min'][0] + b['max'][0]) / 2, (b['min'][2] + b['max'][2]) / 2)
-                    == (which == 'detailed')]
+        on_this_grid = which == 'detailed'           # the guns and boxes this grid holds: detailed_at says which
+        guns_here = [(name, at) for name, at in guns if detailed_at(at[0], at[2]) == on_this_grid]
+        boxes_here = [box for box in boxes
+                      if detailed_at((box['min'][0] + box['max'][0]) / 2, (box['min'][2] + box['max'][2]) / 2)
+                      == on_this_grid]
         s = navaudit1943.load_samples(path)
-        height = lambda x, z: float(hf.height(x, z))
-        if mine:
-            top = navbuild.water_tops(s, mesh[0], mesh[1]) if mesh is not None else np.full(s.nx * s.nz, -np.inf)
-            log(f'{lv}: {len(mine)} AA gun(s) on the {s.pitch:g} m samples')
-            out += platform_links(s, mine, lambda c: top[c], height, log)
-            del top
+
+        def height(x, z):
+            return float(hf.height(x, z))
+        if guns_here:
+            if mesh is not None:
+                water_top = navbuild.water_tops(s, mesh[0], mesh[1])
+            else:
+                water_top = np.full(s.nx * s.nz, -np.inf)
+            log(f'{lv}: {len(guns_here)} AA gun(s) on the {s.pitch:g} m samples')
+            out += platform_links(s, guns_here, lambda c: water_top[c], height, log)
+            del water_top
         if RAISED_FLOORS:
-            n0 = len(out)
-            out += raised_floor_links(s, height, my_boxes, log)
-            log(f'{lv}: {len(out) - n0} raised-floor jump link(s) on the {s.pitch:g} m samples')
+            count_before = len(out)
+            out += raised_floor_links(s, height, boxes_here, log)
+            log(f'{lv}: {len(out) - count_before} raised-floor jump link(s) on the {s.pitch:g} m samples')
         if SHIP_LEDGES:
             # 2026-10-30: float(None) raised on a level without water (prepare writes sea_level None)
             ships = ship_boxes(boxes, height, soldier1943.sea_level(st, hf))
             if ships:
                 taken = [tuple(r['platform']) for r in out if r.get('rule') != 'ship ledge']
                 log(f'{lv}: {len(ships)} ship(s), ledges on the {s.pitch:g} m samples')
-                links, rep = ship_ledge_links(s, ships, height, lambda x, z, d=(which == 'detailed'): detailed_at(x, z) == d,
-                                              taken, log)
+
+                def on_grid(x, z, grid_detailed=on_this_grid):
+                    return detailed_at(x, z) == grid_detailed
+                links, ship_report = ship_ledge_links(s, ships, height, on_grid, taken, log)
                 out += links
-                SHIP_REPORT[which] = rep
+                SHIP_REPORT[which] = ship_report
         del s
     return out
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(prog='jumplinks1943.py', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('level')
-    ap.add_argument('--json')
-    ap.add_argument('--game', help='the game folder (default: the copy the level was prepared from)')
-    a = ap.parse_args(argv[1:])
+    parser = argparse.ArgumentParser(prog='jumplinks1943.py', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('level')
+    parser.add_argument('--json')
+    parser.add_argument('--game', help='the game folder (default: the copy the level was prepared from)')
+    args = parser.parse_args(argv[1:])
     import navaudit1943
     import navkitjson1943 as nj
-    if a.json is None and a.game is not None:
+    if args.json is None and args.game is not None:
         # the build's own jump_links.json: only from the copy the level was prepared from (navkit.py's same_game rule;
         # 2026-10-30 second review: another copy's AA guns replaced the build's links, and the export used them)
-        st = nj.read(a.level)
-        if not nj.same_file(st.get('game'), a.game):
-            print(f'error: {a.level}: prepared from {st.get("game")}, not {a.game}: jump links of another copy are not '
-                  f'written over the build\'s (pass --json <file>, or prepare again: navkit.py prepare {a.level})')
+        st = nj.read(args.level)
+        if not nj.same_file(st.get('game'), args.game):
+            print(f'error: {args.level}: prepared from {st.get("game")}, not {args.game}: jump links of another copy '
+                  f'are not written over the build\'s (pass --json <file>, or prepare again: navkit.py prepare '
+                  f'{args.level})')
             return 1
-    links = level_links(a.level, game=a.game)
-    path = a.json or os.path.join(navaudit1943.level_paths(a.level)['navkit'], 'jump_links.json')
+    links = level_links(args.level, game=args.game)
+    path = args.json or os.path.join(navaudit1943.level_paths(args.level)['navkit'], 'jump_links.json')
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(links, f, indent=1)
-    print(f'{a.level}: {len(links)} jump link(s) -> {path}')
+    print(f'{args.level}: {len(links)} jump link(s) -> {path}')
     return 0
 
 

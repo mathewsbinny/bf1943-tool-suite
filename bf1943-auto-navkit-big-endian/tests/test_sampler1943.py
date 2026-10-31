@@ -104,17 +104,19 @@ if __name__ == '__main__':
         dw = float(navsample1943.dist2d(wall, np.array([345.4]), np.array([222.0]))[0, 0])
         check(not ins.any() and abs(dw - 1.26) < 0.01,
               f'a wall that is a line from above holds no point; its distance is its edge ({dw:.2f} m)')
-        # BF1943's soldier over NavKit's BFBC2 settings
-        import detailed
+        # BF1943's soldier over NavKit's BFBC2 settings (soldier1943.SETTINGS; NavKit's own stay BFBC2's)
         import navbuild
         import navwalk
         import soldier1943
-        soldier1943.configure()
-        check((navbuild.SLOPE_MAX, detailed.SLOPE_MAX, navbuild.DETAILED_LINK_STEP, navbuild.Y_OFFSET,
-               navwalk.OUTLINE_Y_OFFSET, navwalk.HEADROOM_BAND, navsample1943.STEP) == (45.0, 45.0, soldier1943.STEP, 0.9, 0.9,
-                                                                                      (0.5, 1.8), soldier1943.STEP)
+        bf = soldier1943.SETTINGS
+        check((bf.slope_max, soldier1943.SLOPE_MAX, bf.detailed_link_step, bf.y_offset, bf.headroom_band,
+               navsample1943.STEP) == (45.0, 45.0, soldier1943.STEP, 0.9, (0.5, 1.8), soldier1943.STEP)
               and abs(soldier1943.STEP - 0.37) < 1e-9,
-              'soldier1943.configure: 45 deg (build and sector choice), detailed link step 0.37, nodes 0.9 m up, headroom 1.8')
+              'soldier1943.SETTINGS: 45 deg (build and sector choice), detailed link step 0.37, nodes 0.9 m up, '
+              'headroom 1.8')
+        check((navbuild.BFBC2.slope_max, navbuild.BFBC2.y_offset, navbuild.BFBC2.headroom_band, navbuild.SLOPE_MAX,
+               navwalk.HEADROOM_BAND) == (40.0, 0.95, (0.5, 2.0), 40.0, (0.5, 2.0)),
+              "NavKit's defaults are left as BFBC2's (nothing rewrites them)")
         # a ladder on the 3 m wall: ground on both sides of the wall lies within reach of its foot - one end each
         keep = (s.flags & navsample1943.BLOCKED) == 0
         zero = np.zeros(len(s.y))
@@ -124,7 +126,7 @@ if __name__ == '__main__':
         xs = sorted(round(float(s.min_x + (np.searchsorted(s.start, k, side='right') - 1) % s.nx * s.pitch), 1) for k in feet)
         check(len(feet) == 2 and xs[0] < 0 < 0.4 < xs[1] and len(tops) >= 1,
               f'a ladder links to the ground on each side of its foot (x {xs}) and its top ({len(tops)})')
-        check(navbuild.LADDER_ALL_GROUND, 'soldier1943.configure: ladders link to every piece of ground beside their ends')
+        check(bf.ladder_all_ground, 'soldier1943.SETTINGS: ladders link to every piece of ground beside their ends')
         # the sector filter: only the sector holding (50, 50)
         out2 = os.path.join(d, 'sectors.bin')
         navsample1943.sample(d, os.path.join(d, 'hf.res'), out2, pitch=0.4, margin=10.0, sectors=((0, 0), [(0, 0)]),

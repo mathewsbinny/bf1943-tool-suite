@@ -1,5 +1,5 @@
-"""navdata's cell heights use navdata.Y_OFFSET (no game data): a made-up area whose outline stands 0.9 m above
-ground at y 10 gives cells at y 10 when Y_OFFSET is BF1943's 0.9, and the cache key changes with the offset and with
+"""navdata's cell heights use load's y_offset (no game data): a made-up area whose outline stands 0.9 m above
+ground at y 10 gives cells at y 10 when y_offset is BF1943's 0.9, and the cache key changes with the offset and with
 the terrain's contents.
 navdiff's own default (DICE's 0.95) is unchanged for the little-endian variant's BFBC2 comparisons.
 
@@ -63,15 +63,11 @@ if __name__ == '__main__':
     xz = np.array(list(c.keys()), float) * navdata.GRID
     y = navdata._ground(xz, v[:, 0], Slope(), v[:, 1:])
     check(np.allclose(y, xz[:, 0] * 0.364), 'cells of an area on 20-degree terrain take the exact terrain height')
-    old = navdata.Y_OFFSET
-    try:
-        path = os.path.abspath(__file__)
-        navdata.Y_OFFSET = 0.95
-        k95 = navdata._key(path)
-        navdata.Y_OFFSET = 0.9
-        check(navdata._key(path) != k95, 'the cache key changes with Y_OFFSET (no stale 0.95 heights)')
-    finally:
-        navdata.Y_OFFSET = old
+    path = os.path.abspath(__file__)
+    check(navdata._key(path, y_offset=0.9) != navdata._key(path, y_offset=0.95),
+          'the cache key changes with y_offset (no stale 0.95 heights)')
+    check(navdata._key(path) == navdata._key(path, y_offset=0.95) and navdata.Y_OFFSET == 0.95,
+          "load's default y_offset is DICE's 0.95")
     # the cache key holds the terrain's contents (2026-10-30: only whether there was one - a changed terrain under
     # the same .hpd got the old terrain's heights back from the cache)
     import tempfile
@@ -86,7 +82,8 @@ if __name__ == '__main__':
     check(navdata._key(path, field(0)) != navdata._key(path, field(500)), 'other terrain contents give another key')
     real_load = navdata._load
     try:
-        navdata._load = lambda p, hf, cache_dir: SimpleNamespace(top=float(hf.height(np.zeros(1), np.zeros(1)).max()))
+        navdata._load = lambda p, hf, cache_dir, y_offset: SimpleNamespace(
+            top=float(hf.height(np.zeros(1), np.zeros(1)).max()))
         with tempfile.TemporaryDirectory() as d:
             a = navdata.load(path, field(0), cache_dir=d)
             b = navdata.load(path, field(500), cache_dir=d)
@@ -109,7 +106,7 @@ if __name__ == '__main__':
         with open(good, 'rb') as fh, open(cp, 'wb') as out:
             out.write(fh.read()[:200])
         try:
-            xz, y, area, est = navdata._cells(SimpleNamespace(sectors=[]), None, d, hpd)
+            xz, y, area, est = navdata._cells(SimpleNamespace(sectors=[]), None, d, hpd, navdata.Y_OFFSET)
             with np.load(cp) as z:
                 again = len(z['xz'])
             got = f'rebuilt: {len(xz)} cells, the cache readable again ({again} cells)'

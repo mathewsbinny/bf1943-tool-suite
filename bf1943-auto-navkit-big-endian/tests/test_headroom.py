@@ -51,12 +51,8 @@ def main(argv):
     keep = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(0.0, 0.0, 0.0), (1.6, 1.8, 0.0), (2.4, 0.0, 0.0)])     # col 3 is cut off from col 0 once col 2 goes
     check(not keep[3], 'the floor under the deck is not walkable')
     check(bool(keep[0] and keep[1] and keep[5]), 'open floor, the floor under a step-height surface and under a ceiling stay')
-    old = navwalk.HEADROOM_BAND
-    try:
-        navwalk.HEADROOM_BAND = None
-        keep_off = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(0.0, 0.0, 0.0), (1.6, 1.8, 0.0)])
-    finally:
-        navwalk.HEADROOM_BAND = old
+    keep_off = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(0.0, 0.0, 0.0), (1.6, 1.8, 0.0)],
+                                headroom_band=None)
     check(bool(keep_off[3]), 'rule off: the floor under the deck is kept as before')
     check(navwalk.HEADROOM_BAND == (0.5, 2.0), 'default band 0.5-2.0 m')
     print('all passed' if not failed else f'{failed} check(s) failed')

@@ -62,7 +62,8 @@ def tile_bins(T, x0, z0, pitch, ntx, ntz, pad):
     size = TILE * pitch
     t0 = np.floor((lo - [x0, z0]) / size).astype(np.int64)
     t1 = np.floor((hi - [x0, z0]) / size).astype(np.int64)
-    t0 = np.clip(t0, 0, [ntx - 1, ntz - 1]); t1 = np.clip(t1, 0, [ntx - 1, ntz - 1])
+    t0 = np.clip(t0, 0, [ntx - 1, ntz - 1])
+    t1 = np.clip(t1, 0, [ntx - 1, ntz - 1])
     keep = (hi[:, 0] >= x0) & (hi[:, 1] >= z0) & (lo[:, 0] <= x0 + ntx * size) & (lo[:, 1] <= z0 + ntz * size)
     bins = {}
     idx = np.nonzero(keep)[0]
@@ -90,11 +91,15 @@ def inside(T2, px, pz):
     That is judged relative to its size, in float64: float32 rounding at level coordinates leaves such a wall's
     determinant far above any fixed epsilon, and the coordinates then put far-away points inside it."""
     T2 = T2.astype(np.float64)
+    # the corners a, b, c and the points p; the usual dot-product form of the barycentric coordinates
     a, b, c = T2[:, 0, None, :], T2[:, 1, None, :], T2[:, 2, None, :]
     p = np.stack([px, pz], -1).astype(np.float64)[None]
     v0, v1, v2 = b - a, c - a, p - a
-    d00 = (v0 * v0).sum(-1); d01 = (v0 * v1).sum(-1); d11 = (v1 * v1).sum(-1)
-    d20 = (v2 * v0).sum(-1); d21 = (v2 * v1).sum(-1)
+    d00 = (v0 * v0).sum(-1)
+    d01 = (v0 * v1).sum(-1)
+    d11 = (v1 * v1).sum(-1)
+    d20 = (v2 * v0).sum(-1)
+    d21 = (v2 * v1).sum(-1)
     den = d00 * d11 - d01 * d01
     den = np.where(np.abs(den) <= FLAT_FROM_ABOVE * d00 * d11, np.nan, den)
     v = (d11 * d20 - d01 * d21) / den
@@ -128,7 +133,7 @@ def box_from_level(level_dir, hf, sea_level, log=print):
     (2026-10-30 review: no terrain above the sea raised ValueError on an empty array)."""
     import json
     land = hf.heights > sea_level - 1.5
-    cx, cz = hf.cell
+    cx, cz = hf.cell                                 # the height field's cell size
     if land.any():
         jj, ii = np.nonzero(land)
         lo = np.array([hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
@@ -141,12 +146,13 @@ def box_from_level(level_dir, hf, sea_level, log=print):
         spawns = json.load(f)
     with open(os.path.join(level_dir, 'object_boxes.json'), encoding='utf-8') as f:
         boxes = json.load(f)
-    for b in boxes:
-        bmin, bmax = np.array(b['min'])[[0, 2]], np.array(b['max'])[[0, 2]]
-        holds = any(bmin[0] - 5 <= s[0] <= bmax[0] + 5 and bmin[1] - 5 <= s[2] <= bmax[1] + 5 for s in spawns)
-        islet = b['max'][1] > sea_level + 0.5 and b['footprint'] >= ISLAND_FOOTPRINT
+    for box in boxes:
+        bmin, bmax = np.array(box['min'])[[0, 2]], np.array(box['max'])[[0, 2]]
+        holds = any(bmin[0] - 5 <= spawn[0] <= bmax[0] + 5 and bmin[1] - 5 <= spawn[2] <= bmax[1] + 5
+                    for spawn in spawns)
+        islet = box['max'][1] > sea_level + 0.5 and box['footprint'] >= ISLAND_FOOTPRINT
         if (holds or islet) and (bmin < lo).any() | (bmax > hi).any():
-            log(f'box: + {b["bp"].rsplit("/", 1)[-1]} ({"holds a spawn" if holds else "islet"}, '
+            log(f'box: + {box["bp"].rsplit("/", 1)[-1]} ({"holds a spawn" if holds else "islet"}, '
                 f'x {bmin[0]:.0f}..{bmax[0]:.0f}, z {bmin[1]:.0f}..{bmax[1]:.0f})')
             lo, hi = np.minimum(lo, bmin), np.maximum(hi, bmax)
     return (lo, hi) if (lo <= hi).all() else None
@@ -162,7 +168,7 @@ def extent_box(T, hf):
     land = hf.heights > T[:, :, 1].min() if len(T) else np.ones_like(hf.heights, bool)
     if land.any():
         jj, ii = np.nonzero(land)
-        cx, cz = hf.cell
+        cx, cz = hf.cell                             # the height field's cell size
         lo = np.minimum(lo, [hf.min[0] + ii.min() * cx, hf.min[2] + jj.min() * cz])
         hi = np.maximum(hi, [hf.min[0] + ii.max() * cx, hf.min[2] + jj.max() * cz])
     if not (lo <= hi).all():
@@ -203,13 +209,14 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
     slope = np.sqrt(np.maximum(1 - N[:, 1] ** 2, 0)) / np.maximum(N[:, 1], 0.05)   # height change per metre
     tri_lo, tri_hi = T[:, :, 1].min(1), T[:, :, 1].max(1)
     y_top, y_bottom = -1e9, 1e9
-    f = open(out, 'wb')
-    f.write(bytes(HEADER.size))                    # rewritten at the end, when the height range is known
+    out_file = open(out, 'wb')
+    out_file.write(bytes(HEADER.size))             # rewritten at the end, when the height range is known
     surfaces = blocked_count = 0
-    wanted = None
+    wanted = None                                  # the chosen sectors' boxes (x0, z0, x1, z1), 1 m wider
     if sectors:
         (xo, zo), ids = sectors
-        wanted = [((X + xo) * 100.0 - 1, (Z + zo) * 100.0 - 1, (X + xo) * 100.0 + 101, (Z + zo) * 100.0 + 101) for X, Z in ids]
+        wanted = [((X + xo) * 100.0 - 1, (Z + zo) * 100.0 - 1, (X + xo) * 100.0 + 101, (Z + zo) * 100.0 + 101)
+                  for X, Z in ids]
     skipped = 0
     for tz in range(ntz):
         rows = min(TILE, nz - tz * TILE)
@@ -219,117 +226,126 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
             if wanted is not None:
                 bx0, bz0 = x0 + i0 * pitch, z0 + j0 * pitch
                 bx1, bz1 = bx0 + TILE * pitch, bz0 + TILE * pitch
-                if not any(bx1 >= a and bx0 <= c and bz1 >= b and bz0 <= d for a, b, c, d in wanted):
+                if not any(bx1 >= wx0 and bx0 <= wx1 and bz1 >= wz0 and bz0 <= wz1 for wx0, wz0, wx1, wz1 in wanted):
                     skipped += 1                    # its columns stay empty
                     continue
             ii, jj = np.meshgrid(np.arange(i0, min(i0 + TILE, nx)), np.arange(j0, min(j0 + TILE, nz)))
             ii, jj = ii.ravel(), jj.ravel()
             px, pz = x0 + ii * pitch, z0 + jj * pitch
-            # the terrain surface
-            ty = hf.height(px, pz)
-            gx = (hf.height(px + 0.5, pz) - hf.height(px - 0.5, pz))
-            gz = (hf.height(px, pz + 0.5) - hf.height(px, pz - 0.5))
-            tn = np.stack([-gx, np.ones_like(gx), -gz], 1)
-            tn /= np.linalg.norm(tn, axis=1, keepdims=True)
-            S = [[(float(ty[k]), tn[k])] for k in range(len(px))]
+            # the terrain surface: its height and its normal from the height field's gradient
+            terrain_y = hf.height(px, pz)
+            grad_x = (hf.height(px + 0.5, pz) - hf.height(px - 0.5, pz))
+            grad_z = (hf.height(px, pz + 0.5) - hf.height(px, pz - 0.5))
+            terrain_normal = np.stack([-grad_x, np.ones_like(grad_x), -grad_z], 1)
+            terrain_normal /= np.linalg.norm(terrain_normal, axis=1, keepdims=True)
+            # per column of the tile: its surfaces [(height, normal)], the terrain first
+            column_surfaces = [[(float(terrain_y[k]), terrain_normal[k])] for k in range(len(px))]
             tris = bins.get(tz * ntx + tx)
-            pairs = []                                      # (column, low, high) of collision near each column
+            pairs = []                                      # (column, low, high, over) of collision near each column
             if tris is not None:
                 for chunk in np.array_split(tris, max(1, len(tris) // 1500)):
                     T2 = T[chunk][:, :, [0, 2]]
                     u, v, w, ins = inside(T2, px, pz)
-                    Y = u * T[chunk][:, 0, 1, None] + v * T[chunk][:, 1, 1, None] + w * T[chunk][:, 2, 1, None]
+                    # (triangle, column): the triangle's plane height at the column
+                    plane_y = u * T[chunk][:, 0, 1, None] + v * T[chunk][:, 1, 1, None] + w * T[chunk][:, 2, 1, None]
                     floor_hit = ins & up[chunk][:, None]       # steep ones too: the slope rule rejects them later
-                    for a, c in zip(*np.nonzero(floor_hit)):
-                        S[c].append((float(Y[a, c]), N[chunk][a]))
+                    for tri, col in zip(*np.nonzero(floor_hit)):
+                        column_surfaces[col].append((float(plane_y[tri, col]), N[chunk][tri]))
                     d = dist2d(T2, px, pz)
                     near = d <= radius
                     if near.any():
-                        a, c = np.nonzero(near)
-                        st = steep[chunk][a]
+                        tri, col = np.nonzero(near)
+                        tri_steep = steep[chunk][tri]
                         # a floor: its plane height at the column, extended past its edge for a column beside it (the
                         # barycentric height), within a radius' rise. Its whole height range would make a ramp's next
                         # triangle block the ramp itself (Wake's storeroom stair, 2026-10-23). NaN for a triangle that
                         # is a line seen from above: its range then.
-                        yc = Y[a, c]
-                        flo = np.where(np.isnan(yc), tri_lo[chunk][a], yc - slope[chunk][a] * radius)
-                        fhi = np.where(np.isnan(yc), tri_hi[chunk][a], yc + slope[chunk][a] * radius)
-                        low = np.where(st, tri_lo[chunk][a], np.maximum(flo, tri_lo[chunk][a]))
-                        high = np.where(st, tri_hi[chunk][a], np.minimum(fhi, tri_hi[chunk][a]))
+                        y_near = plane_y[tri, col]
+                        plane_lo = np.where(np.isnan(y_near), tri_lo[chunk][tri], y_near - slope[chunk][tri] * radius)
+                        plane_hi = np.where(np.isnan(y_near), tri_hi[chunk][tri], y_near + slope[chunk][tri] * radius)
+                        low = np.where(tri_steep, tri_lo[chunk][tri], np.maximum(plane_lo, tri_lo[chunk][tri]))
+                        high = np.where(tri_steep, tri_hi[chunk][tri], np.minimum(plane_hi, tri_hi[chunk][tri]))
                         # a triangle over the column itself (not a wall): its exact height there; it blocks from just
                         # above the surface, not from step height - a soldier steps up onto a ledge beside him, but
                         # cannot stand under a ceiling, a slab or a platform (collision is two-sided: its underside is a
                         # surface too, and must not be standable)
-                        over = ins[a, c] & ~st
-                        low = np.where(over, Y[a, c], low)
-                        high = np.where(over, Y[a, c], high)
-                        pairs.append(np.stack([c, low, high, over], 1))
-            P = np.concatenate(pairs) if pairs else np.zeros((0, 4))
+                        over = ins[tri, col] & ~tri_steep
+                        low = np.where(over, plane_y[tri, col], low)
+                        high = np.where(over, plane_y[tri, col], high)
+                        pairs.append(np.stack([col, low, high, over], 1))
+            near_pairs = np.concatenate(pairs) if pairs else np.zeros((0, 4))
             # merge each column's surfaces (top down), then the capsule test
             for k in range(len(px)):
-                s = sorted(S[k], key=lambda e: -e[0])
+                top_down = sorted(column_surfaces[k], key=lambda e: -e[0])
                 merged = []
-                for y, n in s:
+                for y, n in top_down:
                     if not merged or merged[-1][0] - y > MERGE:
                         merged.append((y, n))
-                S[k] = merged
-            if len(P):
-                order = np.argsort(P[:, 0], kind='stable')
-                P = P[order]
-                starts = np.searchsorted(P[:, 0], np.arange(len(px) + 1))
+                column_surfaces[k] = merged
+            if len(near_pairs):
+                order = np.argsort(near_pairs[:, 0], kind='stable')
+                near_pairs = near_pairs[order]
+                starts = np.searchsorted(near_pairs[:, 0], np.arange(len(px) + 1))   # each column's run of pairs
             for k in range(len(px)):
-                rec = []
+                record = []                                 # (height, normal, flags) per surface
                 near_lo = near_hi = None
-                if len(P) and starts[k + 1] > starts[k]:
-                    near_lo, near_hi = P[starts[k]:starts[k + 1], 1], P[starts[k]:starts[k + 1], 2]
-                    near_over = P[starts[k]:starts[k + 1], 3] > 0
-                for y, n in S[k]:
-                    floor_of_band = np.where(near_over, y + OVERHEAD_MIN, y + step) if near_lo is not None else None
-                    blocked = near_lo is not None and bool(((near_lo < y + height) & (near_hi > floor_of_band)).any())
-                    blocked |= y < float(ty[k]) - UNDERGROUND
+                if len(near_pairs) and starts[k + 1] > starts[k]:
+                    run = near_pairs[starts[k]:starts[k + 1]]
+                    near_lo, near_hi = run[:, 1], run[:, 2]
+                    near_over = run[:, 3] > 0
+                for y, n in column_surfaces[k]:
+                    if near_lo is not None:
+                        floor_of_band = np.where(near_over, y + OVERHEAD_MIN, y + step)
+                        blocked = bool(((near_lo < y + height) & (near_hi > floor_of_band)).any())
+                    else:
+                        blocked = False
+                    blocked |= y < float(terrain_y[k]) - UNDERGROUND
                     blocked_count += blocked
-                    rec.append((y, n, BLOCKED if blocked else 0))
+                    record.append((y, n, BLOCKED if blocked else 0))
                     y_top, y_bottom = max(y_top, y), min(y_bottom, y)
-                band[(jj[k] - tz * TILE) * nx + ii[k]] = rec
-                surfaces += len(rec)
+                band[(jj[k] - tz * TILE) * nx + ii[k]] = record
+                surfaces += len(record)
         out_bytes = bytearray()
-        for rec in band:
-            out_bytes.append(min(len(rec), 255))
-            for y, n, flags in rec[:255]:
-                q = np.clip(np.round(np.asarray(n) * 127), -127, 127).astype(int)
+        for record in band:
+            out_bytes.append(min(len(record), 255))
+            for y, n, flags in record[:255]:
+                q = np.clip(np.round(np.asarray(n) * 127), -127, 127).astype(int)    # the normal as signed bytes
                 out_bytes += struct.pack('<f3bB', y, int(q[0]), int(q[1]), int(q[2]), flags)
-        f.write(out_bytes)
+        out_file.write(out_bytes)
         log(f'  row {tz + 1}/{ntz}: {surfaces} surfaces, {blocked_count} blocked ({time.time() - t_start:.0f} s)')
-    f.seek(0)
-    f.write(HEADER.pack(b'ONS1', 1, pitch, x0, z0, nx, nz, y_top + 2, y_bottom - 2, radius, step, height, 0.0, 0))
-    f.close()
+    out_file.seek(0)
+    out_file.write(HEADER.pack(b'ONS1', 1, pitch, x0, z0, nx, nz, y_top + 2, y_bottom - 2, radius, step, height,
+                               0.0, 0))
+    out_file.close()
     log(f'{out}: {nx * nz} columns, {surfaces} surfaces, {blocked_count} blocked, {skipped} tiles outside the '
         f'chosen sectors left empty, {time.time() - t_start:.0f} s')
     return out
 
 
 def main(argv):
-    p = argparse.ArgumentParser(prog='navsample1943.py', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('level_dir')
-    p.add_argument('heightfield')
-    p.add_argument('out')
-    p.add_argument('--step', type=float, default=STEP)
-    p.add_argument('--radius', type=float, default=RADIUS)
-    p.add_argument('--height', type=float, default=HEIGHT)
-    p.add_argument('--pitch', type=float, default=0.8)
-    p.add_argument('--margin', type=float, default=20.0)
-    p.add_argument('--sea-level', type=float, help='the level water height (core water.read_mesh): limits the box to land')
-    p.add_argument('--sectors', help='XOffset,ZOffset:XXZZ,XXZZ,... (hex sector ids, as detailed1943.py prints them): '
-                                     'sample only those sectors')
-    a = p.parse_args(argv[1:])
+    parser = argparse.ArgumentParser(prog='navsample1943.py', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('level_dir')
+    parser.add_argument('heightfield')
+    parser.add_argument('out')
+    parser.add_argument('--step', type=float, default=STEP)
+    parser.add_argument('--radius', type=float, default=RADIUS)
+    parser.add_argument('--height', type=float, default=HEIGHT)
+    parser.add_argument('--pitch', type=float, default=0.8)
+    parser.add_argument('--margin', type=float, default=20.0)
+    parser.add_argument('--sea-level', type=float,
+                        help='the level water height (core water.read_mesh): limits the box to land')
+    parser.add_argument('--sectors', help='XOffset,ZOffset:XXZZ,XXZZ,... (hex sector ids, as detailed1943.py prints '
+                                          'them): sample only those sectors')
+    args = parser.parse_args(argv[1:])
     sectors = None
-    if a.sectors:
-        offs, ids = a.sectors.split(':')
-        xo, zo = (int(v) for v in offs.split(','))
+    if args.sectors:
+        offsets, ids = args.sectors.split(':')
+        xo, zo = (int(v) for v in offsets.split(','))
         sectors = ((xo, zo), [(int(s[:2], 16), int(s[2:], 16)) for s in ids.replace(' ', ',').split(',') if s])
-    sample(a.level_dir, a.heightfield, a.out, a.step, a.radius, a.height, a.pitch, a.margin, a.sea_level, sectors)
+    sample(args.level_dir, args.heightfield, args.out, args.step, args.radius, args.height, args.pitch, args.margin,
+           args.sea_level, sectors)
     return 0
-
 
 if __name__ == '__main__':
     from bfbc2core import errors

@@ -62,7 +62,7 @@ class Runs:
         self.load, self.write = navsample.load, navbuild.write_file
         navsample.load = lambda p: (self.table[p], 0)
         if not self.keep_writer:
-            navbuild.write_file = lambda graphs, out, log, t0: setattr(self, 'graphs', graphs)
+            navbuild.write_file = lambda graphs, out, log, t0, state=None: setattr(self, 'graphs', graphs)
         return self
 
     def __exit__(self, *exc):
@@ -176,12 +176,8 @@ def grid_mismatch():
     with Runs({'s.bin': main, 'hi.bin': fine}) as r:
         navbuild.build('s.bin', None, 0, 0, 'unused', high_path='hi.bin', log=QUIET)
         check(r.graphs is not None, 'a finer high-capsule run on the same box is coarsened to the main grid')
-    navbuild.set_pitch(0.2)
-    try:
-        g = navwalk.coarse(flat(0.1, 0.0, 0.0, 9, 9), 0.2)
-        check(abs(g.pitch - 0.2) < 1e-9 and g.nx == 5, f'coarse() to 0.2 m in the detailed pass (pitch {g.pitch})')
-    finally:
-        navbuild.set_pitch(0.8)
+    g = navwalk.coarse(flat(0.1, 0.0, 0.0, 9, 9), 0.2)
+    check(abs(g.pitch - 0.2) < 1e-9 and g.nx == 5, f'coarse() to 0.2 m in the detailed pass (pitch {g.pitch})')
 
 
 def roof_last_column():
@@ -219,23 +215,23 @@ def order_ids_retry():
     stage = navbuild.stage
 
     def recording(*a, **k):
-        before = set(navbuild.ORDER_IDS)
+        before = set(k['state'].order_ids)
         r = stage(*a, **k)
         if k.get('sector_filter') is not None:
-            attempts.append(set(navbuild.ORDER_IDS) - before)
+            attempts.append(set(k['state'].order_ids) - before)
         return r
     navbuild.stage = recording
     try:
         with Runs({'a.bin': s08, 'b.bin': s02}):
-            navbuild.build('a.bin', None, 0, 0, 'unused', log=QUIET, order_points=orders,
-                           detailed={'samples': 'b.bin', 'high': None, 'sectors': {(1, 0), (2, 0)}})
+            state = navbuild.build('a.bin', None, 0, 0, 'unused', log=QUIET, order_points=orders,
+                                   detailed={'samples': 'b.bin', 'high': None, 'sectors': {(1, 0), (2, 0)}})
     finally:
         navbuild.stage = stage
     stale = set().union(*attempts[:-1]) - attempts[-1] if len(attempts) > 1 else set()
     check(len(attempts) == 2 and bool(set().union(*attempts[:-1])),
           f'(the made-up level makes a detailed retry whose first attempt has order nodes: {len(attempts)} attempts)')
-    check(not (stale & navbuild.ORDER_IDS), f'no order id of a discarded detailed attempt is kept '
-                                            f'({sorted(stale & navbuild.ORDER_IDS)})')
+    check(not (stale & state.order_ids), f'no order id of a discarded detailed attempt is kept '
+                                         f'({sorted(stale & state.order_ids)})')
 
 
 def sector_line():

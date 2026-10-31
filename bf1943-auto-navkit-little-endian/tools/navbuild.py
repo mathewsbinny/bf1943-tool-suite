@@ -23,10 +23,15 @@ Pipeline (research/KYNAPSE_SPEC.md sections 3 and 4):
 Detail features D and F are not generated (counts 0, allowed by the format); detailed zones (pitch 0.2)
 are generated at the normal pitch.
 
+Configuration (2026-10-31): the constants below are documented defaults, never changed at run time. Each stage's grid
+(pitch 0.8 or 0.2) is a Grid (grid_at), carried by the stage's Level; what a build gathers as it goes (order nodes,
+ladder counts) is its BuildState. Before, set_pitch() rewrote this module's PITCH, WINDOW, ... for whatever ran next.
+
 Usage: navbuild.py <samples.bin> <forbid_tris.npy> <XOffset> <ZOffset> <out.hpd> [--step 0.28]
                    [--dynamic dynamic_tris.npy] [--high samples_high_capsule.bin] [--narrow samples_narrow.bin]
                    [--stairs stair_tris.npy] [--exclude exclude_tris.npy] [--exclude-foot exclude_footprint_tris.npy]
 """
+import copy
 import heapq
 import math
 import os
@@ -34,6 +39,7 @@ import struct
 import sys
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -43,7 +49,7 @@ import kymesh  # noqa: E402
 import navsample  # noqa: E402
 import navwalk  # noqa: E402
 
-PITCH = 0.8
+PITCH = 0.8                     # the normal grid (grid_at gives a stage's settings at its pitch)
 SECTOR_SAMPLES = 125            # 100 m / 0.8 m
 WINDOW = range(-1, 127)         # sample indices of a sector window (local)
 TILE = 50                       # samples per tile
@@ -109,8 +115,6 @@ ORDER_NODES = True              # a route node at AI order positions far from an
                                 # order_points.json from levelobjects.py) - sp_004_b play test 2026-10-20: 0 failures. Was off until
                                 # the sp_004_b play test confirms it (2026-10-20)
 ORDER_NODE_MIN = 3.0            # ... when the nearest node on the same floor is farther than this (m)
-ORDER_STATS = {}                # nodes added, and those removed by prune_order_nodes (for reports)
-ORDER_IDS = set()               # ids of the order nodes of the current build
 ORDER_MIN_ISLAND = 25           # an order node in a route island with fewer nodes is dropped (prune_order_nodes): such
                                 # pockets took the nearest-node matches next to the main networks (sp_009: connectivity
                                 # 66.99 without order nodes, 62.58 with all, 67.45 with this rule; sp_004_b keeps its
@@ -124,8 +128,6 @@ DETOUR_TRIGGER = 3.0            # repair node pairs within DIST_EDGE_MAX whose r
 DETOUR_MAX = 1.3                # ... to a walk of at most this x straight (DICE at the failing spot: 1.02-1.11)
 DETOUR_LINK_ALL = False         # also link new waypoints to all walkable neighbours within DIST_EDGE_MAX (4x the edges)
 DETOUR_PASSES = 2               # pass A, then pass B on the repaired graph
-REPAIR_STATS = {}               # nodes added per pass (summed over sectors; for reports)
-LADDER_STATS = {}               # ladder links made, and ladders whose ends lie in two sectors (not linked yet)
 BORDER_NODE_SPACING = 10.0
 BRIDGE_UNION = True             # 45-degree bridges: outline from the exact union (bridge_union) - False: clip_bridges
 MAX_WATER_DEPTH = 1.5           # ground deeper under water is not walkable (DICE's data: 99.9 % of its ground under
@@ -198,23 +200,51 @@ class BuildError(ValueError):
     pass
 
 
-def set_pitch(p):
-    """Switch the grid settings for a build at pitch p: 0.8 (normal sectors) or 0.2 (detailed zones)."""
-    global PITCH, SECTOR_SAMPLES, WINDOW, TILE, TILES, RESOLUTION, LINK_STEP
-    PITCH = p
-    SECTOR_SAMPLES = int(round(100 / p))                  # 125 / 500
-    WINDOW = range(-1, SECTOR_SAMPLES + 2)                # two samples of overlap with each neighbour
+@dataclass(frozen=True)
+class Grid:
+    """One stage's sample grid: pitch 0.8 (normal sectors) or DETAILED_PITCH (detailed zones), and the settings that
+    follow from the pitch (grid_at)."""
+    pitch: float
+    sector_samples: int                             # samples per sector side: 125 / 500
+    window: range                                   # local sample indices of a sector window
+    tile: int                                       # samples per tile side: 50 / 100
+    tiles: int                                      # tiles per sector side: 3 / 6
+    resolution: float                               # the mesh header's resolution
+    link_step: float                                # the raw rule's height step (LINK_STEP / DETAILED_LINK_STEP)
+
+    @property
+    def detailed(self):
+        return abs(self.pitch - DETAILED_PITCH) < 1e-6
+
+
+def grid_at(p):
+    """The Grid of a stage at pitch p: 0.8 (normal sectors) or 0.2 (detailed zones). (set_pitch until 2026-10-31,
+    which rewrote this module's PITCH, WINDOW, TILE ... for whatever ran next.)"""
     detailed = abs(p - DETAILED_PITCH) < 1e-6
-    TILES = 6 if detailed else 3
-    TILE = int(round((20 if detailed else 40) / p))       # 100 / 50 samples
-    RESOLUTION = 0.05 if detailed else 0.025
-    LINK_STEP = DETAILED_LINK_STEP if detailed else 0.6
+    sector_samples = int(round(100 / p))                  # 125 / 500
+    return Grid(pitch=p, sector_samples=sector_samples,
+                window=range(-1, sector_samples + 2),     # two samples of overlap with each neighbour
+                tile=int(round((20 if detailed else 40) / p)),        # 100 / 50 samples
+                tiles=6 if detailed else 3,
+                resolution=0.05 if detailed else 0.025,
+                link_step=DETAILED_LINK_STEP if detailed else LINK_STEP)
+
+
+@dataclass
+class BuildState:
+    """What one build gathers as it goes, across its stages (module globals until 2026-10-31, cleared by build())."""
+    order_ids: set = field(default_factory=set)         # ids of the order nodes (prune_order_nodes)
+    order_stats: dict = field(default_factory=dict)     # order nodes added, and those prune_order_nodes removed
+    repair_stats: dict = field(default_factory=dict)    # detour-repair nodes added per pass (summed over sectors)
+    ladder_stats: dict = field(default_factory=dict)    # ladder links made, and ladders whose ends lie in two sectors
 
 
 class Level:
-    """Kept walkable surfaces on the global sample grid, with the step-rule connectivity."""
+    """Kept walkable surfaces on one stage's sample grid, with the step-rule connectivity. grid: the stage's Grid
+    (grid_at; the normal grid by default)."""
 
-    def __init__(self, s, keep, step, gx=None, gz=None, stair=None):
+    def __init__(self, s, keep, step, gx=None, gz=None, stair=None, grid=None):
+        self.grid = grid if grid is not None else grid_at(PITCH)
         self.s, self.keep, self.step = s, keep, step
         self.stair = stair if stair is not None else np.zeros(len(s.y), bool)
         self.y = s.y.astype(float)
@@ -223,6 +253,12 @@ class Level:
         self.gz = gz if gz is not None else -s.normal[:, 2] / ny
         self.col_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
         self.terrain = (s.hit[:, 0] == navwalk.TERRAIN_SHAPE_VTABLE) if s.hit is not None else np.ones(len(s.y), bool)
+
+    def on_grid(self, grid):
+        """The same surfaces with another Grid's step rule (a shallow copy; merge_detailed)."""
+        other = copy.copy(self)
+        other.grid = grid
+        return other
 
     def surfaces(self, gi, gj):
         if not (0 <= gi < self.s.nx and 0 <= gj < self.s.nz):
@@ -235,10 +271,11 @@ class Level:
         rule = rule or LINK_RULE
         if rule == 'slope' or (rule == 'terrain' and not (self.terrain[k] and self.terrain[n])):
             return navwalk.step_fits(self.y[n] - self.y[k], (self.gx[k], self.gz[k]), (self.gx[n], self.gz[n]),
-                                     self.stair[k], self.stair[n], di, dj, PITCH, self.step)
+                                     self.stair[k], self.stair[n], di, dj, self.grid.pitch, self.step)
         y = self.y
+        step = self.grid.link_step
         if not (di and dj):
-            return abs(y[n] - y[k]) <= LINK_STEP
+            return abs(y[n] - y[k]) <= step
         # diagonal: through either side column, over any surface there (walkable or not)
         c = self.col_of[k]
         gi, gj = c % self.s.nx, c // self.s.nx
@@ -246,7 +283,7 @@ class Level:
             if 0 <= a < self.s.nx and 0 <= b < self.s.nz:
                 m0 = b * self.s.nx + a
                 for m in range(self.s.start[m0], self.s.start[m0 + 1]):
-                    if abs(y[m] - y[k]) <= LINK_STEP and abs(y[n] - y[m]) <= LINK_STEP:
+                    if abs(y[m] - y[k]) <= step and abs(y[n] - y[m]) <= step:
                         return True
         return False
 
@@ -266,22 +303,26 @@ class Level:
 
 def sector_origin_index(level, X, Y, xoff, zoff):
     """Global sample index of the sector's local sample (0, 0)."""
-    s = level.s
+    s, p = level.s, level.grid.pitch
     ox, oz = (X + xoff) * 100.0, (Y + zoff) * 100.0
-    return int(round((ox - s.min_x) / PITCH)), int(round((oz - s.min_z) / PITCH)), ox, oz
+    return int(round((ox - s.min_x) / p)), int(round((oz - s.min_z) / p)), ox, oz
 
 
-def tiling(sid):
-    """(samples per tile, tiles per axis) of a sector."""
-    return (25, 6) if TILE_20M_SECTORS and sid in TILE_20M_SECTORS else (TILE, TILES)
+def tiling(sid, grid):
+    """(samples per tile, tiles per axis) of a sector on the stage's grid."""
+    return (25, 6) if TILE_20M_SECTORS and sid in TILE_20M_SECTORS else (grid.tile, grid.tiles)
 
 
-def build_areas(level, gi0, gj0, start=(-1, -1), tile=TILE, tiles=TILES):
+def build_areas(level, gi0, gj0, start=(-1, -1), tile=None, tiles=None):
     """Areas of one sector: list of dicts {tile: (tx, tz), cells: [(i, j, k)]} (local i, j). start: the local sample
-    index where the tiles begin on x and z (-1, or 0 on a side with no neighbouring sector - EDGE_SECTOR_TILES)."""
+    index where the tiles begin on x and z (-1, or 0 on a side with no neighbouring sector - EDGE_SECTOR_TILES).
+    tile, tiles: the level's grid's by default."""
+    grid = level.grid
+    tile = grid.tile if tile is None else tile
+    tiles = grid.tiles if tiles is None else tiles
     cells_by_tile = defaultdict(list)
-    for j in WINDOW:
-        for i in WINDOW:
+    for j in grid.window:
+        for i in grid.window:
             for k in level.surfaces(gi0 + i, gj0 + j):
                 tx = min(max(i - start[0], 0) // tile, tiles - 1)
                 tz = min(max(j - start[1], 0) // tile, tiles - 1)
@@ -470,7 +511,7 @@ def trace_edges(level, areas, area_of, gi0, gj0):
                 # surfaces in one column - stair edge, split-off layer - must not leave a stray portal inside)
                 n = level.neighbour(k, gi0 + i, gj0 + j, di, dj, prefer=own)
                 ni, nj = i + di, j + dj
-                if n is not None and ni in WINDOW and nj in WINDOW:
+                if n is not None and ni in level.grid.window and nj in level.grid.window:
                     t = area_of.get(n)
                     if t == ai:
                         sides[side] = ('I', None)
@@ -567,6 +608,7 @@ def restore_one_way(sectors, shared):
 def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
     """Per area (portals, borders, outline) from its boundary edges: runs merged, 45-degree bridges."""
     result = []
+    p = level.grid.pitch
     for ai, area in enumerate(areas):
         edges = per_area[ai]
         # 45-degree bridges between diagonal-only neighbours of this area
@@ -588,7 +630,7 @@ def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
         if BRIDGE_UNION:
             drop, dsegs = bridge_union(bridges, cell_k, level)
             for (ax, az, ya), (bx, bz, yb) in dsegs:
-                outline.append([(ox + ax * PITCH, ya, oz + az * PITCH), (ox + bx * PITCH, yb, oz + bz * PITCH)])
+                outline.append([(ox + ax * p, ya, oz + az * p), (ox + bx * p, yb, oz + bz * p)])
         else:
             drop = set()
             for i, j, di, dj in bridges:
@@ -602,7 +644,7 @@ def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
                 for (ax, az), (bx, bz) in (((cx - di, cz), (cx, cz + dj)), ((cx, cz - dj), (cx + di, cz))):
                     bsegs.append((bi, (ax, az, ya), (bx, bz, yb)))
             for _bi, (ax, az, ya), (bx, bz, yb) in clip_bridges(bsegs, bridges):
-                outline.append([(ox + ax * PITCH, ya, oz + az * PITCH), (ox + bx * PITCH, yb, oz + bz * PITCH)])
+                outline.append([(ox + ax * p, ya, oz + az * p), (ox + bx * p, yb, oz + bz * p)])
         for key in list(edges):
             if key[0] == 'E':
                 axis, line = key[2], key[3]
@@ -615,11 +657,11 @@ def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
                     a, b = runs[start][0] - 0.5, runs[r - 1][0] + 0.5
                     ya, yb = runs[start][1], runs[r - 1][1]
                     if axis == 'x':
-                        p0 = (ox + line * PITCH, ya, oz + a * PITCH)
-                        p1 = (ox + line * PITCH, yb, oz + b * PITCH)
+                        p0 = (ox + line * p, ya, oz + a * p)
+                        p1 = (ox + line * p, yb, oz + b * p)
                     else:
-                        p0 = (ox + a * PITCH, ya, oz + line * PITCH)
-                        p1 = (ox + b * PITCH, yb, oz + line * PITCH)
+                        p0 = (ox + a * p, ya, oz + line * p)
+                        p1 = (ox + b * p, yb, oz + line * p)
                     if kind == 'B':
                         portals.append(kymesh.Portal(p0, p1, target))
                     elif kind == 'C':
@@ -641,25 +683,21 @@ def build(samples_path, tris_path, xoff, zoff, out_path, step=0.28, log=print, d
     bounds: (minX, minZ, maxX, maxZ) of the reference path data (CLIP_TO_REFERENCE), or None.
     detailed: {'samples': a pitch-0.2 sampling run, 'high': its high-capsule run (or None), 'sectors': {(X, Y)}} -
     the second pass: those sectors are built at pitch 0.2 (DICE's detailed zones) and merged with the normal build
-    (merge_detailed). Without it the build is the normal one, unchanged."""
+    (merge_detailed). Without it the build is the normal one, unchanged.
+    Returns the build's BuildState (its order nodes and ladder counts)."""
     t0 = time.time()
+    state = BuildState()
     common = dict(tris_path=tris_path, step=step, log=log, dynamic_path=dynamic_path, narrow_path=narrow_path,
                   stairs_path=stairs_path, exclude_path=exclude_path, exclude_foot_path=exclude_foot_path,
                   edits=edits, water=water, max_water_depth=max_water_depth, bounds=bounds,
-                  order_points=order_points, t0=t0, ladders=ladders)
-    set_pitch(0.8)
-    ORDER_IDS.clear()
-    LADDER_STATS.clear()
-    a = stage(samples_path, high_path, xoff, zoff, seeds=seeds, **common)
-    if detailed:
-        graphs = merge_detailed(a, detailed, xoff, zoff, seeds, common, log)
-        set_pitch(0.8)
-    else:
-        graphs = a['graphs']
+                  order_points=order_points, t0=t0, ladders=ladders, state=state)
+    a = stage(samples_path, high_path, xoff, zoff, seeds=seeds, grid=grid_at(PITCH), **common)
+    graphs = merge_detailed(a, detailed, xoff, zoff, seeds, common, log) if detailed else a['graphs']
     if ladders:
-        log(f'ladders: {len(ladders)}; links made {LADDER_STATS.get("linked", 0)} (counted per stage), ends in two '
-            f'sectors {LADDER_STATS.get("split", 0)}')
-    write_file(graphs, out_path, log, t0)
+        log(f'ladders: {len(ladders)}; links made {state.ladder_stats.get("linked", 0)} (counted per stage), ends in '
+            f'two sectors {state.ladder_stats.get("split", 0)}')
+    write_file(graphs, out_path, log, t0, state)
+    return state
 
 
 def to_pitch(f, pitch, what):
@@ -684,17 +722,22 @@ def same_grid(s, f, what):
 def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=print, dynamic_path=None,
           narrow_path=None, stairs_path=None, exclude_path=None, exclude_foot_path=None, seeds=None, edits=None,
           water=None, max_water_depth=MAX_WATER_DEPTH, bounds=None, order_points=None, t0=None,
-          sector_filter=None, grid_min=None, id_start=1, carried=None, seed_points=None, ladders=None):
-    """One grid's build (the module's pitch settings, set_pitch): walkable surfaces, sectors, areas, border nodes,
-    traced boundaries, meshes and route graphs - not yet written. sector_filter: build only these (X, Y) sectors;
+          sector_filter=None, grid_min=None, id_start=1, carried=None, seed_points=None, ladders=None,
+          grid=None, state=None):
+    """One grid's build: walkable surfaces, sectors, areas, border nodes, traced boundaries, meshes and route graphs -
+    not yet written. grid: the stage's Grid (grid_at; the normal grid by default); state: the build's BuildState,
+    which the stage adds to (a new one by default). sector_filter: build only these (X, Y) sectors;
     grid_min: the level's minimum sector X / Y (EDGE_SECTOR_RULE) when the stage holds only part of it; id_start:
     the first node id; carried: {sector: [(id, pos)]} shared nodes from another stage on this stage's sectors (the
     seams with sectors built at another pitch) - attached to this grid's ground where it has some; seed_points:
     more walkable-seed points (x, ground y, z) - not soldier spawns (those are seeds).
     Returns {'level', 'info', 'graphs', 'border_nodes', 'next_id', 'dropped', 'pitch', 'meshes'}."""
     t0 = t0 or time.time()
+    grid = grid if grid is not None else grid_at(PITCH)
+    state = state if state is not None else BuildState()
+    pitch = grid.pitch
     f, _ = navsample.load(samples_path)
-    s = to_pitch(f, PITCH, 'samples')
+    s = to_pitch(f, pitch, 'samples')
     hand = {}
     soldiers = list(seeds or [])                 # the level's soldier spawn points (navwalk.CHARACTERS_ABSENT)
     if edits:
@@ -724,12 +767,14 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
     tris = np.load(tris_path) if tris_path else None
     dyn = np.load(dynamic_path) if dynamic_path else None
     # the clearance runs are matched to the main run column by column (navwalk.matched_flags): same grid, or an error
-    hi = same_grid(s, to_pitch(navsample.load(high_path)[0], PITCH, 'high-capsule run'), 'high-capsule run') if high_path else None
-    narrow = same_grid(s, to_pitch(navsample.load(narrow_path)[0], PITCH, 'narrow run'), 'narrow run') if narrow_path else None
+    hi = same_grid(s, to_pitch(navsample.load(high_path)[0], pitch, 'high-capsule run'), 'high-capsule run') if high_path else None
+    narrow = same_grid(s, to_pitch(navsample.load(narrow_path)[0], pitch, 'narrow run'), 'narrow run') if narrow_path else None
     st = np.load(stairs_path) if stairs_path else None
     ex = np.load(exclude_path) if exclude_path else None
     exf = np.load(exclude_foot_path) if exclude_foot_path else None
-    keep, gx, gz, stair = navwalk.walkable(s, tris, step=step, dynamic_tris=dyn, high_capsule=hi, return_gradients=True,
+    walk_stats = {}                              # navwalk's counts, for the log (roof islands dropped)
+    keep, gx, gz, stair = navwalk.walkable(s, tris, step=step, dynamic_tris=dyn, high_capsule=hi, stats=walk_stats,
+                                    return_gradients=True,
                                     return_stairs=True,
                                     narrow_capsule=narrow, stair_tris=st, exclude_tris=ex, exclude_footprint_tris=exf,
                                     extra_seeds=list(seeds or []) + list(seed_points or []), soldier_points=soldiers,
@@ -737,11 +782,10 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
                                     # roof pruning anchors: soldier spawns, AI order positions, and (stage b) the ground
                                     # the normal build kept - stage b drops only roofs that build did not have
                                     anchors=list(seeds or []) + list(order_points or []) + list(seed_points or []))
-    level = Level(s, keep, step, gx, gz, stair)
+    level = Level(s, keep, step, gx, gz, stair, grid=grid)
     log(f'{len(s.y)} surfaces, {int(keep.sum())} walkable kept ({time.time() - t0:.0f} s)'
-        + (f'; roof islands dropped {navwalk.ROOF_STATS.get("dropped", 0)} ({navwalk.ROOF_STATS.get("surfaces", 0)} surfaces)'
+        + (f'; roof islands dropped {walk_stats.get("dropped", 0)} ({walk_stats.get("surfaces", 0)} surfaces)'
            if navwalk.ROOF_PRUNE else ''))
-    navwalk.ROOF_STATS.clear()
     # ladder links: the kept surfaces at each ladder's foot and top (navwalk.ladder_ends)
     ladder_pairs = []
     for lad in (ladders or ()):
@@ -759,7 +803,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         raise BuildError(f'no walkable ground kept ({len(s.y)} surfaces sampled, {int(keep.sum())} kept): check the '
                          f'sampling box and sector offsets, and the water and reference-extent rules')
     sectors = sorted(sectors)
-    log(f'{len(sectors)} sectors (pitch {PITCH:g})')
+    log(f'{len(sectors)} sectors (pitch {pitch:g})')
 
     # Pass 1: areas per sector, and which area each surface belongs to.
     info = {}
@@ -772,7 +816,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         else:
             edge = ((X - 1, Y) not in have, (X, Y - 1) not in have)
         start = tuple(0 if EDGE_SECTOR_TILES and e else -1 for e in edge)
-        areas = build_areas(level, gi0, gj0, start, *tiling(((X & 0xFF) << 8) | (Y & 0xFF)))
+        areas = build_areas(level, gi0, gj0, start, *tiling(((X & 0xFF) << 8) | (Y & 0xFF), grid))
         # order: tiles column-major, then layer = index within tile
         areas.sort(key=lambda a: (a['tile'][0], a['tile'][1], min(level.y[c[2]] for c in a['cells'])))
         per_tile = defaultdict(int)
@@ -794,14 +838,14 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
 
     for (X, Y), inf in info.items():
         gi0, gj0, ox, oz = inf['origin']
-        for (dX, dY), line in (((1, 0), SECTOR_SAMPLES + 1), ((0, 1), SECTOR_SAMPLES + 1)):
+        for (dX, dY), line in (((1, 0), grid.sector_samples + 1), ((0, 1), grid.sector_samples + 1)):
             other = (X + dX, Y + dY)
             if other not in info:
                 continue
             # every kept surface on the line (all layers: floors under roofs too), grouped into connected runs
             # along it, one run per layer
             runs, active = [], []
-            for t in WINDOW:
+            for t in grid.window:
                 i, j = (line, t) if dX else (t, line)
                 nxt = []
                 for k in level.surfaces(gi0 + i, gj0 + j):
@@ -817,11 +861,11 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
                         nxt.append(r)
                 active = nxt
             for run in runs:
-                n = max(1, int(math.ceil(len(run) * PITCH / BORDER_NODE_SPACING)))
+                n = max(1, int(math.ceil(len(run) * pitch / BORDER_NODE_SPACING)))
                 for q in range(n):
                     t, k = run[int((q + 0.5) * len(run) / n)]
                     i, j = (line, t) if dX else (t, line)
-                    pos = (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH)
+                    pos = (ox + i * pitch, float(level.y[k]) + Y_OFFSET, oz + j * pitch)
                     if DEDUP_GRAPH_NODES and k in border_at:
                         # a surface already holding a border node (a sector corner: on both lines): the same
                         # node, shared with this neighbour too - DICE has border ids in 3 and 4 sectors; two ids
@@ -848,12 +892,12 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             # within CARRY_RADIUS of the node, on its floor; ground of a larger area first (not a stray speck), then
             # the nearest - a 3 x 3 search (0.2 m at pitch 0.2) left 74 ONS_MP_002 seam nodes without ground and put
             # others on specks, and the detailed core lost its links to the normal sectors (connectivity 91.6 -> 60.9)
-            gi, gj = int(round((pos[0] - s.min_x) / PITCH)), int(round((pos[2] - s.min_z) / PITCH))
-            r = int(math.ceil(CARRY_RADIUS / PITCH))
+            gi, gj = int(round((pos[0] - s.min_x) / pitch)), int(round((pos[2] - s.min_z) / pitch))
+            r = int(math.ceil(CARRY_RADIUS / pitch))
             cand = []
             for di in range(-r, r + 1):
                 for dj in range(-r, r + 1):
-                    dxz = math.hypot(di, dj) * PITCH
+                    dxz = math.hypot(di, dj) * pitch
                     if dxz > CARRY_RADIUS:
                         continue
                     for k in level.surfaces(gi + di, gj + dj):
@@ -891,7 +935,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         traced = trace_emit(level, areas, edge_sets[(X, Y)][0], gi0, gj0, ox, oz)
         sid = ((X & 0xFF) << 8) | (Y & 0xFF)
         mesh_areas = []
-        ntiles = tiling(sid)[1]
+        ntiles = tiling(sid, grid)[1]
         tiles = [[] for _ in range(ntiles * ntiles)]
         for ai, (a, (portals, borders, outline)) in enumerate(zip(areas, traced)):
             ys = [level.y[c[2]] for c in a['cells']]
@@ -899,7 +943,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             # areas of sp_004_b: median +0.000 / +1.520; NavKit had -0.95 / +1.55, a metre of extra room below
             # each area, so a lower floor's range reached the deck above it - 2026-10-19)
             lo, hi = min(ys) + AREA_Y_MIN, max(ys) + AREA_Y_MAX
-            mesh_areas.append(kymesh.Area(sid, a['tile'][0], a['tile'][1], a['layer'], RADIUS, PITCH, hi, lo,
+            mesh_areas.append(kymesh.Area(sid, a['tile'][0], a['tile'][1], a['layer'], RADIUS, pitch, hi, lo,
                                           portals, [b[0] for b in borders], [], outline, []))
             a['borders'] = borders
             tiles[a['tile'][0] * ntiles + a['tile'][1]].append(kymesh.TileItem(ai, lo, hi))
@@ -908,21 +952,22 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         # axes) - so an edge sector, whose tiles start at its own edge, starts its rectangle there too (DICE 0x101:
         # -800.0 instead of -800.8). The maximum side keeps the 1.1-pitch margin (DICE drops it at the grid's maximum).
         sx, sz = inf['start']
-        rect = (ox + sx * PITCH, ox + 100 + 1.1 * PITCH, oz + sz * PITCH, oz + 100 + 1.1 * PITCH)
-        mesh = kymesh.Mesh(2, 0, 0, sid, RESOLUTION, PITCH, rect, ntiles, ntiles, RADIUS, tiles, mesh_areas,
+        rect = (ox + sx * pitch, ox + 100 + 1.1 * pitch, oz + sz * pitch, oz + 100 + 1.1 * pitch)
+        mesh = kymesh.Mesh(2, 0, 0, sid, grid.resolution, pitch, rect, ntiles, ntiles, RADIUS, tiles, mesh_areas,
                            mesh_links, b'\0' * 4)
         meshes[(X, Y)] = mesh
         orders = [p for p in (order_points or ()) if ox <= p[0] < ox + 100 and oz <= p[2] < oz + 100]
         lads = [(f_, t_) for f_, t_ in ladder_pairs if f_ in area_of and t_ in area_of]
-        LADDER_STATS['linked'] = LADDER_STATS.get('linked', 0) + len(lads)
-        LADDER_STATS['split'] = LADDER_STATS.get('split', 0) + sum(1 for f_, t_ in ladder_pairs if (f_ in area_of) != (t_ in area_of))
+        ls = state.ladder_stats
+        ls['linked'] = ls.get('linked', 0) + len(lads)
+        ls['split'] = ls.get('split', 0) + sum(1 for f_, t_ in ladder_pairs if (f_ in area_of) != (t_ in area_of))
         pts, pairs = build_graph(level, areas, area_of, traced, border_nodes[(X, Y)], gi0, gj0, ox, oz, new_id, orders,
-                                 lads)
+                                 lads, state)
         ys = [a.min_y for a in mesh_areas] + [a.max_y for a in mesh_areas]
         bounds_ = (rect[0], rect[1], min(ys), max(ys), rect[2], rect[3])
         graphs.append((sid, bounds_, mesh, pts, pairs, (ox, oz)))
     return {'level': level, 'info': info, 'graphs': graphs, 'border_nodes': border_nodes, 'next_id': next_id[0],
-            'dropped': dropped, 'pitch': PITCH, 'meshes': meshes, 'sectors': set(info)}
+            'dropped': dropped, 'pitch': pitch, 'meshes': meshes, 'sectors': set(info)}
 
 
 def sector_links(X, Y, areas, mesh_areas, resolve):
@@ -1010,7 +1055,9 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
     rest of the level only through normal sectors would otherwise be lost) and continues a's node ids. Shared nodes
     on the seams between a detailed and a normal sector come from a and are attached to b's ground (dropped from
     both sides where b has none there); neighbour links across those seams are found by position on the other grid.
+    common: stage()'s arguments, the build's BuildState among them.
     Returns the merged graphs (normal sectors from a, detailed from b)."""
+    state = common['state']
     dset = set(detailed['sectors']) & a['sectors']
     if not dset:
         log('detailed pass: none of its sectors has ground in the normal build - nothing built at pitch 0.2')
@@ -1026,12 +1073,9 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
     kept_sec = list(zip(*(v.tolist() for v in navsample.column_sectors(sa, alv.col_of[kept]))))
     # a discarded attempt's order nodes and ladder counts must not stay: the retry reuses its node ids
     # (id_start), and an ordinary node with a stale order id was pruned as an order node (2026-10-31)
-    order_ids, ladder_stats = set(ORDER_IDS), dict(LADDER_STATS)
+    order_ids, ladder_stats = set(state.order_ids), dict(state.ladder_stats)
     while True:
-        ORDER_IDS.clear()
-        ORDER_IDS.update(order_ids)
-        LADDER_STATS.clear()
-        LADDER_STATS.update(ladder_stats)
+        state.order_ids, state.ladder_stats = set(order_ids), dict(ladder_stats)
         # seeds: a's kept ground in the detailed sectors
         pts = []
         for k, (X, Z) in zip(kept, kept_sec):
@@ -1047,9 +1091,9 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
                     carried[sec].append((nid, pos))
         log(f'detailed pass: {len(dset)} sectors at pitch {DETAILED_PITCH}, {len(pts)} seed points from the normal '
             f'build, {sum(len(v) for v in carried.values())} shared nodes on mixed seams')
-        set_pitch(DETAILED_PITCH)
         b = stage(detailed['samples'], detailed.get('high'), xoff, zoff, seeds=seeds, **common,
-                  sector_filter=dset, grid_min=grid_min, id_start=a['next_id'], carried=carried, seed_points=pts)
+                  grid=grid_at(DETAILED_PITCH), sector_filter=dset, grid_min=grid_min, id_start=a['next_id'],
+                  carried=carried, seed_points=pts)
         missing = dset - b['sectors']
         if not missing:
             break
@@ -1059,7 +1103,6 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
         log(f'detailed pass: {len(missing)} sectors without ground at pitch {DETAILED_PITCH} kept at the normal pitch: '
             + ', '.join(f'{(X & 0xFF) << 8 | (Y & 0xFF):04x}' for X, Y in sorted(missing)) + ' - pass made again')
         dset -= missing
-        set_pitch(0.8)
         if not dset:
             log('detailed pass: no sector left at pitch 0.2 - the normal build is kept')
             return a['graphs']
@@ -1070,11 +1113,15 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
     a_norm = {sec: g for sec, g in zip(sorted(a['sectors']), a['graphs']) if sec not in dset}
     b_det = {sec: g for sec, g in zip(sorted(b['sectors']), b['graphs'])}
     a_view = dict(a, info={s_: i for s_, i in a['info'].items() if s_ not in dset})
+    # a's links between its own normal sectors are found again here with the detailed grid's pitch in the step rule
+    # (a's surfaces, b's grid): until 2026-10-31 this ran while set_pitch(DETAILED_PITCH) was in force, and the
+    # refactor kept the builds byte-identical. The 0.8 m grid (alv itself) is likely what was meant: to check
+    a_links_level = alv.on_grid(b['level'].grid)
     for here, there, mine in ((b, a_view, b_det), (a, b, a_norm)):
         for (X, Y), g in mine.items():
             areas, mesh = here['info'][(X, Y)]['areas'], g[2]
-            same = same_grid_resolver(here['level'], {s_: i for s_, i in here['info'].items()
-                                                      if s_ in mine}, X, Y)
+            same = same_grid_resolver(b['level'] if here is b else a_links_level,
+                                      {s_: i for s_, i in here['info'].items() if s_ in mine}, X, Y)
             cross = cross_grid_resolver(here, there, X, Y)
             mesh.links = sector_links(X, Y, areas, mesh.areas,
                                       lambda other, ar, bd, s=same, c=cross: s(other, ar, bd) if other in mine else c(other, ar, bd))
@@ -1090,14 +1137,15 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
     return merged
 
 
-def write_file(graphs, out_path, log, t0):
-    """Order-node pruning, final node / edge tables, and the file."""
+def write_file(graphs, out_path, log, t0, state=None):
+    """Order-node pruning, final node / edge tables, and the file. state: the build's BuildState (its order nodes)."""
+    state = state if state is not None else BuildState()
     hpd_sectors = []
     stamp = time.localtime()
     date = (stamp.tm_year % 100) * 10000 + (stamp.tm_mon - 1) * 100 + stamp.tm_mday
     clock = stamp.tm_hour * 1000000 + stamp.tm_min * 10000 + stamp.tm_sec * 100
-    if ORDER_IDS and ORDER_MIN_ISLAND:
-        graphs = prune_order_nodes(graphs)
+    if state.order_ids and ORDER_MIN_ISLAND:
+        graphs = prune_order_nodes(graphs, state)
     linked = {pts[i][0] for _sid, _b, _m, pts, pairs, _o in graphs for a_, b_, _d in pairs for i in (a_, b_)}
     for sid, bounds, mesh, pts, pairs, origin in graphs:
         nodes, edges = finalize_graph(pts, pairs, linked, origin)
@@ -1144,7 +1192,11 @@ def line_walkable(level, k0, a, b, gi0, gj0, k1):
     return k == k1 or abs(level.y[k] - level.y[k1]) <= 0.6
 
 
-def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id, orders=(), ladders=()):
+def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id, orders=(), ladders=(), state=None):
+    """A sector's route graph: (pts, pairs). state: the build's BuildState (order nodes and repair counts are added
+    to it)."""
+    state = state if state is not None else BuildState()
+    pitch, window = level.grid.pitch, level.grid.window
     pts = []    # (id, pos, k, local i, local j)
     # one node per surface: an area-centre or portal node whose surface already holds a node (another area's or
     # portal's, or a border node) is not added - DICE's route graphs have no two nodes at one position except a
@@ -1157,7 +1209,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
             if k in taken:
                 return
             taken.add(k)
-        pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
+        pts.append((new_id(), (ox + i * pitch, float(level.y[k]) + Y_OFFSET, oz + j * pitch), k, i, j))
     for a in areas:
         if len(a['cells']) < 4:
             continue
@@ -1171,15 +1223,15 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
             if p.target < ai:
                 continue          # one node per portal pair
             mx, mz = (p.p0[0] + p.p1[0]) / 2, (p.p0[2] + p.p1[2]) / 2
-            best = min(areas[ai]['cells'], key=lambda c: (ox + c[0] * PITCH - mx) ** 2 + (oz + c[1] * PITCH - mz) ** 2)
+            best = min(areas[ai]['cells'], key=lambda c: (ox + c[0] * pitch - mx) ** 2 + (oz + c[1] * pitch - mz) ** 2)
             i, j, k = best
             add(i, j, k)
     for nid, pos, k in borders:
         # the node's own surface cell (a node carried from another pitch's build sits up to CARRY_RADIUS from it;
         # walkable lines must start on that cell, not on the cell under the position)
-        i, j = cell_of.get(k) or (int(round((pos[0] - ox) / PITCH)), int(round((pos[2] - oz) / PITCH)))
+        i, j = cell_of.get(k) or (int(round((pos[0] - ox) / pitch)), int(round((pos[2] - oz) / pitch)))
         pts.append((nid, pos, k, i, j))
-    cover = NODE_COVER.get('detailed' if abs(PITCH - DETAILED_PITCH) < 1e-6 else 'normal')
+    cover = NODE_COVER.get('detailed' if level.grid.detailed else 'normal')
     if cover:
         add_cover_nodes(level, areas, pts, add, ox, oz, cover)
     # edges: pairs within DIST_EDGE_MAX whose straight line is walkable
@@ -1198,7 +1250,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
                     d = math.dist(p[1], pts[q][1])
                     if d <= DIST_EDGE_MAX and line_walkable(level, p[2], (p[3], p[4]), (pts[q][3], pts[q][4]), gi0, gj0, pts[q][2]):
                         pairs.append((idx, q, d))
-    if GABRIEL_EDGES == 'all' or (GABRIEL_EDGES == 'detailed' and abs(PITCH - DETAILED_PITCH) < 1e-6):
+    if GABRIEL_EDGES == 'all' or (GABRIEL_EDGES == 'detailed' and level.grid.detailed):
         pairs = gabriel_prune(pts, pairs)
     for kf, kt in ladders:
         # a ladder link: a node on the ground at its foot and at its top, joined directly (the climb is no walkable
@@ -1208,7 +1260,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
             idx = next((q for q, p in enumerate(pts) if p[2] == k), None)
             if idx is None:
                 i, j = cell_of[k]
-                pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
+                pts.append((new_id(), (ox + i * pitch, float(level.y[k]) + Y_OFFSET, oz + j * pitch), k, i, j))
                 idx = len(pts) - 1
             ends.append(idx)
         if ends[0] != ends[1]:               # a short ladder whose foot and top found one surface: no self edge
@@ -1249,7 +1301,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
                 i, j = cell_ij[k]
                 for di in (-1, 0, 1):
                     for dj in (-1, 0, 1):
-                        if not (di or dj) or (i + di) not in WINDOW or (j + dj) not in WINDOW:
+                        if not (di or dj) or (i + di) not in window or (j + dj) not in window:
                             continue
                         n = level.neighbour(k, gi0 + i, gj0 + j, di, dj)
                         if n is None or n in prev:
@@ -1273,7 +1325,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
             a = 0
             while a < len(path) - 1:
                 b = len(path) - 1
-                while b > a + 1 and not (math.dist(cell_ij[path[a]], cell_ij[path[b]]) * PITCH <= DIST_EDGE_MAX and
+                while b > a + 1 and not (math.dist(cell_ij[path[a]], cell_ij[path[b]]) * pitch <= DIST_EDGE_MAX and
                                          line_walkable(level, path[a], cell_ij[path[a]], cell_ij[path[b]], gi0, gj0, path[b])):
                     b -= 1
                 way.append(path[b])
@@ -1284,7 +1336,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
                     chain.append(node_at[k])
                 else:
                     i, j = cell_ij[k]
-                    pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
+                    pts.append((new_id(), (ox + i * pitch, float(level.y[k]) + Y_OFFSET, oz + j * pitch), k, i, j))
                     parent.append(len(pts) - 1)
                     node_at[k] = len(pts) - 1
                     chain.append(len(pts) - 1)
@@ -1295,20 +1347,21 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
     if DETOUR_REPAIR:
         for p in range(DETOUR_PASSES):
             added = repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id)
-            REPAIR_STATS[p] = REPAIR_STATS.get(p, 0) + added
+            state.repair_stats[p] = state.repair_stats.get(p, 0) + added
     if ORDER_NODES and orders:
-        ORDER_STATS['added'] = ORDER_STATS.get('added', 0) + add_order_nodes(level, pts, pairs, node_at, area_of, orders,
-                                                                             gi0, gj0, ox, oz, new_id)
+        added = add_order_nodes(level, pts, pairs, node_at, area_of, orders, gi0, gj0, ox, oz, new_id, state.order_ids)
+        state.order_stats['added'] = state.order_stats.get('added', 0) + added
     return pts, pairs
 
 
 def add_cover_nodes(level, areas, pts, add, ox, oz, cover):
     """NODE_COVER: in every area of 4+ cells, add route nodes (through add, so one per surface) at the cell farthest from
     all nodes on the same floor (|dy| < 2.5 m) until no cell is farther than cover metres."""
+    pitch = level.grid.pitch
     for a in areas:
         if len(a['cells']) < 4:
             continue
-        C = np.array([(ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH) for i, j, k in a['cells']])
+        C = np.array([(ox + i * pitch, float(level.y[k]) + Y_OFFSET, oz + j * pitch) for i, j, k in a['cells']])
         x0, x1, z0, z1 = C[:, 0].min() - cover, C[:, 0].max() + cover, C[:, 2].min() - cover, C[:, 2].max() + cover
         P = np.array([p[1] for p in pts if x0 <= p[1][0] <= x1 and z0 <= p[1][2] <= z1], float).reshape(-1, 3)
         d = np.full(len(C), np.inf)
@@ -1357,12 +1410,13 @@ def gabriel_prune(pts, pairs):
     return keep
 
 
-def prune_order_nodes(graphs):
+def prune_order_nodes(graphs, state):
     """Order nodes in a route island under ORDER_MIN_ISLAND nodes lose their edges (finalize_graph then
     drops them as unlinked); other nodes are untouched. An order node that joins a small pocket becomes the
     nearest node for points next to the main network, and the runtime takes the nearest node (sp_009: the order
     nodes cut connectivity 4.4 points through such pockets; 2026-10-20). Components over all sectors (border ids
-    join them). Records the removed ones in ORDER_STATS['removed'] as (id, position, component size)."""
+    join them). state: the build's BuildState - its order_ids; the removed ones are recorded in
+    state.order_stats['removed'] as (id, position, component size)."""
     parent = {}
 
     def find(x):
@@ -1383,40 +1437,43 @@ def prune_order_nodes(graphs):
         size[find(x)] += 1
     if not size:
         return graphs
-    drop = {i for i in ORDER_IDS if size[find(i)] < ORDER_MIN_ISLAND}
+    drop = {i for i in state.order_ids if size[find(i)] < ORDER_MIN_ISLAND}
     seen = set()
     for _sid, _b, _m, pts, _pairs, _o in graphs:
         for p in pts:
             if p[0] in drop and p[0] not in seen:
                 seen.add(p[0])
-                ORDER_STATS.setdefault('removed', []).append((p[0], tuple(round(v, 2) for v in p[1]), size[find(p[0])]))
+                state.order_stats.setdefault('removed', []).append((p[0], tuple(round(v, 2) for v in p[1]),
+                                                                    size[find(p[0])]))
     return [(sid, b, m, pts, [q for q in pairs if pts[q[0]][0] not in drop and pts[q[1]][0] not in drop], o)
             for sid, b, m, pts, pairs, o in graphs]
 
 
-def add_order_nodes(level, pts, pairs, node_at, area_of, orders, gi0, gj0, ox, oz, new_id):
+def add_order_nodes(level, pts, pairs, node_at, area_of, orders, gi0, gj0, ox, oz, new_id, order_ids):
     """A route node at each AI order position (AreaGeometryEntityData) on this sector's walkable ground whose nearest
     route node on the same floor is farther than ORDER_NODE_MIN, linked to every node within DIST_EDGE_MAX it reaches
     in a straight walkable line. The runtime resolves a go-to point to the nearest gathered node (R = 15 m, the first
     candidate accepted; 0x0105ED80) - at sp_004_b's stairs top NavKit's nearest node was 3.6-6.3 m from the order
-    points, DICE's 0.2 m, and those requests failed (2026-10-20). Returns the number of nodes added."""
+    points, DICE's 0.2 m, and those requests failed (2026-10-20). The new nodes' ids are added to order_ids.
+    Returns the number of nodes added."""
     s = level.s
+    pitch = level.grid.pitch
     added = 0
     for x, y, z in orders:
-        gi, gj = int(round((x - s.min_x) / PITCH)), int(round((z - s.min_z) / PITCH))
+        gi, gj = int(round((x - s.min_x) / pitch)), int(round((z - s.min_z) / pitch))
         cands = [k for k in level.surfaces(gi, gj) if k in area_of and abs(level.y[k] - y) <= 1.0]
         if not cands:
             continue
         k = min(cands, key=lambda q: abs(level.y[q] - y))
         if k in node_at:
             continue
-        pos = (ox + (gi - gi0) * PITCH, float(level.y[k]) + Y_OFFSET, oz + (gj - gj0) * PITCH)
+        pos = (ox + (gi - gi0) * pitch, float(level.y[k]) + Y_OFFSET, oz + (gj - gj0) * pitch)
         near = [math.hypot(p[1][0] - pos[0], p[1][2] - pos[2]) for p in pts if abs(p[1][1] - pos[1]) < 1.5]
         if near and min(near) <= ORDER_NODE_MIN:
             continue
         u = len(pts)
         pts.append((new_id(), pos, k, gi - gi0, gj - gj0))
-        ORDER_IDS.add(pts[u][0])
+        order_ids.add(pts[u][0])
         node_at[k] = u
         added += 1
         for q in range(u):
@@ -1433,6 +1490,7 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
     them by the edge rule only with DETOUR_LINK_ALL).
     DICE's routes run 1.02-1.11x the straight distance where NavKit's failed go-to requests ran 3.2-6.3x
     (sp_004_b stairs top, 2026-10-20). Returns the number of nodes added."""
+    pitch, window = level.grid.pitch, level.grid.window
     adj = defaultdict(dict)
     for a_, b_, d in pairs:
         adj[a_][b_] = adj[b_][a_] = min(d, adj[a_].get(b_, 1e18))
@@ -1468,12 +1526,12 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
             i, j = cell_ij[k]
             for di in (-1, 0, 1):
                 for dj in (-1, 0, 1):
-                    if not (di or dj) or (i + di) not in WINDOW or (j + dj) not in WINDOW:
+                    if not (di or dj) or (i + di) not in window or (j + dj) not in window:
                         continue
                     n = level.neighbour(k, gi0 + i, gj0 + j, di, dj)
                     if n is None:
                         continue
-                    nd = d + (1.4142 if di and dj else 1.0) * PITCH
+                    nd = d + (1.4142 if di and dj else 1.0) * pitch
                     if nd <= limit and nd < best.get(n, 1e18):
                         best[n], prev[n] = nd, k
                         cell_ij.setdefault(n, (i + di, j + dj))
@@ -1507,7 +1565,7 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
             way, s = [path[0]], 0
             while s < len(path) - 1:
                 e = len(path) - 1
-                while e > s + 1 and not (math.dist(cell_ij[path[s]], cell_ij[path[e]]) * PITCH <= DIST_EDGE_MAX and
+                while e > s + 1 and not (math.dist(cell_ij[path[s]], cell_ij[path[e]]) * pitch <= DIST_EDGE_MAX and
                                          line_walkable(level, path[s], cell_ij[path[s]], cell_ij[path[e]], gi0, gj0, path[e])):
                     e -= 1
                 way.append(path[e])
@@ -1518,7 +1576,7 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
                     chain.append(node_at[k])
                 else:
                     i, j = cell_ij[k]
-                    pts.append((new_id(), (ox + i * PITCH, float(level.y[k]) + Y_OFFSET, oz + j * PITCH), k, i, j))
+                    pts.append((new_id(), (ox + i * pitch, float(level.y[k]) + Y_OFFSET, oz + j * pitch), k, i, j))
                     node_at[k] = len(pts) - 1
                     chain.append(len(pts) - 1)
                     added += 1

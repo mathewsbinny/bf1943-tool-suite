@@ -74,7 +74,6 @@ ROOF_RAISE = 2.0
 ROOF_SHARE = 0.5
 ROOF_NEAR = 2.0
 ROOF_NEAR_DY = 2.5
-ROOF_STATS = {}
 DYNAMIC_ABSENT_HEADROOM = True     # dynamic props do not count as a ceiling for HEADROOM_BAND (they are absent for path
                                     # data - a closed gate's leaves made the floor beside it 'low headroom')
 DYNAMIC_FLOOR = 0.3                # a surface on a dynamic prop within this of walkable floor in a neighbouring column
@@ -83,7 +82,6 @@ DYNAMIC_FLOOR = 0.3                # a surface on a dynamic prop within this of 
                                     # 0.2 a closed gate cut the only way through a wall: sp_003_b's monastery gate,
                                     # 2026-10-22); None to switch off
 STEEP_TERRAIN_SPAN = 0.8
-STEEP_STATS = {}
 OUTLINE_Y_OFFSET = 0.95            # outline heights in pathdata.hpd = ground + EntityHeight / 2
 PITCH = 0.8
 SECTOR = 100.0
@@ -380,14 +378,17 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
              high_capsule=None, stairs=True, return_gradients=False, narrow_capsule=None, raised_bars=False,
              stair_tris=None, exclude_tris=None, exclude_footprint_tris=None, forbid_tol=0.08,
              extra_seeds=None, return_stairs=False, force_walkable=None, force_unwalkable=None, unseeds=None,
-             soldier_points=None, ladders=None, anchors=None):
+             soldier_points=None, ladders=None, anchors=None, stats=None):
     """Kept walkable surfaces (bool per surface) by rules 1-4, plus the structure rules:
       dynamic props (dynamic_tris) are absent for path data - their tops are not floor, and the ground under and
       right beside them is not blocked by them;
       stairs: object surfaces whose slope over neighbouring samples is 12..40 deg count as walkable, with the
       clearance of the high_capsule run (capsule from 0.6 m) instead of the normal one.
     Hand edits (navedits.py): force_walkable / force_unwalkable (bool per surface) override the rules before
-    seeding; unseeds (points) drop the island each lies on after seeding."""
+    seeding; unseeds (points) drop the island each lies on after seeding.
+    stats: a dict the rules' counts are added to (steep terrain 'accepted' / 'candidates', 'lips', roof 'islands' /
+    'dropped' / 'surfaces'; module dicts until 2026-10-31)."""
+    stats = {} if stats is None else stats
     y = s.y.astype(float)
     ny = np.maximum(s.normal[:, 1], 0.05)
     gx_all, gz_all = -s.normal[:, 0] / ny, -s.normal[:, 2] / ny
@@ -418,8 +419,8 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
             # the link rule predicts steps from these gradients: the heights', not the steep normals'
             gx_all = np.where(accept, tgx, gx_all)
             gz_all = np.where(accept, tgz, gz_all)
-            STEEP_STATS['accepted'] = STEEP_STATS.get('accepted', 0) + int(accept.sum())
-            STEEP_STATS['candidates'] = STEEP_STATS.get('candidates', 0) + int(steep.sum())
+            stats['accepted'] = stats.get('accepted', 0) + int(accept.sum())
+            stats['candidates'] = stats.get('candidates', 0) + int(steep.sum())
     if LIP_WIDTH and s.pitch < 0.5:
         steep_c = clear & ~character & ~ok & (s.normal[:, 1] >= math.cos(math.radians(STEEP_TERRAIN_MAX)))
         lips = narrow_lips(s, ok, terrain & steep_c, slope, LIP_WIDTH)
@@ -438,7 +439,7 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
             ok |= lips
             gx_all = np.where(lips, lgx, gx_all)
             gz_all = np.where(lips, lgz, gz_all)
-        STEEP_STATS['lips'] = STEEP_STATS.get('lips', 0) + int(lips.sum())
+        stats['lips'] = stats.get('lips', 0) + int(lips.sum())
     on_stair = np.zeros(len(y), bool)
     if stair_tris is not None and len(stair_tris):
         # staircase objects: surfaces on / right beside them are not blocked by the staircase itself
@@ -648,7 +649,7 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
             for e in ladder_ends(s, ok, keep, lad):
                 if e is not None and keep[e]:
                     anchor_k.add(int(e))
-        drop = roof_islands(s, keep, gx_all, gz_all, stair, step, terrain, anchor_k)
+        drop = roof_islands(s, keep, gx_all, gz_all, stair, step, terrain, anchor_k, stats)
         keep &= ~drop
     if return_gradients:
         return (keep, gx_all, gz_all, stair) if return_stairs else (keep, gx_all, gz_all)
@@ -687,8 +688,8 @@ def islands_of(s, keep, gx, gz, stair, step):
     return comp, cid
 
 
-def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k):
-    """The kept surfaces ROOF_PRUNE drops (bool per surface)."""
+def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k, stats):
+    """The kept surfaces ROOF_PRUNE drops (bool per surface); the counts are added to stats."""
     y = s.y.astype(float)
     comp, n = islands_of(s, keep, gx, gz, stair, step)
     out = np.zeros(len(y), bool)
@@ -711,7 +712,7 @@ def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k):
     anchored[int(np.argmax(size))] = True
     cand = ~anchored & (rshare >= ROOF_SHARE)
     if not cand.any():
-        ROOF_STATS['islands'] = ROOF_STATS.get('islands', 0) + n
+        stats['islands'] = stats.get('islands', 0) + n
         return out
     # anchored ground near each candidate at its own height: buckets of ROOF_NEAR m; candidate surfaces every ~0.8 m
     ak = np.nonzero(keep & anchored[np.maximum(comp, 0)] & (comp >= 0))[0]
@@ -744,9 +745,9 @@ def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k):
                 break
     drop_c = cand & ~near
     out = keep & (comp >= 0) & drop_c[np.maximum(comp, 0)]
-    ROOF_STATS['islands'] = ROOF_STATS.get('islands', 0) + n
-    ROOF_STATS['dropped'] = ROOF_STATS.get('dropped', 0) + int(drop_c.sum())
-    ROOF_STATS['surfaces'] = ROOF_STATS.get('surfaces', 0) + int(out.sum())
+    stats['islands'] = stats.get('islands', 0) + n
+    stats['dropped'] = stats.get('dropped', 0) + int(drop_c.sum())
+    stats['surfaces'] = stats.get('surfaces', 0) + int(out.sum())
     return out
 
 

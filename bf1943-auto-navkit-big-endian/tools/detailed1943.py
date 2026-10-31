@@ -20,8 +20,6 @@ sys.path.insert(0, HERE)
 import detailed  # noqa: E402
 import soldier1943  # noqa: E402
 
-soldier1943.configure()          # standable at BF1943's slope limit (45 deg), not NavKit's BFBC2 40
-
 
 def flagged_sectors(level_dir, xoff, zoff, margin=detailed.MARGIN):
     out = set()
@@ -38,7 +36,9 @@ def flagged_sectors(level_dir, xoff, zoff, margin=detailed.MARGIN):
 def choose(level_dir, samples_path, xoff, zoff, margin=detailed.MARGIN, stacked_min=detailed.STACKED_MIN):
     """(sorted [(X, Z)], counts) - the detailed sectors of a BF1943 level."""
     flag = flagged_sectors(level_dir, xoff, zoff, margin)
-    stacked = {k for k, n in detailed.stacked_columns(samples_path, xoff, zoff).items() if n >= stacked_min}
+    # standable at BF1943's slope limit (45 deg), not NavKit's BFBC2 40
+    stacked = {k for k, n in detailed.stacked_columns(samples_path, xoff, zoff, slope_max=soldier1943.SLOPE_MAX).items()
+               if n >= stacked_min}
     return sorted(flag | stacked), {'flag': len(flag), 'stacked': len(stacked), 'stacked only': len(stacked - flag)}
 
 

@@ -33,8 +33,8 @@ def row(cols, pitch=0.2):
                            normal=np.array([normal(c[1]) for c in cols], np.float32))
 
 
-def reaches_end(s):
-    keep = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(s.min_x, float(s.y[0]), s.min_z)])
+def reaches_end(s, **rules):
+    keep = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(s.min_x, float(s.y[0]), s.min_z)], **rules)
     return bool(keep[-1]), keep
 
 
@@ -63,14 +63,14 @@ def main(argv):
     mild = (0.05, 50.0, False)
     check(reaches_end(row([sloped] * 4 + [mild] + [sloped] * 4))[0], 'object: a 50 deg strip needs no flat floor (the old cap)')
 
-    old = navwalk.LIP_WIDTH, navwalk.LIP_OBJECT_RISE
+    check(not reaches_end(row([flat] * 4 + [steep] * 2 + [flat] * 4), lip_width=None)[0],
+          'LIP_WIDTH off (walkable(lip_width=None)): the terrain band cuts the row')
+    old = navwalk.LIP_OBJECT_RISE
     try:
-        navwalk.LIP_WIDTH = None
-        check(not reaches_end(row([flat] * 4 + [steep] * 2 + [flat] * 4))[0], 'LIP_WIDTH off: the terrain band cuts the row')
-        navwalk.LIP_WIDTH, navwalk.LIP_OBJECT_RISE = old[0], None
+        navwalk.LIP_OBJECT_RISE = None
         check(not reaches_end(row([floor] * 4 + [sill] + [floor] * 4))[0], 'LIP_OBJECT_RISE off: the sill cuts the row')
     finally:
-        navwalk.LIP_WIDTH, navwalk.LIP_OBJECT_RISE = old
+        navwalk.LIP_OBJECT_RISE = old
     print('all passed' if not failed else f'{failed} check(s) failed')
     return 1 if failed else 0
 

@@ -2,18 +2,19 @@
 route graph and its islands. Read with NavKit's byte-exact reader (bf1943-auto-navkit-little-endian/tools: hpdtool, kymesh,
 navdiff); the format is in bf1943-auto-navkit-little-endian/research/KYNAPSE_SPEC.md.
 
-    nav = load(path, heightfield=None, cache_dir=None)
+    nav = load(path, heightfield=None, cache_dir=None, y_offset=Y_OFFSET)
     nav.areas[k]                 NavArea: sector, tile, layer, pitch, boundary pieces, island
     nav.cell_xz, nav.cell_y      every walkable cell on the 0.8 m grid (navdiff's cells), its ground height
     nav.cell_area                the area each cell belongs to
-    nav.node_pos, nav.edges      route graph: node positions (ground + Y_OFFSET, as stored), edges as index pairs
+    nav.node_pos, nav.edges      route graph: node positions (ground + nav.y_offset, as stored), edges as index pairs
     nav.edge_cost                each edge's cost in metres, as stored
     nav.node_island, nav.islands islands (connected parts of the graph), largest first
     nav.ladder_edge              the edges that are ladder links (LADDER_DY / LADDER_SLOPE)
+    nav.y_offset                 how far above the ground the file stores nodes and outlines (load's y_offset)
 
 Cells come from navdiff.area_cells (samples inside an area's boundary, height from the nearest boundary point, less
-Y_OFFSET); where a cell and that boundary point lie on terrain (_ground), the terrain height field's height is used
-instead. That step is slow for a whole level (10-40 s), so it is cached per file (size and date), Y_OFFSET and the
+y_offset); where a cell and that boundary point lie on terrain (_ground), the terrain height field's height is used
+instead. That step is slow for a whole level (10-40 s), so it is cached per file (size and date), y_offset and the
 height field's contents when cache_dir is given.
 """
 import hashlib
@@ -35,12 +36,13 @@ import kymesh  # noqa: E402
 import navdiff  # noqa: E402
 
 GRID = navdiff.GRID
-Y_OFFSET = navdiff.Y_OFFSET                 # boundaries and nodes are stored this far above the ground: DICE's 0.95;
-                                            # BF1943 builds 0.9 (callers set it: soldier1943.HEIGHT / 2). Cell heights
-                                            # use it too (navdiff.area_cells)
+Y_OFFSET = navdiff.Y_OFFSET                 # boundaries and nodes are stored this far above the ground: DICE's 0.95,
+                                            # load's default; BF1943 builds 0.9 (callers pass y_offset=
+                                            # soldier1943.HEIGHT / 2). Cell heights use it too (navdiff.area_cells)
 DETAILED = 0.5                              # areas with a smaller pitch are detailed zones (DICE: 0.2 m)
-CACHE_VERSION = 5                           # 3: ladder links and ladder ground; 4: cell heights use Y_OFFSET;
-                                            # 5: terrain heights only where the boundary lies on the terrain
+CACHE_VERSION = 6                           # 3: ladder links and ladder ground; 4: cell heights use Y_OFFSET;
+                                            # 5: terrain heights only where the boundary lies on the terrain;
+                                            # 6: NavData.y_offset (a version-5 entry has none)
 LADDER_DY = 2.5                             # a ladder link: a route edge climbing more than this (m) ...
 LADDER_SLOPE = 1.5                          # ... and more than this many metres per metre across - no walkable link is
                                             # that steep (DICE's files have none; NavKit's ladder links, ladders.py)
@@ -89,6 +91,7 @@ class NavData:
     node_island: np.ndarray                 # (m,) index into islands
     islands: List[Island]
     ladder_edge: np.ndarray = None          # (k,) bool: the edge is a ladder link (LADDER_DY / LADDER_SLOPE)
+    y_offset: float = Y_OFFSET              # node_pos and outlines stand this far above the ground (load's y_offset)
 
     @property
     def sectors(self):
@@ -110,10 +113,10 @@ def terrain_digest(heightfield):
     return h.hexdigest()[:20]
 
 
-def _key(path, heightfield=None):
+def _key(path, heightfield=None, y_offset=Y_OFFSET):
     st = os.stat(path)
     hf = f'hf:{terrain_digest(heightfield)}' if heightfield is not None else 'est'
-    return hashlib.sha1(f'{CACHE_VERSION}|{os.path.abspath(path).lower()}|{st.st_size}|{st.st_mtime_ns}|{hf}|{Y_OFFSET}'.encode()).hexdigest()[:20]
+    return hashlib.sha1(f'{CACHE_VERSION}|{os.path.abspath(path).lower()}|{st.st_size}|{st.st_mtime_ns}|{hf}|{y_offset}'.encode()).hexdigest()[:20]
 
 
 ON_TERRAIN = 0.1                            # m: a boundary point lies on the terrain when its ground height is within
@@ -152,9 +155,9 @@ def _write_cache(path, write):
         raise
 
 
-def _cells(f, heightfield, cache_dir, path):
+def _cells(f, heightfield, cache_dir, path, y_offset):
     if cache_dir:
-        cp = os.path.join(cache_dir, _key(path) + '.npz')
+        cp = os.path.join(cache_dir, _key(path, y_offset=y_offset) + '.npz')
         if os.path.isfile(cp):
             try:
                 with np.load(cp) as z:
@@ -166,7 +169,7 @@ def _cells(f, heightfield, cache_dir, path):
     k = 0
     for s in f.sectors:
         for a in kymesh.parse_mesh(s.mesh).areas:
-            c = navdiff.area_cells(a, Y_OFFSET, points=True)
+            c = navdiff.area_cells(a, y_offset, points=True)
             if c:
                 ij = np.array(list(c.keys()), dtype=np.float64)
                 v = np.array(list(c.values()), dtype=np.float64)
@@ -181,29 +184,31 @@ def _cells(f, heightfield, cache_dir, path):
     area = np.concatenate(area_of) if area_of else np.zeros(0, np.int32)
     y = _ground(xz, est, heightfield, near)
     if cache_dir:
-        _write_cache(os.path.join(cache_dir, _key(path) + '.npz'),
+        _write_cache(os.path.join(cache_dir, _key(path, y_offset=y_offset) + '.npz'),
                      lambda fh: np.savez(fh, xz=xz, y=y, area=area, est=est, near=near))
     return xz, y, area, est
 
 
-def load(path, heightfield=None, cache_dir=None):
-    """The file as NavData. With cache_dir, the whole result is kept there per file (and per height source), so
-    opening a level again takes about a second. The key holds the height field's contents (terrain_digest)."""
+def load(path, heightfield=None, cache_dir=None, y_offset=Y_OFFSET):
+    """The file as NavData. y_offset: how far above the ground the file stores its nodes and outlines (DICE's 0.95;
+    a BF1943 build's soldier1943.HEIGHT / 2). With cache_dir, the whole result is kept there per file (and per height
+    source and y_offset), so opening a level again takes about a second. The key holds the height field's contents
+    (terrain_digest)."""
     if cache_dir and (heightfield is None or terrain_digest(heightfield) is not None):
-        pk = os.path.join(cache_dir, _key(path, heightfield) + '.navdata.pkl')
+        pk = os.path.join(cache_dir, _key(path, heightfield, y_offset) + '.navdata.pkl')
         if os.path.isfile(pk):
             try:
                 with open(pk, 'rb') as fh:
                     return pickle.load(fh)
             except Exception:
                 pass                                         # an unreadable cache entry is rebuilt
-        nav = _load(path, heightfield, cache_dir)
+        nav = _load(path, heightfield, cache_dir, y_offset)
         _write_cache(pk, lambda fh: pickle.dump(nav, fh, protocol=pickle.HIGHEST_PROTOCOL))
         return nav
-    return _load(path, heightfield, None)
+    return _load(path, heightfield, None, y_offset)
 
 
-def _load(path, heightfield, cache_dir):
+def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
     f = hpdtool.parse(open(path, 'rb').read())
     areas = []
     for s in f.sectors:
@@ -212,7 +217,7 @@ def _load(path, heightfield, cache_dir):
                                  [np.asarray(l, dtype=np.float32) for l in a.outline if len(l) >= 2],
                                  [(np.asarray(p.p0), np.asarray(p.p1), p.target) for p in a.portals],
                                  [(np.asarray(b.p0), np.asarray(b.p1)) for b in a.border_portals]))
-    xz, y, cell_area, _ = _cells(f, heightfield, cache_dir, path)
+    xz, y, cell_area, _ = _cells(f, heightfield, cache_dir, path, y_offset)
     counts = np.bincount(cell_area, minlength=len(areas)) if len(cell_area) else np.zeros(len(areas), int)
     for a, n in zip(areas, counts):
         a.cells = int(n)
@@ -293,7 +298,7 @@ def _load(path, heightfield, cache_dir):
         if cand is None or not len(cand):
             continue
         p = pos[cand]
-        d = np.hypot(p[:, 0] - centre[k, 0], p[:, 2] - centre[k, 2]) + 3.0 * np.abs(p[:, 1] - Y_OFFSET - centre[k, 1])
+        d = np.hypot(p[:, 0] - centre[k, 0], p[:, 2] - centre[k, 2]) + 3.0 * np.abs(p[:, 1] - y_offset - centre[k, 1])
         kn = cand[int(np.argmin(d))]
         a.island = int(node_island[kn])
         a.ladder = bool(base) and walk_root[kn] != base[roots[kn]]
@@ -305,7 +310,7 @@ def _load(path, heightfield, cache_dir):
         sel = node_island == k
         islands.append(Island(int(r), int(sel.sum()), int(island_cells.get(k, 0)), pos[sel].mean(axis=0)))
     return NavData(path, areas, xz, y, cell_area, pos, np.array(sec), edges, np.array(costs, dtype=np.float64),
-                   node_island, islands, ladder_edge)
+                   node_island, islands, ladder_edge, y_offset)
 
 
 def compare_cells(cand, ref):

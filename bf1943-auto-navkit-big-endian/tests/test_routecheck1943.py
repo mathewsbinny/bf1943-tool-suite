@@ -37,7 +37,7 @@ def graph(xs):
     cost = np.array([abs(xs[b] - xs[a]) for a, b in edges], np.float64)
     islands = [navdata.Island(0, n, 0, pos.mean(axis=0))] if n else []
     return navdata.NavData('made-up.hpd', [], np.zeros((0, 2)), np.zeros(0), np.zeros(0, np.int32), pos, np.zeros(n, int),
-                           edges, cost, np.zeros(n, np.int32), islands, np.zeros(len(edges), bool))
+                           edges, cost, np.zeros(n, np.int32), islands, np.zeros(len(edges), bool), y_offset=0.9)
 
 
 def objective(role, name, at=None, kind='soldier'):
@@ -49,7 +49,7 @@ def run(nav, objectives):
     sys.modules['spawnmap'] = SimpleNamespace(spawn_map=lambda game, level: {'objectives': objectives})
     rc.game1943.find_game = lambda game=None: 'made-up game'
     rc.game1943.Game = lambda game, level: SimpleNamespace(data=lambda name: None)
-    rc.navdata.load = lambda hpd, hf=None, cache_dir=None: nav
+    rc.navdata.load = lambda hpd, hf=None, cache_dir=None, y_offset=None: nav
     return rc.check('made-up.hpd', 'made_up', None)
 
 

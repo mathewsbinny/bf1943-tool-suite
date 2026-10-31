@@ -196,10 +196,8 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
     xoff, zoff = st['sector_offsets']
     game, g, hf_name, hf = prepared_terrain(lv, st)
     sea = soldier1943.sea_level(st, hf)               # a level without water: under all its terrain
-    soldier1943.configure()
-    yoff = soldier1943.HEIGHT / 2
-    navdata.Y_OFFSET = yoff
-    nav = navdata.load(hpd, hf)
+    yoff = soldier1943.SETTINGS.y_offset              # the build's nodes and outlines stand this far up (0.9 m)
+    nav = navdata.load(hpd, hf, y_offset=yoff)
     log(f'{lv}: {len(nav.areas)} areas, {len(nav.node_pos)} nodes, {len(nav.edges)} edges')
     # the build's own cells (navbuild's sidecar): each area's kept surfaces and their heights, exactly. Without it the
     # cells are rasterised from the outlines and their heights estimated (rasterise)

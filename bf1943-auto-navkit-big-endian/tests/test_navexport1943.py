@@ -107,8 +107,7 @@ if __name__ == '__main__':
                     continue
                 # the terrain of the copy that level was prepared from (2026-10-30: the default copy's was read)
                 _game, _g, _name, hf = navexport1943.prepared_terrain(other, st)
-                navdata.Y_OFFSET = 0.9
-                nv = navdata.load(h, hf)
+                nv = navdata.load(h, hf, y_offset=0.9)
                 probs, _ = navexport1943.check(p, nv, log=lambda *a: None)
                 check(not probs, f'{other}: its export validates and equals its build ({probs or "no problems"})')
     finally:

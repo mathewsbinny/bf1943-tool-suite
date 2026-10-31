@@ -320,7 +320,6 @@ def build(game, lv, log=print):
         raise NavKitError(f'{lv}: not sampled yet (navkit.py sample {lv})')
     if s8.get('preparation') != prep or s8.get('game') != s['game']:
         raise NavKitError(f'{lv}: the samples are from another preparation: sample again (navkit.py sample {lv})')
-    soldier1943.configure()
     xoff, zoff = s['sector_offsets']
     sectors = {(int(k[:2], 16), int(k[2:], 16)) for k in s.get('detailed_sectors') or ()}
     sectors_key = s.get('detailed_sectors')
@@ -362,7 +361,7 @@ def build(game, lv, log=print):
                    exclude_path=os.path.join(o, 'exclude_tris.npy'), exclude_foot_path=os.path.join(o, 'exclude_footprint_tris.npy'),
                    seeds=seeds, water=mesh,
                    max_water_depth=soldier1943.WATER_DEPTH, high_path=os.path.join(sm, 'samples_high.bin'),
-                   detailed=detailed, ladders=ladders, log=blog)
+                   detailed=detailed, ladders=ladders, log=blog, settings=soldier1943.SETTINGS)
     with open(os.path.join(p['navkit'], 'build.log'), 'w', encoding='utf-8', newline='') as f:
         f.write('\n'.join(lines) + '\n')
     # the build is told apart by its .hpd's SHA-256 ('hpd_sha256'): 'built' keeps only the minute, so a quick

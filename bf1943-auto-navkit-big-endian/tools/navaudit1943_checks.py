@@ -379,10 +379,10 @@ def load(lv, log=print):
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
     hf = terrain.read(nj.prepared_heightfield(st, lv, g.data(hf_name)))    # the prepared one (second review)
     mm = materialmap1943.for_level(g, lv, hf)
-    soldier1943.configure()
-    navdata.Y_OFFSET = soldier1943.HEIGHT / 2          # BF1943 builds store nodes and outlines 0.9 m up
     t = time.time()
-    nav = navdata.load(p['hpd'], hf, cache_dir=os.path.join(p['audit'], 'cache'))
+    # BF1943 builds store nodes and outlines half the soldier's height (0.9 m) up
+    nav = navdata.load(p['hpd'], hf, cache_dir=os.path.join(p['audit'], 'cache'),
+                       y_offset=soldier1943.SETTINGS.y_offset)
     log(f'{lv}: build read ({time.time() - t:.0f} s): {len(nav.areas)} areas, {len(nav.node_pos)} nodes')
     exact = navbuild.read_cells(p['hpd'])
     log(f'{lv}: ' + ('cells file of the build read (area heights exact)' if exact is not None else

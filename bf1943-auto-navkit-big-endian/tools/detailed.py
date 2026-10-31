@@ -55,10 +55,11 @@ def flagged_sectors(level_dir, common, xoff, zoff, margin=MARGIN):
     return out
 
 
-def stacked_columns(samples_path, xoff, zoff):
-    """{sector (X, Z): columns holding standable surfaces at least STACK_GAP apart} from 0.8 m samples."""
+def stacked_columns(samples_path, xoff, zoff, slope_max=SLOPE_MAX):
+    """{sector (X, Z): columns holding standable surfaces at least STACK_GAP apart} from 0.8 m samples. slope_max: the
+    steepest standable surface (deg; BF1943's soldier: soldier1943.SLOPE_MAX)."""
     s, _ = navsample.load(samples_path)
-    ok = ((s.flags & 3) == 0) & (s.normal[:, 1] >= math.cos(math.radians(SLOPE_MAX)) - 0.01)
+    ok = ((s.flags & 3) == 0) & (s.normal[:, 1] >= math.cos(math.radians(slope_max)) - 0.01)
     col = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
     y = np.where(ok, s.y.astype(float), np.nan)
     lo = np.full(s.nx * s.nz, np.inf)

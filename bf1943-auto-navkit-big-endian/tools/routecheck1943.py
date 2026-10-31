@@ -26,8 +26,8 @@ def check(hpd, level, game=None):
     game = game1943.find_game(game)
     g = game1943.Game(game, level)
     hf_data = g.data(f'terrains/{level}/{level}.heightfield-000.res')
-    navdata.Y_OFFSET = soldier1943.HEIGHT / 2          # BF1943 builds store nodes half the soldier's height up
-    nav = navdata.load(hpd, terrain.read(hf_data) if hf_data else None)
+    # BF1943 builds store nodes half the soldier's height up
+    nav = navdata.load(hpd, terrain.read(hf_data) if hf_data else None, y_offset=soldier1943.SETTINGS.y_offset)
     return evaluate(nav, spawnmap.spawn_map(game, level)['objectives'], level, hpd)
 
 
