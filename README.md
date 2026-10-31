@@ -100,10 +100,13 @@ Run `quick` before every commit and `bf1943 --strict` before every push.
 
 **CI** ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the quick tier with `--strict` on every push
 and pull request, on GitHub's `windows-latest` with Python 3.13: it installs the libraries (`pip install --group ci`),
-points `BF1943_GAME` and `BF1943_RESEARCH` at empty folders, builds the C# tools with their `build.bat` (the .NET
-Framework 4 compiler is part of the image) and runs the tools from the checkout, without an install; then it checks
-that the package installs (`pip install -e .`). It has no game copy, no research workspace and no Xenia, and downloads
-nothing but Python libraries: so every quick test runs without them, and a skip fails the run like a failure.
+runs the lint (`ruff check`), points `BF1943_GAME` and `BF1943_RESEARCH` at empty folders, builds the C# tools with
+their `build.bat` (the .NET Framework 4 compiler is part of the image) and runs the tools from the checkout, without an
+install; then it checks that the package installs (`pip install -e .`). It has no game copy, no research workspace and
+no Xenia, and downloads nothing but Python libraries: so every quick test runs without them, and a skip fails the run
+like a failure. A second job, `coverage`, runs the quick tier again through pytest (`--strict-skips`) with line
+coverage of every Python process it starts, and uploads the report (text, XML and HTML) as the artifact `coverage`;
+it has no threshold yet.
 The console's code page does not matter: the Xenia kit's `launch.cmd` switches to UTF-8 itself, and its test runs it
 under both the OEM page (437) and UTF-8 (65001).
 
@@ -115,6 +118,87 @@ tier's tests without running them.
 
 The Xenia kit's full-build test builds against a scratch copy of `xenia_canary.exe`, so it never writes your Xenia
 folder. The test checks your folder's patch files and fixed exe afterwards.
+
+### Writing a test
+
+A new test is a **pytest-style file**: `test_<what>.py` in the tool's `tests` folder, with plain functions whose
+names start with `test` and plain `assert`s, and no `if __name__ == '__main__':` block. No list to add it to:
+`run_tests.py` finds it, runs it with [tests/functions.py](tests/functions.py) (pytest is not needed) and names it
+by the first line of its docstring; it is in the quick tier unless the file sets `TIER = 'bf1943'`. pytest runs the
+same file as it is. Examples: [core/tests/test_water_mesh.py](core/tests/test_water_mesh.py),
+[test_havok_index.py](bf1943-auto-navkit-common/tests/test_havok_index.py) and
+[test_headroom.py](bf1943-auto-navkit-common/tests/test_headroom.py).
+
+```python
+r"""NavKit (both variants): what is tested, in a few words (the runner's name for the test)
+
+What the file checks, and on what data.
+"""
+import unittest
+
+import navwalk                      # any suite module, imported plainly (no bootstrap)
+
+
+def test_headroom_band_default():
+    assert navwalk.HEADROOM_BAND == (0.5, 2.0), 'default band 0.5-2.0 m'
+
+
+def test_on_a_file(tmp_path):       # tmp_path: a new empty folder, removed afterwards
+    if not have_the_data():
+        raise unittest.SkipTest('no Wake Island build')     # shown as SKIP (ok* when only some tests skip)
+    ...
+```
+
+So that both runners give the same result, a test uses only `assert`, the `tmp_path` argument and
+`raise unittest.SkipTest(reason)`: other pytest fixtures, marks or `pytest.raises` need pytest, which `run_tests.py`
+does not require. Each suite folder is on `sys.path` while it runs, both NavKit variants included (no module name is
+in two of them).
+
+The older tests are **scripts**: run as `python -B <test>.py`, they print one `ok`/`FAIL` line per check and a summary
+line, and are listed by hand in `run_tests.py` (`scripts()`), with arguments when one script serves several entries.
+They stay as they are; a script is the right form only when a test must run as its own program (arguments, exit
+codes, a fresh process).
+
+### pytest
+
+`python -B -m pytest` (from the suite folder; pytest is in the `ci` group) runs both kinds:
+the pytest-style files directly, and every listed script through [tests/test_suite_tiers.py](tests/test_suite_tiers.py),
+one pytest test per script, run exactly as `run_tests.py` runs it: a script that fails fails with its last 25 lines,
+one whose data is missing is skipped with its reason, and one that skipped some checks passes with a warning.
+`--tier bf1943` takes the bf1943 tier, `--strict-skips` fails on any skip (as `--strict`), and `-k <part of a name>`
+picks tests. [conftest.py](conftest.py) keeps the scripts from being collected as modules. Settings:
+`pyproject.toml` `[tool.pytest.ini_options]`. `run_tests.py` stays the reference: `quick` before a commit,
+`bf1943 --strict` before a push.
+
+### Lint
+
+`ruff check` (pinned in the `ci` group; settings in `pyproject.toml` `[tool.ruff]`) with a small set of rules that
+find bugs, not style: pyflakes (`F`), syntax errors (`E9`), imports below code (`E402`), bugbear (`B`) and pylint's
+errors (`PLE`). An import that must follow the bootstrap or `sys.dont_write_bytecode = True` carries
+`# noqa: E402`. Two bugbear rules are off, for the reasons pyproject.toml gives: `B905` (`zip()` without
+`strict=`) and `B023` (a closure using a loop variable; every such closure here runs within its iteration). The VMX
+fingerprint's Python inputs (`bf1943-xex-tools/vmx_inputs.py` `INPUTS`) are left out, as they
+are never edited; `tests/test_repo.py` keeps that list equal to `INPUTS`.
+
+### Coverage
+
+Line coverage of a tier, the processes its tests start included (pyproject.toml `[tool.coverage]`), with coverage in
+the Python that runs the tests (the `ci` group):
+
+```
+set COVERAGE_PROCESS_START=%CD%\pyproject.toml
+set COVERAGE_FILE=%CD%\.coverage
+set COVERAGE_SOURCE=%CD%
+python -B run_tests.py quick
+set COVERAGE_PROCESS_START=
+python -m coverage combine
+python -m coverage report
+```
+
+Every Python started while `COVERAGE_PROCESS_START` is set measures itself (coverage installs a `.pth` file that
+starts it), so the runner, its tests and their children all count. The three are absolute because tests start
+children in other folders and coverage reads a relative path from each process's own folder. The report counts the
+suite's files, those that never ran too, and leaves out the tests themselves.
 
 Only tests about BF1943 are kept. The tests OPFOR's tools came with ran on BFBC2 data (Project OPFOR's copy) and were
 removed; a copied tool gets BF1943 tests when it is adapted (they remain in OPFOR's `bfbc2-tool-suite` and in this

@@ -41,13 +41,13 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use()
-from bfbc2core import errors
-import bots
-import config_edits
-import igm_edits
-import menu_edits
-import netfix
-from stfs import Package
+from bfbc2core import errors  # noqa: E402
+import bots  # noqa: E402
+import config_edits  # noqa: E402
+import igm_edits  # noqa: E402
+import menu_edits  # noqa: E402
+import netfix  # noqa: E402
+from stfs import Package  # noqa: E402
 
 KNOWN = json.load(open(os.path.join(KIT, 'known.json'), encoding='utf-8'))
 DEFAULT_OUT = os.path.join(KIT, 'output')

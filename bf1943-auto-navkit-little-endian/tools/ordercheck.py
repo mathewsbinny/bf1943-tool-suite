@@ -12,11 +12,10 @@ network connects, the share the second file also connects. With one file, the se
 point pairs on its areas that its route network connects (for maps without reference data).
 """
 import itertools
-import math
 import os
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 
 import numpy as np
 
@@ -50,7 +49,7 @@ def order_points(xml_path):
         return None
 
     pts = []            # (kind, order name, position)
-    for guid, (typ, body) in inst.items():
+    for _guid, (typ, body) in inst.items():
         short = typ.split('.')[-1]
         if short in ('AreaOrderEntityData', 'PatrolOrderEntityData', 'InterludeOrderEntityData',
                      'FireAtAreaOrderEntityData'):

@@ -96,7 +96,7 @@ def read_json(path):
 def unpack_complete(dest):
     """An unpack folder from before the UNPACKED marker counts as complete when every .dbx has its converted .xml."""
     dbx = xml = 0
-    for dp, _, fs in os.walk(dest):
+    for _dp, _, fs in os.walk(dest):
         names = {f.lower() for f in fs}
         for f in names:
             if f.endswith('.dbx'):
@@ -234,7 +234,7 @@ class Project:
 # --- steps -----------------------------------------------------------------------------------------------
 def levels(pr, log=print):
     log('level        AI path data   NavKit')
-    for lv, d in pr.level_dirs().items():
+    for lv, _d in pr.level_dirs().items():
         ai = 'yes (samplable)' if pr.dice_pathdata(lv) else 'no'
         done = []
         if os.path.isfile(os.path.join(pr.work, 'navkit', lv, 'navkit.json')):
@@ -305,7 +305,7 @@ def sector_offsets(path):
     try:
         return navregress.sector_offsets(path)
     except ValueError as e:
-        raise NavKitError(str(e))
+        raise NavKitError(str(e)) from e
 
 
 def level_partition_name(L, lv):
@@ -445,7 +445,7 @@ def detailed_sectors(pr, lv):
     try:
         chosen, why = detailed.choose(pr.level_work(lv), common, sp, s['xoff'], s['zoff'])
     except ValueError as e:                      # e.g. objects.json from before NeedsDetailedPathfinding was extracted
-        raise NavKitError(f'{lv}: {e}')
+        raise NavKitError(f'{lv}: {e}') from e
     write_json(cache, {'key': key, 'sectors': chosen, 'why': why})
     return chosen
 
@@ -670,7 +670,7 @@ def build(pr, lv, log=print):
                        order_points=navregress.order_points_of(pr.root, lv), ladders=navregress.ladders_of(pr.root, lv),
                        log=lambda *a: log('  ' + ' '.join(str(x) for x in a)))
     except navbuild.BuildError as e:
-        raise NavKitError(f'{lv}: {e}')          # a clear error (exit code 1), not an unexpected one
+        raise NavKitError(f'{lv}: {e}') from e          # a clear error (exit code 1), not an unexpected one
     log(f'  built in {time.time() - t0:.0f} s ({os.path.getsize(out) / 1e6:.1f} MB)')
 
 
@@ -683,7 +683,7 @@ def detailed_pass(pr, lv, samples, xoff, zoff, log=print):
     try:
         d = navregress.detailed_of(pr.root, lv, samples, xoff, zoff, chosen=chosen)
     except RuntimeError as e:
-        raise NavKitError(str(e))
+        raise NavKitError(str(e)) from e
     if d is not None:
         log(f'  detailed zones: {len(d["sectors"])} sectors at pitch 0.2'
             + ('' if d['high'] else ' (no high-capsule run at 0.2 - stairs use the normal capsule there)'))
@@ -697,7 +697,7 @@ def check(pr, lv, log=print):
         raise NavKitError(f'{lv}: not built yet')
     xml = os.path.join(pr.level_work(lv), 'dist', 'levels', s['level'] + '.xml')
     ref = pr.dice_pathdata(lv)
-    args = [sys.executable, os.path.join(HERE, 'tools', 'ordercheck.py'), xml] + ([ref] if ref else []) + [ours]
+    args = [sys.executable, '-B', os.path.join(HERE, 'tools', 'ordercheck.py'), xml] + ([ref] if ref else []) + [ours]
     log(f'== check {lv}' + (' against the original path data' if ref else ' (self-check: no original path data)'))
     out = pr.run(args, log)
     report = os.path.join(pr.out_dir(lv), 'check.txt')
@@ -800,7 +800,7 @@ def read_back(path):
     try:
         ok = hpdtool.write(hpdtool.parse(data)) == data
     except (ValueError, struct.error, IndexError) as e:
-        raise NavKitError(f'{path} is not a usable path-data file ({e})')
+        raise NavKitError(f'{path} is not a usable path-data file ({e})') from e
     if not ok:
         raise NavKitError(f'{path} does not read back exactly - not a usable path-data file')
     return data
@@ -864,7 +864,7 @@ def _apply(pr, lv, navtune_path, out, log, where=None):
     try:
         tune = navtune.load(navtune_path)
     except ValueError as e:
-        raise NavKitError(str(e))
+        raise NavKitError(str(e)) from e
     import navlinks
     walk = [o for o in tune.operations if o['op'] in ('walkable', 'unwalkable', 'seed', 'unseed')]
     graph = [o for o in tune.operations if o['op'] in navlinks.GRAPH_OPS]
@@ -875,7 +875,7 @@ def _apply(pr, lv, navtune_path, out, log, where=None):
         try:
             samples, xoff, zoff, f = navregress.inputs(pr.root, lv)
         except RuntimeError as e:
-            raise NavKitError(str(e))
+            raise NavKitError(str(e)) from e
         log(f'== apply {lv}: {len(tune.operations)} edit(s) from {os.path.relpath(navtune_path, pr.root)} '
             f'-> {os.path.relpath(out, pr.root)}')
         # the same inputs as build (detailed zones and ladders included): without edits the result is the build's
@@ -889,7 +889,7 @@ def _apply(pr, lv, navtune_path, out, log, where=None):
                            ladders=navregress.ladders_of(pr.root, lv),
                            log=lambda *a: log('  ' + ' '.join(str(x) for x in a)))
         except navbuild.BuildError as e:
-            raise NavKitError(f'{lv}: {e}')
+            raise NavKitError(f'{lv}: {e}') from e
         log(f'  built in {time.time() - t0:.0f} s; {len(walk)} walkability edit(s) applied')
     else:
         # a DICE base: no rebuild - the graph edits go into a copy of DICE's file, for this PC only (never
@@ -906,8 +906,8 @@ def _apply(pr, lv, navtune_path, out, log, where=None):
         log(f'== apply {lv}: {len(tune.operations)} edit(s) on a copy of DICE\'s file -> {os.path.relpath(out, pr.root)} '
             f'(for this PC only)')
         if tune.base_changed(src):
-            log(f'  note: DICE\'s file is not the one the edits were made on (another game version?); the edits are '
-                f'by position and are applied, but check them')
+            log('  note: DICE\'s file is not the one the edits were made on (another game version?); the edits are '
+                'by position and are applied, but check them')
         shutil.copyfile(src, out)
     if graph:
         f = hpdtool.parse(open(out, 'rb').read())

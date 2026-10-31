@@ -6,7 +6,8 @@
 #   pip install -e .              core (bfbc2core, suitepath) and the shared tool folders on sys.path (an editable
 #                                 install's .pth file), so the bootstrap adds nothing for them; the NavKit variants
 #                                 are still chosen by each script
-#   pip install --group ci        only the libraries, as CI installs them (pinned: the versions this PC runs)
+#   pip install --group ci        the libraries, as CI installs them (pinned: the versions this PC runs), and the
+#                                 check tools (ruff, pytest, coverage)
 #
 # A wheel (`pip install .`) holds the package bfbc2core only (suitepath finds the suite's folders from where it lies,
 # so it is used from a clone). The tools stay in the clone.
@@ -37,7 +38,8 @@ all = ["bf1943-tool-suite[viewer,xex,images]"]
 Repository = "https://github.com/mathewsbinny/bf1943-tool-suite"
 
 [dependency-groups]
-# what CI installs (`pip install --group ci`): every library the tests import, at the versions this PC runs
+# what CI installs (`pip install --group ci`): every library the tests import, at the versions this PC runs, and
+# the check tools
 ci = [
     "numpy==2.5.4",
     "matplotlib==3.11.2",
@@ -46,6 +48,10 @@ ci = [
     "imgui-bundle==1.92.900",
     "capstone==5.0.9",
     "pillow==12.3.0",
+    # the checks: the lint, tests through pytest, and coverage (CI's jobs; run_tests.py needs none of them)
+    "ruff==0.17.3",
+    "pytest==9.2.0",
+    "coverage==7.17.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -66,9 +72,61 @@ dev-mode-dirs = [
 [tool.hatch.build.targets.sdist]
 only-include = ["core", "pyproject.toml", "README.md", "LICENSE"]
 
-# Settings of the checks that come in a later phase (lint, tests through pytest, coverage); empty until then.
+# Lint: `ruff check` (the version is pinned in the "ci" group). A small set of rules that find bugs, no style rules.
 [tool.ruff]
+line-length = 120                   # the code's own width (only the formatter and E501 use it; neither is run)
+extend-include = ["*.pyw"]
+cache-dir = "work/ruff-cache"       # in the generated work folder, not beside the code
+extend-exclude = [
+    "work",                         # the suite's work folder (generated)
+    "output",                       # bf1943-xenia-kit/output (the extracted game)
+    # the VMX validation's inputs (bf1943-xex-tools/vmx_inputs.py INPUTS): their bytes are fingerprinted, so they
+    # are never edited, not even for a lint fix; tests/test_repo.py keeps this list equal to INPUTS' .py files
+    "bf1943-xex-tools/build_vmx_language.py",
+    "bf1943-xex-tools/xenon_vector_semantics.py",
+    "bf1943-xex-tools/xenon_splice.py",
+]
 
+[tool.ruff.lint]
+# F pyflakes (undefined and unused names, ...), E9 syntax and IO errors, E402 imports below code, B bugbear,
+# PLE pylint's errors
+select = ["F", "E9", "E402", "B", "PLE"]
+ignore = [
+    # zip() without strict=: adding strict=True would raise where the code relies on zip stopping at the shortest
+    "B905",
+    # a closure using a loop variable: all 77 sites (2026-10-31) call the closure within the same iteration
+    # (sort keys, local helpers), where late binding cannot bite; a closure kept past its iteration binds the value
+    # as a default argument (navbuild/merge.py does)
+    "B023",
+]
+# E402: a script's imports from other suite folders follow the bootstrap (core/suitepath.py) and
+# `sys.dont_write_bytecode = True` by design; each such import carries `# noqa: E402`
+
+# Tests under pytest (`python -B -m pytest`, README "Tests"); run_tests.py needs none of this.
 [tool.pytest.ini_options]
+minversion = "9.0"
+pythonpath = ["core"]               # for conftest.py, which puts the other suite folders on sys.path (suitepath.use)
+# the test files' folders are not packages and several share names (tests/): import each by its path, put none on
+# sys.path; and no .pytest_cache in the suite
+addopts = ["--import-mode=importlib", "-p", "no:cacheprovider"]
+python_files = ["test_*.py"]
+norecursedirs = [".*", "work", "output", "docs", "provenance", "__pycache__", "research"]
 
+# Line coverage of a tier, its child processes included (README "Coverage"; CI's coverage job). Set, all absolute
+# (tests start children in other folders, and coverage reads relative paths from each process's own folder):
+#   COVERAGE_PROCESS_START=<suite>\pyproject.toml   every Python started with it set measures itself (coverage
+#                                                   installs a .pth file that starts it): the runner, its tests and
+#                                                   their children
+#   COVERAGE_FILE=<suite>\.coverage                 where each process writes its data (.coverage.<host>.<pid>...)
+#   COVERAGE_SOURCE=<suite>                         what is measured: the suite's files, the never-run ones too
+# then `python -B run_tests.py quick` (or pytest), `python -m coverage combine`, `python -m coverage report`.
 [tool.coverage.run]
+parallel = true                     # one data file per process, joined by `coverage combine`
+source = ["${COVERAGE_SOURCE-.}"]
+omit = ["*/work/*", "*/output/*"]
+
+[tool.coverage.report]
+include_namespace_packages = true   # the suite's folders are not packages: their files that never ran count too
+omit = ["*/tests/*", "*/conftest.py"]   # the tools and libraries, not the tests
+skip_empty = true
+precision = 1

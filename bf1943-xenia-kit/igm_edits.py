@@ -19,8 +19,8 @@ import struct
 import sys
 
 sys.dont_write_bytecode = True
-from apt import Apt, Rewriter, op, be32
-from fbrb1943 import Bundle
+from apt import Apt, Rewriter, op, be32  # noqa: E402
+from fbrb1943 import Bundle  # noqa: E402
 
 BUNDLE = 'dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb'
 ENTRY = 'Menu/igm_mp_cq.res'
@@ -194,7 +194,7 @@ def add_characters(apt, rw, sprites):
 def add_window(apt, rw):
     """The window's parts as new placements on the deploy frame, copied from named template placements."""
     records = {}
-    for f, items in apt.frames(apt.movie):
+    for _f, items in apt.frames(apt.movie):
         for it, k in items:
             name = apt.s(apt.u(it + 0x34)) if k == 3 and apt.u(it + 0x34) else None
             if name and name not in records:
@@ -227,7 +227,7 @@ def selector_code():
 
     def texts():  # the cards' text components fill themselves in from their instance names: set ours again
         out = []
-        for team, card, flag, frame, portrait, heading, sub1, sub2 in SIDES:
+        for _team, card, _flag, _frame, _portrait, heading, sub1, sub2 in SIDES:
             for text in ('text1', 'text2'):
                 out += call(path(card, 'kitInfo', 'kitHeading', text), 'setValue', [s(heading)])
             out += call(path(card, 'kitInfo', 'kitSubHeading1'), 'setValue', [s(sub1)])
@@ -238,7 +238,7 @@ def selector_code():
 
     def cards():  # draw both side cards; the chosen one in the game's 'selected' (green) state
         out = []
-        for team, card, flag, frame, portrait, heading, sub1, sub2 in SIDES:
+        for team, card, flag, frame, portrait, _heading, _sub1, _sub2 in SIDES:
             out += if_else(path('rsSel') + [op('PushByte', value=team), op('Equals2')],
                            call(path(card), 'gotoAndStop', [s('selected')]),
                            call(path(card), 'gotoAndStop', [s('unselected')]))
@@ -289,7 +289,7 @@ def selector_code():
             + path('rsKitTimer') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
             + [kits_done, op('Pop')])
 
-    not_yet, redraw = op('PushUndefined'), op('PushUndefined')
+    not_yet = op('PushUndefined')
     check = (set_this('rsChecks', path('rsChecks') + [op('Increment')])
              # once the server reports the new team, count settle checks
              + if_else(member(var('extern'), 'playerTeam') + path('rsWantTeam') + [op('Equals2')],

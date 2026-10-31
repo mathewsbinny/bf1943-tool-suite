@@ -62,8 +62,8 @@ def crf(text):
 def number(text):
     try:
         return int(text.strip(), 0)
-    except ValueError:
-        raise AsmError(f'not a number: {text!r}')
+    except ValueError as e:
+        raise AsmError(f'not a number: {text!r}') from e
 
 
 def simm(value):

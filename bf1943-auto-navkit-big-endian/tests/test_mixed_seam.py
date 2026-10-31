@@ -14,7 +14,6 @@ import shutil
 import struct
 import sys
 import tempfile
-from collections import defaultdict
 
 import numpy as np
 

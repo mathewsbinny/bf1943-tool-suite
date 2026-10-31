@@ -16,8 +16,8 @@ import struct
 import sys
 
 sys.dont_write_bytecode = True
-from apt import Apt, Rewriter, op
-from fbrb1943 import Bundle
+from apt import Apt, Rewriter, op  # noqa: E402
+from fbrb1943 import Bundle  # noqa: E402
 
 BUNDLE = 'dist/xenon/menu/main/mainmenu-00.fbrb'
 ENTRY = 'Menu/main_nav.res'

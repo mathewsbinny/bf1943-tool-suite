@@ -32,7 +32,6 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use(suitepath.NAVKIT_BE)
-import test_navkit_stages as T  # noqa: E402
 import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 import navexport_vehicles1943 as nv  # noqa: E402

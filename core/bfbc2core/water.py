@@ -109,7 +109,7 @@ def read(folder, name):
             indices, slots, ranges = read_visual(visual)
             if np.array_equal(indices, t.ravel()):
                 shader = [''] * len(t)
-                for slot, ntri, first, nidx in ranges:
+                for slot, ntri, first, _nidx in ranges:
                     for k in range(first // 3, first // 3 + ntri):
                         if k < len(shader):
                             shader[k] = slots[slot] if slot < len(slots) else f'slot {slot}'

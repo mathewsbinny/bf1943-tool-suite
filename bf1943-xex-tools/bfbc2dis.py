@@ -8,12 +8,11 @@ IMAGES; set BF1943_RESEARCH before the import. The investigations import IMAGES,
 """
 import sys
 sys.dont_write_bytecode = True
-from pathlib import Path
-import bisect
-import collections
-import hashlib
-import struct
-import capstone
+import bisect  # noqa: E402
+import collections  # noqa: E402
+import hashlib  # noqa: E402
+import struct  # noqa: E402
+import capstone  # noqa: E402
 
 from workspace import research_root  # noqa: E402
 

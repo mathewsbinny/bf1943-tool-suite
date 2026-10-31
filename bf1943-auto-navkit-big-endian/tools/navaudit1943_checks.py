@@ -831,7 +831,6 @@ def classify_islands(C, LM, positions):
     hf = C['hf']
     cells_isl = np.array([a.island for a in nav.areas])[nav.cell_area]
     t = hf.height(nav.cell_xz[:, 0], nav.cell_xz[:, 1])
-    elev = nav.cell_y - t
     lm = landmass_at(LM, nav.cell_xz[:, 0], nav.cell_xz[:, 1])
     main_lm = collections.Counter(lm[cells_isl == nv.main]).most_common(1)[0][0]
     level = sea_level(C)
@@ -1120,7 +1119,7 @@ def resolution(C):
         only8 = ~np.isnan(h8) & (frac < 0.25)
         only2 = np.isnan(h8) & (any2 >= 0.75)
         H, W = jj.shape
-        for name, mask, store in (('0.8 m only', only8, diffs8), ('0.2 m only', only2, diffs2)):
+        for _name, mask, store in (('0.8 m only', only8, diffs8), ('0.2 m only', only2, diffs2)):
             M = mask.reshape(H, W)
             # more than a cell row: what survives removing one row from every side
             er = M.copy()
@@ -1248,7 +1247,7 @@ def rules(C, positions):
                               'positions and BF1943 levels have none (AreaOrders absent); the spawn seeds '
                               '(soldier_spawns.json) only seed the flood'}
     req = np.array([r['position'] for r in positions], float) if positions else np.zeros((0, 3))
-    for which, G in C['grids'].items():
+    for _which, G in C['grids'].items():
         s = G.s
         col = G.col_of()
         cx = s.min_x + (col % s.nx) * s.pitch
@@ -1278,7 +1277,7 @@ def rules(C, positions):
             out[f'{v} ({G.label})'] = rec
     # near-misses: within 20 % of each threshold, on surfaces that pass every other surface test
     nm = {}
-    for which, G in C['grids'].items():
+    for _which, G in C['grids'].items():
         s = G.s
         col = G.col_of()
         cx = s.min_x + (col % s.nx) * s.pitch

@@ -25,7 +25,7 @@ def grid():
     floor at y 4 (a deck over the ground)."""
     nx = nz = 10
     ys, start = [], [0]
-    for j in range(nz):
+    for _j in range(nz):
         for i in range(nx):
             col = [0.0] + ([4.0] if i >= 5 else [])
             ys += col

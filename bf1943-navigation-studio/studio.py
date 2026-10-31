@@ -315,7 +315,7 @@ class Studio:
         imgui.text(f'{n} spawns, bases and flags; {len(off)} not on the main network')
         imgui.text_disabled('(the carriers are their own networks: the sea divides them)')
         if off and imgui.tree_node('off the main network'):
-            for k, (kind, label, pos, _), (isl, d) in ((k, p, i) for k, p, i in off[:150]):
+            for k, (kind, label, pos, _), (isl, _d) in ((k, p, i) for k, p, i in off[:150]):
                 where = f'island {isl} ({nav.islands[isl].nodes} nodes)' if isl is not None else 'no route node within 15 m'
                 if imgui.small_button(f'fly##pt{k}'):
                     v.camera.focus(pos, 30.0)

@@ -285,7 +285,7 @@ def main():
         item = import_opfor.update_one(second, manifest, 'tool')
         check(open(os.path.join(dst, 'tool', 'a.py'), 'rb').read() == new['tool/a.py'] and item['conflicts'] == ['b.py']
               and open(os.path.join(dst, 'tool', 'b.py'), 'rb').read() == b'changed here\n',
-              f'update of a folder import: the file changed only there is replaced, the one changed here too is a conflict')
+              'update of a folder import: the file changed only there is replaced, the one changed here too is a conflict')
         check(sorted(os.listdir(dst)) == ['New Suite.pyw', 'run_tests.py', 'tool'], f'nothing else written ({sorted(os.listdir(dst))})')
         # a file moved out of the folder import (2026-10-31: NavKit's shared modules to bf1943-auto-navkit-common)
         os.remove(os.path.join(dst, 'tool', 'a.py'))

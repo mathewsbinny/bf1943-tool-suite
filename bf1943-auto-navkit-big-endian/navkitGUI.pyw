@@ -3,7 +3,6 @@
 Every button runs the matching navkit.py step for the chosen level of your BF1943 copy and shows its output. Nothing
 is started in the game: the samples are computed from the level's data.
 """
-import json
 import os
 import queue
 import subprocess

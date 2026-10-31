@@ -9,6 +9,11 @@ case ran `--only` alone, which passed on an unhandled IndexError and never reach
 Also every tool that once took --help for a file name: run with --help (and -h) in an empty folder, it must exit 0,
 print its usage and write nothing.
 
+Every Python it starts runs with -B, and none may leave a __pycache__ folder in the suite: the children run without
+PYTHONDONTWRITEBYTECODE, so the check holds however this test was started (2026-10-31: the tools ran without -B and
+relied on run_tests.py's PYTHONDONTWRITEBYTECODE; started directly, `python -B tests\test_cli_errors.py`, the test
+left caches in core, the NavKit folders, the spawn map and bf1943-fbrb-tool, as -B does not pass to children).
+
   python tests\test_cli_errors.py
 """
 import glob
@@ -22,6 +27,15 @@ SUITE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 PY = sys.executable
 
 
+def caches():
+    """The suite's __pycache__ folders (outside work/ and .git)."""
+    found = set()
+    for folder, dirs, _ in os.walk(SUITE):
+        dirs[:] = [d for d in dirs if d not in ('.git', 'work')]
+        found |= {os.path.relpath(os.path.join(folder, d), SUITE) for d in dirs if d == '__pycache__'}
+    return found
+
+
 def main(argv):
     failed = 0
 
@@ -31,23 +45,25 @@ def main(argv):
         print(f'{"ok  " if ok else "FAIL"} {what}', flush=True)
 
     tmp = tempfile.mkdtemp(prefix='cli_errors_')
-    env = {**os.environ, 'LOCALAPPDATA': tmp}
+    # no PYTHONDONTWRITEBYTECODE: each child must keep from writing caches by itself (-B)
+    env = {**{k: v for k, v in os.environ.items() if k != 'PYTHONDONTWRITEBYTECODE'}, 'LOCALAPPDATA': tmp}
+    caches_before = caches()
     logs = os.path.join(tmp, 'bf1943-tool-suite', 'logs')
     junk = os.path.join(tmp, 'junk.bin')
     open(junk, 'wb').write(b'this is not any kind of game file')
     missing = os.path.join(tmp, 'missing.file')
     cases = [
-        ('STFS reader, a missing package', [PY, os.path.join(SUITE, 'bf1943-console-readers', 'stfs', 'stfs.py'), 'info', missing], 'stfs', 'missing'),
-        ('spawn map, a missing game folder', [PY, os.path.join(SUITE, 'bf1943-spawn-map', 'spawnmap.py'), missing, 'wake_island_s'], 'spawnmap', 'missing'),
-        ('level objects, a missing game folder', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'levelobjects1943.py'), missing, 'wake_island_s', tmp], 'levelobjects1943', 'missing'),
-        ('sampler, a level folder without objects', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navsample1943.py'), tmp, missing, junk + '.out'], 'navsample1943', 'missing'),
-        ('detailed sectors, a level folder without objects', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'detailed1943.py'), tmp, missing, '0', '0'], 'detailed1943', 'missing'),
-        ('navigation audit, a level not built', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navaudit1943.py'), 'audit', 'no_such_level'], 'navaudit1943', 'missing'),
-        ('jump links, a level not prepared', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'jumplinks1943.py'), 'no_such_level'], 'jumplinks1943', 'missing'),
-        ('vehicle navigation, a level without a soldier world', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport_vehicles1943.py'), 'no_such_level'], 'navexport_vehicles1943', 'missing'),
-        ('RSNV tool, a level not exported', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'rsnvtool.py'), 'info', 'no_such_level'], 'rsnvtool', 'missing'),
-        ('navigation export, a level not built', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport1943.py'), 'no_such_level'], 'navexport1943', 'missing'),
-        ('enclosure probe, a level not sampled',[PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'enclosure_probe1943.py'), 'no_such_level', '0', '0', '0'], 'enclosure_probe1943', 'missing'),
+        ('STFS reader, a missing package', [PY, '-B', os.path.join(SUITE, 'bf1943-console-readers', 'stfs', 'stfs.py'), 'info', missing], 'stfs', 'missing'),
+        ('spawn map, a missing game folder', [PY, '-B', os.path.join(SUITE, 'bf1943-spawn-map', 'spawnmap.py'), missing, 'wake_island_s'], 'spawnmap', 'missing'),
+        ('level objects, a missing game folder', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'levelobjects1943.py'), missing, 'wake_island_s', tmp], 'levelobjects1943', 'missing'),
+        ('sampler, a level folder without objects', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navsample1943.py'), tmp, missing, junk + '.out'], 'navsample1943', 'missing'),
+        ('detailed sectors, a level folder without objects', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'detailed1943.py'), tmp, missing, '0', '0'], 'detailed1943', 'missing'),
+        ('navigation audit, a level not built', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navaudit1943.py'), 'audit', 'no_such_level'], 'navaudit1943', 'missing'),
+        ('jump links, a level not prepared', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'jumplinks1943.py'), 'no_such_level'], 'jumplinks1943', 'missing'),
+        ('vehicle navigation, a level without a soldier world', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport_vehicles1943.py'), 'no_such_level'], 'navexport_vehicles1943', 'missing'),
+        ('RSNV tool, a level not exported', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'rsnvtool.py'), 'info', 'no_such_level'], 'rsnvtool', 'missing'),
+        ('navigation export, a level not built', [PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'navexport1943.py'), 'no_such_level'], 'navexport1943', 'missing'),
+        ('enclosure probe, a level not sampled',[PY, '-B', os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tools', 'enclosure_probe1943.py'), 'no_such_level', '0', '0', '0'], 'enclosure_probe1943', 'missing'),
     ]
     try:
         for label, args, log_name, says in cases:
@@ -90,6 +106,8 @@ def main(argv):
                     print('       ' + (r.stdout + r.stderr).strip().replace('\n', '\n       ')[:600])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    new = sorted(caches() - caches_before)
+    check(not new, 'no __pycache__ left in the suite by the tools run here' + ''.join(f'\n       {c}' for c in new[:10]))
     print('all passed' if not failed else f'{failed} check(s) failed')
     return 1 if failed else 0
 

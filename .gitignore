@@ -4,3 +4,10 @@ work/
 logs/
 # hello_imgui window layout, per user
 BF1943_*.ini
+# coverage data and reports (pyproject.toml [tool.coverage]), pytest cache
+.coverage
+.coverage.*
+coverage.txt
+coverage.xml
+coverage-html/
+.pytest_cache/

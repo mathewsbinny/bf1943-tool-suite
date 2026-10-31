@@ -33,7 +33,14 @@ adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests
 
 --only <part of a name> runs the matching tests; --list lists them without running.
 Run `quick` before every commit and `bf1943 --strict` before every push.
+
+Two kinds of test (README "Tests"): a script, listed in scripts() below, which prints a line per check and a summary
+line; and a pytest-style file (test_*.py with plain `def test_...():` functions and no `__main__` block), which needs
+no listing: the runner finds it (function_tests()), runs it with tests/functions.py (no pytest needed) and names it
+by its docstring's first line, in the quick tier unless it sets TIER = 'bf1943'. `python -B -m pytest` runs both
+kinds as well (conftest.py, tests/test_suite_tiers.py).
 """
+import ast
 import os
 import subprocess
 import sys
@@ -44,10 +51,57 @@ PY = sys.executable
 TIERS = ['quick', 'bf1943']
 # what each tier runs: tests are tagged by the data they need, not by how long they take
 SELECT = {'quick': {'quick'}, 'bf1943': {'quick', 'bf1943'}}
+# runs a pytest-style file's test functions without pytest
+FUNCTIONS = os.path.join(SUITE, 'tests', 'functions.py')
+# pytest-style in form but for pytest only: the runner's tests, run through pytest (running it here would run all twice)
+PYTEST_ONLY = {os.path.normcase(os.path.join(SUITE, 'tests', 'test_suite_tiers.py'))}
+SKIP_DIRS = {'.git', 'work', 'output', '__pycache__', 'docs', 'provenance', 'research', '.pytest_cache'}   # as pytest's norecursedirs
 
 
 def tests():
-    """(name, tier, argv)."""
+    """(name, tier, argv): the scripts, then the pytest-style files."""
+    return scripts() + function_tests()
+
+
+def function_tests():
+    """(name, tier, [PY, FUNCTIONS, path]) of each pytest-style test file under the suite (function_test()), sorted
+    by path."""
+    found = []
+    for folder, dirs, files in os.walk(SUITE):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        for f in sorted(files):
+            path = os.path.join(folder, f)
+            test = function_test(path)
+            if test:
+                found.append((*test, [PY, FUNCTIONS, path]))
+    return found
+
+
+def function_test(path):
+    """(name, tier) when the file is a pytest-style test file: test_*.py with a top-level `def test...` and no
+    `if __name__ == '__main__':` block (that is a script), not in PYTEST_ONLY; else None. Named by its docstring's
+    first line (else its path), in the tier its module-level TIER names (default 'quick')."""
+    f = os.path.basename(path)
+    if not (f.startswith('test_') and f.endswith('.py')) or os.path.normcase(os.path.abspath(path)) in PYTEST_ONLY:
+        return None
+    with open(path, encoding='utf-8') as fh:
+        tree = ast.parse(fh.read(), path)
+    body = tree.body
+    if any(isinstance(n, ast.If) and ast.unparse(n.test) == "__name__ == '__main__'" for n in body):
+        return None
+    if not any(isinstance(n, ast.FunctionDef) and n.name.startswith('test') for n in body):
+        return None
+    tier = next((n.value.value for n in body if isinstance(n, ast.Assign) and len(n.targets) == 1
+                 and isinstance(n.targets[0], ast.Name) and n.targets[0].id == 'TIER'
+                 and isinstance(n.value, ast.Constant)), 'quick')
+    if tier not in TIERS:
+        raise ValueError(f'{path}: TIER = {tier!r}, not a tier ({", ".join(TIERS)})')
+    doc = (ast.get_docstring(tree) or '').strip()
+    return (doc.splitlines()[0].rstrip('.:') if doc else os.path.relpath(path, SUITE)), tier
+
+
+def scripts():
+    """(name, tier, argv) of the script tests."""
     data = os.path.join(SUITE, 'tests', 'test_bf1943_data.py')
     tools = os.path.join(SUITE, 'tests', 'test_bf1943_tools.py')
     return [
@@ -57,7 +111,6 @@ def tests():
         ('game loader: a damaged level bundle raises, never the shared copy', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_game1943_bundles.py')]),
         ('vehicle entry points: cached per game copy, never by id (made-up blueprints)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_vehicles1943.py')]),
         ('DBX reader: truncated and damaged files refused (parse and XML)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx_malformed.py')]),
-        ('water mesh reader: triangles past their vertices refused', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_water_mesh.py')]),
         ('core readers: damaged material maps and height fields refused; path test finds the cheapest route; sys.path kept', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_readers_malformed.py')]),
         ('RSNV navigation file: both byte orders, search, locate, damaged files', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_rsnv.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
@@ -88,10 +141,8 @@ def tests():
         ('NavKit (both variants): area link rule', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_area_link.py')]),
         ('NavKit (both variants): portal symmetry', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_portal_symmetry.py')]),
         ('NavKit (both variants): soldiers absent from samples', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_characters.py')]),
-        ('NavKit (both variants): headroom band', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_headroom.py')]),
         ('NavKit (both variants): 45-degree bridge outlines', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_bridge_union.py')]),
         ('NavKit (both variants): dynamic props and doors', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_dynamic_props.py')]),
-        ('NavKit (both variants): collision index', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_havok_index.py')]),
         ('NavKit (both variants): narrow lips and sills', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_lips.py')]),
         ('NavKit (both variants): roof pruning', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_roof_prune.py')]),
         ('NavKit (both variants): builder edge cases (default settings)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-common', 'tests', 'test_navbuild_edges.py')]),
@@ -134,6 +185,30 @@ def tests():
     ]
 
 
+def run_one(args):
+    """Runs one test as the runner does: (status, its last line, its output, its skip lines). status: 'FAIL' (a
+    nonzero exit), 'SKIP' (its last line starts "skip": the whole test, its data is missing), 'ok* ' (passed, but
+    some checks were skipped) or 'ok  '."""
+    r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE,
+                       # no __pycache__, their children too; output in UTF-8, as it is read (2026-10-30 second
+                       # review: a test printing a path outside the ANSI code page died in the pipe)
+                       env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8'))
+    out = (r.stdout + r.stderr).strip()
+    main_out = r.stdout.strip() or out            # the summary line is the test's own last line, not a warning it printed
+    lines = main_out.splitlines()
+    last = lines[-1] if lines else ''
+    skips = [ln for ln in lines if ln.lower().startswith('skip')]
+    if r.returncode != 0:
+        status = 'FAIL'
+    elif skips and last.lower().startswith('skip'):
+        status = 'SKIP'
+    elif skips:
+        status = 'ok* '
+    else:
+        status = 'ok  '
+    return status, last, out, skips
+
+
 def main(argv):
     if '--only' in argv and argv.index('--only') + 1 >= len(argv):
         # 2026-10-30: an IndexError before; a usage error like any other
@@ -163,28 +238,15 @@ def main(argv):
     strict = '--strict' in argv
     print(f'BF1943 Tool Suite tests: {tier}, {len(chosen)} test(s)' + (' (strict: a skip fails)' if strict else ''))
     failures, skipped, partly, start = [], [], [], time.time()
-    for name, t, args in chosen:
+    for name, _tier, args in chosen:
         t0 = time.time()
-        r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE,
-                           # no __pycache__, their children too; output in UTF-8, as it is read (2026-10-30 second
-                           # review: a test printing a path outside the ANSI code page died in the pipe)
-                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8'))
-        out = (r.stdout + r.stderr).strip()
-        main_out = r.stdout.strip() or out            # the summary line is the test's own last line, not a warning it printed
-        lines = main_out.splitlines()
-        last = lines[-1] if lines else ''
-        skips = [ln for ln in lines if ln.lower().startswith('skip')]
-        if r.returncode != 0:
-            status = 'FAIL'
+        status, last, out, skips = run_one(args)
+        if status == 'FAIL':
             failures.append((name, out))
-        elif skips and last.lower().startswith('skip'):
-            status = 'SKIP'                                # the whole test: its data is missing
+        elif status == 'SKIP':
             skipped.append((name, last))
-        elif skips:
-            status = 'ok* '                                # passed, but some checks were skipped
+        elif status == 'ok* ':
             partly.append((name, skips))
-        else:
-            status = 'ok  '
         print(f'{status} {name:42s} {time.time() - t0:6.1f} s   {last[:90]}', flush=True)
     for name, out in failures:
         print(f'\n--- {name} (last 25 lines) ---')

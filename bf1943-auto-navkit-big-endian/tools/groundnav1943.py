@@ -155,7 +155,6 @@ class Grid:
     per metre along x and z). Elsewhere in this file g is a Grid and k, n, m surface indices."""
 
     def __init__(self, path):
-        import struct
         import navsample1943
         data = open(path, 'rb').read()
         (magic, version, pitch, x0, z0, nx, nz, y_top, y_bottom, radius, step, height, _r, _z) = \
@@ -474,7 +473,7 @@ def join_pieces(g, ok, table, labels, nodes, edges, log):
         split = [(component, pieces) for component, pieces in pieces_by_component.items() if len(pieces) > 1]
         if not split:
             break
-        for component, pieces in split:
+        for _component, pieces in split:
             largest = max(pieces, key=lambda piece: len(pieces[piece]))
             for piece, members in pieces.items():
                 if piece == largest:

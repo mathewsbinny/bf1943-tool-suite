@@ -29,8 +29,8 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use()
-import config_edits
-import netfix
+import config_edits  # noqa: E402
+import netfix  # noqa: E402
 
 failures = []
 

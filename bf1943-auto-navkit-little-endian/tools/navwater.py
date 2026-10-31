@@ -116,7 +116,7 @@ def band_of(depth):
 
 
 def level_report(root, lv, candidate, log=print):
-    from bfbc2core import level as levelmod, terrain as terrainmod, water as watermod
+    from bfbc2core import level as levelmod, water as watermod
     ref = navparity.reference_of(root, lv)
     name = None
     for folder in ('pkg', 'dist'):

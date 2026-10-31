@@ -59,7 +59,7 @@ def main(argv):
         except KeyError as ex:
             errors.report(ex, where='a test')
         errors.warn('something to look at')
-        warnings.warn('a Python warning')
+        warnings.warn('a Python warning', stacklevel=1)
         t = threading.Thread(target=lambda: 1 / 0, name='worker')
         t.start()
         t.join()

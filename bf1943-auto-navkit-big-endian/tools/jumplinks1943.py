@@ -295,7 +295,7 @@ def raised_floor_links(s, terrain, boxes, log=print):
                                         candidates.append((drop, math.hypot(di, dj) * pitch, k, ground, ci, cj, ni, nj))
                     candidates.sort()
                     chosen = []                       # the links' floor ends (x, z)
-                    for drop, gap, k, ground, ci, cj, ni, nj in candidates:
+                    for _drop, gap, k, ground, ci, cj, ni, nj in candidates:
                         fx, fz = s.min_x + ci * pitch, s.min_z + cj * pitch
                         if any(math.hypot(fx - cx, fz - cz) < LINK_SPACING for cx, cz in chosen):
                             continue

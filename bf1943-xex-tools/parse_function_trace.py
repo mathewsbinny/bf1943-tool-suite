@@ -8,12 +8,12 @@ The session folder comes from bf1943-automated-map-and-bot-test-harness/xenia-ru
 """
 import sys
 sys.dont_write_bytecode = True
-from pathlib import Path
-import bisect
-import csv
-import hashlib
-import json
-import struct
+from pathlib import Path  # noqa: E402
+import bisect  # noqa: E402
+import csv  # noqa: E402
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import struct  # noqa: E402
 from workspace import research_root  # noqa: E402
 
 FORMAT_SHA256 = 'be26cf69639117985c7c9bd2c7c52d60a6125111039ed1221f1197f3b34eb334'

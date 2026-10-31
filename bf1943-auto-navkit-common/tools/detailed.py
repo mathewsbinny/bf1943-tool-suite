@@ -160,8 +160,8 @@ def offsets_of(root, lv, given=None):
         try:
             x, z = (int(v) for v in given.split(','))
             return x, z
-        except ValueError:
-            raise ValueError(f'--offsets {given!r}: give X,Z (two whole numbers)')
+        except ValueError as e:
+            raise ValueError(f'--offsets {given!r}: give X,Z (two whole numbers)') from e
     p = os.path.join(root, 'work', 'navkit', lv, 'navkit.json')
     if not os.path.isfile(p):
         raise ValueError(f'{lv}: no --offsets X,Z and no {p} (run navkit_le.py prepare {lv})')

@@ -55,7 +55,7 @@ if __name__ == '__main__':
               f'{len(ladders)} ladders ({kinds}); the one at the Beach bunker reaches its roof (222.26 m)')
         tower = [l for l in ladders if abs(l['lo'][0] - 21.02) < 0.1 and abs(l['lo'][2] - 144.55) < 0.1]
         check(tower and abs(tower[0]['lo'][1] - 222.81) < 0.05 and abs(tower[0]['box_lo_y'] - 218.65) < 0.05,
-              f'a guard tower ladder buried 4 m: its foot raised to the terrain (222.81 m, box bottom 218.65 m)')
+              'a guard tower ladder buried 4 m: its foot raised to the terrain (222.81 m, box bottom 218.65 m)')
         c = T.mean(1)
         for name, (x, y, z) in DECKS.items():
             near = (np.abs(c[:, 0] - x) < 10) & (np.abs(c[:, 2] - z) < 10) & (np.abs(c[:, 1] - y) < 0.05)

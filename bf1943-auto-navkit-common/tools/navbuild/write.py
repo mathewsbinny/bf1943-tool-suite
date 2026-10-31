@@ -43,7 +43,7 @@ def write_file(graphs, out_path, log, t0, state=None, settings=BFBC2):
             try:
                 same = hpdtool.write(hpdtool.parse(fh.read())) == data
             except (ValueError, struct.error) as e:
-                raise BuildError(f'{out_path}: the new file does not read back ({e}) - the previous one is kept')
+                raise BuildError(f'{out_path}: the new file does not read back ({e}) - the previous one is kept') from e
         if not same:
             raise BuildError(f'{out_path}: the new file does not read back exactly - the previous one is kept')
         os.replace(tmp, out_path)

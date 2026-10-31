@@ -343,7 +343,7 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
     t = hf.height(gpos[:, 0], gpos[:, 2])
     over_deep = t < sea - soldier1943.WATER_DEPTH
     island_rows = []
-    for k_i, I in enumerate(nav.islands):
+    for k_i, _I in enumerate(nav.islands):
         members = np.nonzero(isl == k_i)[0]
         flags = (rsnv.ISLD_MAIN if k_i == 0 else 0) | (rsnv.ISLD_CARRIER if len(members) and over_deep[members].mean() > 0.5 else 0)
         island_rows.append((len(members), int(members[0]) if len(members) else 0, flags, 0, 0))

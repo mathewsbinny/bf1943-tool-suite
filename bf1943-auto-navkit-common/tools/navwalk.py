@@ -418,7 +418,7 @@ def ladder_end_options(s, keep, gx, gz, stair, step, lad, reach=LADDER_REACH, lo
         cand.sort()
         piece = {}                                  # surface -> piece id, by a flood limited to the window
         reps = []
-        for d, k0 in cand:
+        for _d, k0 in cand:
             if k0 in piece:
                 continue
             pid = len(reps)

@@ -33,8 +33,8 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use()
-from bfbc2core import dbx
-from fbrb1943 import Bundle
+from bfbc2core import dbx  # noqa: E402
+from fbrb1943 import Bundle  # noqa: E402
 
 DEFAULT_GAME = os.path.join(SUITE, 'bf1943-xenia-kit', 'output', 'title', 'dist', 'xenon')
 LEVELS = ['wake_island_s', 'guadal_canal', 'iwo_jima_s', 'coral_sea']

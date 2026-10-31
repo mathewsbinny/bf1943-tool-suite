@@ -1,5 +1,4 @@
 """Classify explicit VX128-table encodings; preserve ambiguous/unknown candidates."""
-from pathlib import Path
 import collections
 import csv
 import hashlib

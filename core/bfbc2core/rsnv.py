@@ -806,7 +806,7 @@ def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(
     Returns (status, cost, [nodes], expansions)."""
     import heapq
     pos = w.node_pos
-    fe, tgt, cost, kind = w.node_first_edge, w.edge_target, w.edge_cost, w.edge_kind
+    fe, tgt, kind = w.node_first_edge, w.edge_target, w.edge_kind
     gx, gy, gz = (float(v) for v in pos[goal])
 
     scale = filter_scale(w, water_scale, kind_extra, penalty, tight_extra)

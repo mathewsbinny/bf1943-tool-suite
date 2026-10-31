@@ -16,12 +16,12 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use()
-import numpy as np
+import numpy as np  # noqa: E402
 
-import havok461
-import hkpack
-import levelobjects
-from fbrb1943 import Bundle
+import havok461  # noqa: E402
+import hkpack  # noqa: E402
+import levelobjects  # noqa: E402
+from fbrb1943 import Bundle  # noqa: E402
 
 failures = []
 GAME = os.environ.get('BF1943_GAME', os.path.join(SUITE, 'bf1943-xenia-kit', 'output', 'title', 'dist', 'xenon'))

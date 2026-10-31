@@ -687,7 +687,7 @@ def outside_every_function(kind, detail):
 def function_graph_edges(analysis):
     """The distinct (caller, callee function) pairs of the call edges (unresolved branches left out)."""
     pairs = set()
-    for caller, site, callee, kind, detail in analysis.edges:
+    for caller, _site, callee, kind, _detail in analysis.edges:
         if callee is None or 'branch_unresolved' in kind:
             continue
         if callee in analysis.starts:
@@ -718,11 +718,11 @@ def discover_functions(analysis, image, functions):
         # Entry points outside every known function: direct/tail call targets, then 4-aligned data words into code
         # gaps. Leaf functions need no .pdata record, so the exception table misses them.
         candidates = {}
-        for caller, site, target, kind, detail in analysis.edges:
+        for _caller, _site, target, kind, detail in analysis.edges:
             if target is not None and outside_every_function(kind, detail) and in_code(target, code_sections):
                 candidates.setdefault(target, 'inferred_call_target')
         if not rounds:
-            for offset, value in data_words(image):
+            for _offset, value in data_words(image):
                 if (value % 4 == 0 and value not in analysis.starts and in_code(value, code_sections)
                         and analysis.containing(value) is None and value not in image.import_thunks):
                     candidates.setdefault(value, 'inferred_data_pointer')
@@ -852,7 +852,7 @@ def main():
                 strings[address] = short
     string_refs, pointer_cells, code_pointer_cells = string_references(analysis, image, strings, code_targets)
     refs_by_string = collections.defaultdict(set)       # string address -> functions referencing it
-    for string_address, site, function_start, kind, _ in string_refs:
+    for string_address, _site, function_start, _kind, _ in string_refs:
         if function_start != '':
             refs_by_string[string_address].add(function_start)
 
@@ -860,7 +860,7 @@ def main():
     callees = collections.defaultdict(set)
     callers = collections.defaultdict(set)
     kinds_by_function = collections.defaultdict(collections.Counter)
-    for caller, site, callee, kind, detail in analysis.edges:
+    for caller, _site, callee, kind, _detail in analysis.edges:
         kinds_by_function[caller][kind] += 1
         if callee is not None:
             if callee in analysis.starts:

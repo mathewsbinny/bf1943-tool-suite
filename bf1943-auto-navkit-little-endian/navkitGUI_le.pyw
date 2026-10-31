@@ -163,8 +163,8 @@ class App:
             return []   # empty or unchanged: navkit_le.py uses its own / the saved area
         try:
             [float(v) for v in vals]
-        except ValueError:
-            raise ValueError('The sampling area must be numbers.')
+        except ValueError as e:
+            raise ValueError('The sampling area must be numbers.') from e
         return ['--box', ','.join(vals[:4]), '--y', ','.join(vals[4:])]
 
     # --- running steps ---------------------------------------------------------------------------------

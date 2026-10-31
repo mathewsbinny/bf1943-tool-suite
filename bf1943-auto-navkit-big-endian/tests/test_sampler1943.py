@@ -7,7 +7,6 @@ soldier settings, a ladder's ends on each piece of ground, the file NavKit's own
 (tiles outside the chosen sectors left empty).
 """
 import json
-import math
 import os
 import struct
 import sys

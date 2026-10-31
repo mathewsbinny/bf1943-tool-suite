@@ -123,7 +123,7 @@ def mesh_writes():
 def samples(tmp):
     for version in (1, 2):
         out = bytearray(navsample.HEADER.pack(b'ONS1', version, 0.8, 0.0, 0.0, 4, 1, 100, -100, 0.4, 0.3, 1.8, 0.1, 0))
-        for c in range(4):
+        for _c in range(4):
             out.append(2)
             for k in range(2):
                 out += struct.pack('<f3bB', float(k), 0, 127, 0, 0) + (struct.pack('<3I', 1, 2, 3) if version == 2 else b'')

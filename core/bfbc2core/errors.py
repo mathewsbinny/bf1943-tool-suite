@@ -154,7 +154,7 @@ def guard(tool=None, gui=None):
         raise
     except KeyboardInterrupt:
         logger().info('stopped (Ctrl+C)')
-        raise SystemExit(130)
+        raise SystemExit(130) from None
     except BaseException as e:
         report(e)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

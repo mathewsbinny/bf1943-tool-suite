@@ -89,7 +89,7 @@ def inputs(root, lv):
         try:
             xoff, zoff = sector_offsets(so[0])
         except ValueError as e:
-            raise RuntimeError(f'{lv}: {e}')
+            raise RuntimeError(f'{lv}: {e}') from e
     files = {k: os.path.join(L, k) for k in ('forbid_tris.npy', 'dynamic_tris.npy', 'stair_tris.npy', 'soldier_spawns.json')}
     missing = [k for k, p in files.items() if not os.path.isfile(p)]
     if missing:

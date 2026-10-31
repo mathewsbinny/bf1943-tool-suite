@@ -74,7 +74,7 @@ def write_bigf(files, template):
         raise ValueError('damaged BIGF template: a file starts inside its header')
     out = bytearray(template[:first])
     p, offsets = 16, []
-    for name, data in files:
+    for _name, data in files:
         while len(out) % 4:
             out.append(0)
         offsets.append((len(out), len(data)))
@@ -547,7 +547,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    import os
     # the suite's bootstrap (core/suitepath.py)
     import pathlib
     import sys

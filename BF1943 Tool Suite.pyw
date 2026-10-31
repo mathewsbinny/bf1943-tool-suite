@@ -131,8 +131,8 @@ class Hub:
     def child_env(args):
         """(environment, encoding to read its output with): a Python tool writes UTF-8 (2026-10-30: through a pipe
         it wrote the ANSI code page and died on a path outside it, a Cyrillic folder name); others (LevelDiff) keep
-        the system's."""
-        env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
+        the system's. No Python it starts writes __pycache__ folders into the suite (as `python -B`)."""
+        env = {**os.environ, 'PYTHONUNBUFFERED': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
         if args and os.path.normcase(str(args[0])) in (os.path.normcase(PYTHON), os.path.normcase(sys.executable)):
             env['PYTHONIOENCODING'] = 'utf-8'
             return env, 'utf-8'

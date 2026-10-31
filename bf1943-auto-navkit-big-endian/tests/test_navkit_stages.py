@@ -44,7 +44,6 @@ import navkit  # noqa: E402
 import navbuild  # noqa: E402  (bf1943-auto-navkit-common, a shared folder)
 import detailed1943  # noqa: E402
 import hpdcheck  # noqa: E402
-import jumplinks1943  # noqa: E402
 import levelobjects1943  # noqa: E402
 import navkitjson1943  # noqa: E402
 import navsample  # noqa: E402

@@ -5,7 +5,6 @@ Importing this module loads the checked image and the section and function table
 import its names (ROOT, data, word, functions, ...) directly, and code_references() reads the module's `word` and
 `functions` when it runs, so a test can replace them with a made-up function.
 """
-from pathlib import Path
 import collections
 import csv
 import hashlib

@@ -319,7 +319,7 @@ def trace_edges(level, areas, area_of, gi0, gj0, win=None):
 
 def drop_one_way(per_area, one_way, keep):
     """One-way candidates (trace_edges) not in keep (indices) become outline on their source area."""
-    for n, (src, t, key, along) in enumerate(one_way):
+    for n, (src, _t, key, along) in enumerate(one_way):
         if n in keep:
             continue
         se = per_area[src]
@@ -359,7 +359,7 @@ def restore_one_way(sectors, shared):
     keep = defaultdict(set)
     by_pair = defaultdict(list)
     for sec, (_per_area, one_way) in sectors.items():
-        for n, (src, t, key, along) in enumerate(one_way):
+        for n, (src, t, _key, _along) in enumerate(one_way):
             by_pair[(sec, src, t)].append(n)
     for (sec, src, t), ns in sorted(by_pair.items()):
         if find((sec, src)) != find((sec, t)):
@@ -412,7 +412,7 @@ def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
             if key[0] == 'E':
                 axis, line = key[2], key[3]
                 edges[key] = [r for r in edges[key] if (axis, line, r[0]) not in drop]
-        for (kind, target, axis, line, d), runs in edges.items():
+        for (kind, target, axis, line, _d), runs in edges.items():
             runs.sort()
             start = 0
             for r in range(1, len(runs) + 1):

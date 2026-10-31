@@ -20,8 +20,8 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
     import suitepath
     suitepath.use()
-import bots
-import ppcasm
+import bots  # noqa: E402
+import ppcasm  # noqa: E402
 
 failures = []
 BASE = 0x82000000
@@ -67,7 +67,7 @@ def mailbox():
           f'the block layout: header, {bots.MAX_BOTS} bot records of {bots.BOT_SIZE:#x}, {bots.MAX_FLAGS} flag records '
           f'of {bots.FLAG_SIZE:#x}, {bots.BLOCK_SIZE:#x} bytes')
     try:
-        import capstone
+        import capstone  # noqa: F401  (only whether it is installed)
     except ImportError:
         print('skip capstone checks: capstone is not installed')
         return
@@ -98,7 +98,7 @@ def mailbox():
              bots.F_Z, bots.F_SEQ_END}
     check(offsets('stw', 'r29') == header | flags, f'the header (at creation) and flag records: {sorted(offsets("stw", "r29"))}')
     check(offsets('stw', 'r3') >= {bots.H_FLAGS, bots.H_TICK}, 'the tick\'s flag count and tick go to the header')
-    want = [f'std r22, -0x58(r1)', f'ld r22, -0x58(r1)', f'cmplwi r5, {bots.STALE:#x}', f'li r3, {bots.ALLOC_SIZE:#x}',
+    want = ['std r22, -0x58(r1)', 'ld r22, -0x58(r1)', f'cmplwi r5, {bots.STALE:#x}', f'li r3, {bots.ALLOC_SIZE:#x}',
             'bl 0x82627d10', 'bl 0x825c5470', 'bl 0x825c1290', 'lbz r5, 0xad(r27)', 'lwz r5, 0x80(r27)', 'lwz r5, 0xa0(r27)',
             'lwz r5, 0x114(r5)', f'lis r4, {bots.MAGIC >> 16:#x}', f'ori r4, r4, {bots.MAGIC & 0xFFFF:#x}',
             f'lis r5, {((bots.CP_TYPE + 0x8000) >> 16) - 0x10000:#x}', f'addi r5, r5, {bots.CP_TYPE & 0xFFFF:#x}']

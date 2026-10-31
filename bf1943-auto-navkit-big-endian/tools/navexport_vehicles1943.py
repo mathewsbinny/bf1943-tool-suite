@@ -263,7 +263,7 @@ def flags_of(lv, game=None):
 
 def carrier_team(S, V, isl):
     """The team of a carrier island: its boarding transfers' team mask (1 or 2)."""
-    for k, kind, team, vn, sn in rsnvtrip.transfers(S, V):
+    for _k, kind, team, _vn, sn in rsnvtrip.transfers(S, V):
         if kind == rsnvtrip.OFFM_BOARD and sn is not None and int(S.node_island[sn]) == isl and team in (1, 2):
             return team
     return 3

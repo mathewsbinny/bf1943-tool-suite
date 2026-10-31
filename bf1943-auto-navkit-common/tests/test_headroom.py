@@ -1,21 +1,16 @@
-r"""NavKit's headroom band (navwalk.HEADROOM_BAND, headroom, low_headroom) on a sample grid built here (no game data):
-ground with the next surface above it 0.5-2.0 m higher is not walkable; 0.4 m (a step) and 2.5 m (a ceiling) keep
-their ground; a soldier overhead does not count; the deck itself (nothing above) stays; the rule off keeps it all.
+r"""NavKit (both variants): headroom band
 
-  python test_headroom.py
+navwalk.HEADROOM_BAND, headroom and low_headroom on a sample grid built here (no game data): ground with the next
+surface above it 0.5-2.0 m higher is not walkable; 0.4 m (a step) and 2.5 m (a ceiling) keep their ground; a soldier
+overhead does not count; the deck itself (nothing above) stays; the rule off keeps it all.
+
+A pytest-style test (README "Tests"): python -B -m pytest <this file>, or run_tests.py.
 """
-import sys
 from types import SimpleNamespace
 
 import numpy as np
 
-if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
-    import pathlib
-    import sys
-    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
-    import suitepath
-    suitepath.use()
-import navwalk  # noqa: E402
+import navwalk
 
 
 def grid():
@@ -34,33 +29,29 @@ def grid():
                            normal=np.tile(np.array([0.0, 1.0, 0.0], np.float32), (n, 1)))
 
 
-def main(argv):
-    failed = 0
-
-    def check(ok, what):
-        nonlocal failed
-        failed += not ok
-        print(f'{"ok  " if ok else "FAIL"} {what}')
-
+def test_headroom():
     s = grid()
     char = s.hit[:, 0] == navwalk.CHARACTER_SHAPE_VTABLE
     h = navwalk.headroom(s, char)
     # surfaces: col0 floor (0); col1 floor (1), step (2); col2 floor (3), deck (4); col3 floor (5), ceiling (6); col4 floor (7), soldier (8)
-    check(np.isinf(h[0]) and abs(h[1] - 0.4) < 1e-6 and abs(h[3] - 1.8) < 1e-6 and abs(h[5] - 2.5) < 1e-6,
-          'headroom: nothing / a step / a deck / a ceiling above the floor')
-    check(np.isinf(h[7]), 'a soldier above does not count')
+    assert np.isinf(h[0]) and abs(h[1] - 0.4) < 1e-6 and abs(h[3] - 1.8) < 1e-6 and abs(h[5] - 2.5) < 1e-6, \
+        'headroom: nothing / a step / a deck / a ceiling above the floor'
+    assert np.isinf(h[7]), 'a soldier above does not count'
     low = navwalk.low_headroom(s, char, 0.5, 2.0)
-    check(bool(low[3]) and not low[1] and not low[5] and not low[0] and not low[4], 'only the floor under the 1.8 m deck is in the band')
+    assert bool(low[3]) and not low[1] and not low[5] and not low[0] and not low[4], \
+        'only the floor under the 1.8 m deck is in the band'
+
+
+def test_walkable_under_the_band():
+    s = grid()
     keep = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(0.0, 0.0, 0.0), (1.6, 1.8, 0.0), (2.4, 0.0, 0.0)])     # col 3 is cut off from col 0 once col 2 goes
-    check(not keep[3], 'the floor under the deck is not walkable')
-    check(bool(keep[0] and keep[1] and keep[5]), 'open floor, the floor under a step-height surface and under a ceiling stay')
+    assert not keep[3], 'the floor under the deck is not walkable'
+    assert bool(keep[0] and keep[1] and keep[5]), 'open floor, the floor under a step-height surface and under a ceiling stay'
+
+
+def test_rule_off_and_default_band():
+    s = grid()
     keep_off = navwalk.walkable(s, step=0.28, stairs=False, extra_seeds=[(0.0, 0.0, 0.0), (1.6, 1.8, 0.0)],
                                 headroom_band=None)
-    check(bool(keep_off[3]), 'rule off: the floor under the deck is kept as before')
-    check(navwalk.HEADROOM_BAND == (0.5, 2.0), 'default band 0.5-2.0 m')
-    print('all passed' if not failed else f'{failed} check(s) failed')
-    return 1 if failed else 0
-
-
-if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+    assert bool(keep_off[3]), 'rule off: the floor under the deck is kept as before'
+    assert navwalk.HEADROOM_BAND == (0.5, 2.0), 'default band 0.5-2.0 m'

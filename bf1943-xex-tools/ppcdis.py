@@ -4,12 +4,11 @@
 
 Capstone has no VMX128 decoding; those words print as .long. For research reading only.
 """
-import struct
 import sys
 
 sys.dont_write_bytecode = True
-import capstone
-from xexrefs import BASE, data, word, cstring
+import capstone  # noqa: E402
+from xexrefs import BASE, data, word  # noqa: E402
 
 disassembler = capstone.Cs(capstone.CS_ARCH_PPC, capstone.CS_MODE_64 | capstone.CS_MODE_BIG_ENDIAN)
 

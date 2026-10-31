@@ -8,7 +8,8 @@ r"""The repository's own rules, checked before anything is pushed (no game data 
 - sys.path is changed only by the suite's bootstrap (core/suitepath.py): no other edit in any Python file, and the
   bootstrap only where a script runs (under `if __name__ == '__main__':`); the folders it puts on sys.path share no
   module name, the two NavKit variants included (their shared modules are one copy in bf1943-auto-navkit-common
-  since 2026-10-31), so the order a script names them in changes nothing it imports.
+  since 2026-10-31), so the order a script names them in changes nothing it imports;
+- the lint (ruff) leaves out exactly the VMX fingerprint's Python inputs, which are never edited.
 
   python tests\test_repo.py
 """
@@ -147,6 +148,13 @@ def main(argv):
         dev_dirs = tomllib.load(f)['tool']['hatch']['build']['targets']['wheel']['dev-mode-dirs']
     results.append(('an editable install puts the shared folders on sys.path (pyproject dev-mode-dirs = suitepath.SHARED)',
                     [] if dev_dirs == suitepath.SHARED else [f'pyproject: {dev_dirs}', f'suitepath: {suitepath.SHARED}']))
+    import vmx_inputs
+    with open(os.path.join(SUITE, 'pyproject.toml'), 'rb') as f:
+        lint_skips = set(tomllib.load(f)['tool']['ruff']['extend-exclude'])
+    vmx_py = {i for i in vmx_inputs.INPUTS if i.endswith(('.py', '.pyw'))}
+    results.append(("the lint skips the VMX fingerprint's Python inputs, and only those (pyproject [tool.ruff] "
+                    'extend-exclude = vmx_inputs.INPUTS .py files, besides work and output)',
+                    sorted(vmx_py ^ (lint_skips - {'work', 'output'}))))
 
     failed = 0
     for name, problems in results:

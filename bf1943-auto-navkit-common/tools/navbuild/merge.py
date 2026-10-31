@@ -143,7 +143,7 @@ def merge_coincident_border(graphs, log=print):
             if p[0] & 0x80000000:
                 border_at.setdefault(key(p), q)
         ids = []
-        for q, p in enumerate(pts):
+        for _q, p in enumerate(pts):
             if p[0] & 0x80000000:
                 ids.append(find(p[0]))
             elif key(p) in border_at:

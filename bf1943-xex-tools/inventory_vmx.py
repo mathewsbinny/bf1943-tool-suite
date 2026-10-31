@@ -1,5 +1,4 @@
 """Bounded lvx128/stvx128 candidate inventory within known BF1943 function ranges."""
-from pathlib import Path
 import collections
 import csv
 import hashlib

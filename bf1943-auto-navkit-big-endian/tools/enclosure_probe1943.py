@@ -145,7 +145,7 @@ def main(argv):
     by_owner = defaultdict(lambda: {'surfaces': set(), 'rise': [], 'over': 0, 'xz': []})
     for k, (i, j, edge_y) in edge.items():
         px, pz = s.min_x + i * s.pitch, s.min_z + j * s.pitch
-        for tri, low, high, over in blockers(T, N, steep, slope, tri_lo, tri_hi, px, pz, edge_y):
+        for tri, _low, high, over in blockers(T, N, steep, slope, tri_lo, tri_hi, px, pz, edge_y):
             entry = by_owner[owner(tri)]
             entry['surfaces'].add(k)
             entry['rise'].append(min(high, edge_y + ns.HEIGHT) - edge_y)

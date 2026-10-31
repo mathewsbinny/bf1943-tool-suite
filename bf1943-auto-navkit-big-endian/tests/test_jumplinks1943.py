@@ -33,7 +33,7 @@ def side(pitch=0.2, n=50):
     """Columns along x: deck (x < 2.0), the edge band at platform height, blocked (2.0-2.6), the platform (2.6-6.0),
     its rail top at the deck's height (6.0-6.2), open water beyond; the sea bed at -20 under everything."""
     cols = []
-    for j in range(n):
+    for _j in range(n):
         for i in range(n):
             x = i * pitch
             s = []
