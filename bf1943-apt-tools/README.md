@@ -15,7 +15,11 @@ Reader, disassembler and block rewriter for BF1943's menu movies (`Menu/*.res`: 
 python -B apt.py <menu .res>      # validate one movie
 ```
 
-The exit code is 0 when the movie has no problem and 1 when validation found one (each is printed).
+The exit code is 0 when the movie has no problem, 1 when validation found one (each is printed), and 2 when the
+movie cannot be read (not a menu `.res`, cut short, a count or pointer past its `.apt`; a message, no traceback). A
+damaged movie raises `ValueError` from the reader; counts are capped by what the file could hold, and frame items by
+one per word of the `.apt`, so a crafted movie is refused at once. Branch targets must be instructions of the block
+(the byte after its End is refused, as the rewriter cannot relink it); `write_bigf` takes the template's names only.
 
 Rules that come from the game itself (pointer fixup `829748f8`):
 - A block is walked linearly to its first End, so code reached only by a branch is never relocated. Relocate whole blocks.

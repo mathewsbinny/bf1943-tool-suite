@@ -82,7 +82,7 @@ on a made-up kit build and a stand-in Xenia in folders with a space: each path a
 
 `python tests\test_guestmem.py` (quick tier; no Xenia): `guestmem.py` on a made-up guest memory laid out as `bots.py`'s
 mailbox v2: attach, the records and flags, torn records, `input` and `throttle` (under the sequence lock: the
-sequence odd, the stamp and fields, the sequence even; zeroed afterwards), `stop`, a block of another version
+sequence odd, the stamp and fields in one write, the sequence even: three writes, nine before 2026-10-31; zeroed afterwards), `stop`, a block of another version
 refused, `--help`; a command write against the bot code's read (`bots.guest_command`) wherever its writes land
 between the guest's loads (a whole command or none, never a mix); the state and flag record reads against the bot
 code's writes (`bots.guest_record`, its order) landing between guestmem's loads, at steady paces and in two bursts

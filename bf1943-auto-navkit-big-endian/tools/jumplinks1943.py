@@ -17,7 +17,9 @@ and tight height bands, so navbuild seeds the far floor and links them both ways
 instead of climbing. A third rule, jump links onto wide raised floors on land (RAISED_FLOORS), is kept but off.
 
   jumplinks1943.py <level> [--json out.json] [--game <dist\xenon folder>]
-      (needs navkit.py prepare and sample; writes navkit/jump_links.json; navkit.py build runs it with its --game)
+      (needs navkit.py prepare and sample; writes navkit/jump_links.json; navkit.py build runs it with its --game.
+      The build stamps that file's SHA-256: written again with other links, the export and the audit refuse the build
+      until it is built again; a --game other than the prepared copy is refused unless --json writes elsewhere)
 """
 import argparse
 import json
@@ -457,7 +459,8 @@ def level_links(lv, log=print, game=None, detailed=None):
         detailed = current_detailed(st)
     game = game1943.find_game(game or st.get('game'))
     g = game1943.Game(game, lv)
-    hf = terrain.read(g.data(f'terrains/{lv}/{lv}.heightfield-000.res'))
+    # the height field the level was prepared with; a game copy changed since is refused (second review)
+    hf = terrain.read(nj.prepared_heightfield(st, lv, g.data(f'terrains/{lv}/{lv}.heightfield-000.res')))
     m = spawnmap.spawn_map(game, lv)
     guns = [(s['name'], s['position']) for o in m['objectives'] for s in o['spawns'] if s.get('vehicle') in GUNS]
     guns += [(s['name'], s['position']) for s in m.get('unowned_vehicle_spawns', []) if s.get('vehicle') in GUNS]
@@ -516,6 +519,15 @@ def main(argv):
     ap.add_argument('--game', help='the game folder (default: the copy the level was prepared from)')
     a = ap.parse_args(argv[1:])
     import navaudit1943
+    import navkitjson1943 as nj
+    if a.json is None and a.game is not None:
+        # the build's own jump_links.json: only from the copy the level was prepared from (navkit.py's same_game rule;
+        # 2026-10-30 second review: another copy's AA guns replaced the build's links, and the export used them)
+        st = nj.read(a.level)
+        if not nj.same_file(st.get('game'), a.game):
+            print(f'error: {a.level}: prepared from {st.get("game")}, not {a.game}: jump links of another copy are not '
+                  f'written over the build\'s (pass --json <file>, or prepare again: navkit.py prepare {a.level})')
+            return 1
     links = level_links(a.level, game=a.game)
     path = a.json or os.path.join(navaudit1943.level_paths(a.level)['navkit'], 'jump_links.json')
     with open(path, 'w', encoding='utf-8', newline='\n') as f:

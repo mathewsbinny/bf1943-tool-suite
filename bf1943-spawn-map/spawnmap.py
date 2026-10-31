@@ -223,17 +223,30 @@ def main(argv):
     for m in maps:
         show(m)
     if a.json:
-        with open(a.json, 'w', encoding='utf-8', newline='\n') as f:
-            json.dump(maps, f, indent=1)
+        write_whole(a.json, json.dumps(maps, indent=1))
     if a.navflags:
-        for m in maps:
-            folder = os.path.join(WORK, 'levels', m['level'], 'navkit')
+        # every level's text first (a level that cannot be written - a duplicate index - writes none), then each
+        # file put in place whole: an existing flags file is never left empty or half written
+        texts = [(m['level'], flags_text(m)) for m in maps]
+        for level, text in texts:
+            folder = os.path.join(WORK, 'levels', level, 'navkit')
             os.makedirs(folder, exist_ok=True)
-            path = os.path.join(folder, f'{m["level"]}.flags.txt')
-            with open(path, 'w', encoding='utf-8', newline='\n') as f:
-                f.write(flags_text(m))
+            path = os.path.join(folder, f'{level}.flags.txt')
+            write_whole(path, text)
             print(f'wrote {path}')
     return 0
+
+
+def write_whole(path, text):
+    """text (UTF-8, LF) at path, replacing the file only once the new one is written whole."""
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 if __name__ == '__main__':

@@ -56,6 +56,68 @@ def made_up(branch):
     return bytes(out)
 
 
+def res_of(apt_bytes):
+    """made_up()'s archive around another .apt (the same .const)."""
+    good = made_up(0)
+    return aptmod.write_bigf([('menu.apt', apt_bytes), aptmod.bigf(good)[1]], good)
+
+
+def second_review(tmp, env):
+    """2026-10-30 second review: a movie that cannot be read exits 2 with a message (a traceback and exit 1 before);
+    a branch to the byte after the block's End is a problem (it passed, and the rewriter then failed on it); a crafted
+    movie whose frames name every word many times over is refused at once (it was read for minutes); an archive whose
+    file runs past its end is refused; write_bigf refuses other names than the template's."""
+    import time
+    base = bytearray(aptmod.bigf(made_up(0))[0][1])
+
+    def cli(data):
+        path = os.path.join(tmp, 'sr.res')
+        open(path, 'wb').write(data)
+        t = time.time()
+        r = subprocess.run([PY, '-B', TOOL, path], capture_output=True, text=True, errors='replace', env=env)
+        return r.returncode, r.stdout + r.stderr, time.time() - t
+
+    a1 = bytearray(base)
+    struct.pack_into('>I', a1, 0x10 + 12, 0x7000)                      # the frame table past the .apt
+    code, out, _ = cli(res_of(bytes(a1)))
+    check(code == 2 and 'Traceback' not in out and 'could not be read' in out,
+          f'a frame table past the .apt: exit {code}, a message, no traceback ({out.strip()[-90:]})')
+    a2 = bytearray(base)
+    struct.pack_into('>i', a2, 0x74, 1)                                 # BranchAlways -> 0x79, the byte after End
+    code, out, _ = cli(res_of(bytes(a2)))
+    check(code == 1 and 'not an instruction' in out, f'a branch past the block\'s End is a problem: exit {code}')
+    try:
+        aptmod.Rewriter(aptmod.Apt(res_of(bytes(a2)))).block(0x70)
+        why = 'relinked'
+    except ValueError as e:
+        why = str(e)
+    except Exception as e:
+        why = f'{type(e).__name__}: {e}'
+    check('not an instruction' in why, f'the rewriter refuses it in words ({why[:80]})')
+    size = 0x10000                                                      # 64 KB: 30 s before
+    a3 = bytearray(size)
+    a3[:len(base)] = base
+    half = size // 2
+    for o in range(0x100, half, 4):                                     # item pointers to a word of 0 (kind 0)
+        struct.pack_into('>I', a3, o, 0x80)
+    for o in range(half, size, 8):                                      # every frame lists every item
+        struct.pack_into('>II', a3, o, (half - 0x100) // 4, 0x100)
+    struct.pack_into('>II', a3, 0x10 + 8, half // 8, half)
+    code, out, took = cli(res_of(bytes(a3)))
+    check(code == 2 and took < 10, f'frames naming every word many times over: refused at once (exit {code}, {took:.1f} s)')
+    cut = bytearray(made_up(0))
+    struct.pack_into('>I', cut, 16 + 4, 0x10000)                        # menu.apt's size past the archive
+    code, out, _ = cli(bytes(cut))
+    check(code == 2 and 'Traceback' not in out, f'an archive whose file runs past its end: exit {code}')
+    good = made_up(0)
+    try:
+        aptmod.write_bigf([('menu.const', b'x'), ('menu.apt', b'y')], good)
+        why = 'written'
+    except ValueError as e:
+        why = str(e)
+    check('differ' in why, f'write_bigf refuses names other than the template\'s, in its order ({why[:60]})')
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix='apt_cli_')
     try:
@@ -67,6 +129,7 @@ def main():
             r = subprocess.run([PY, '-B', TOOL, path], capture_output=True, text=True, errors='replace', env=env)
             check(r.returncode == code_wanted and says in r.stdout,
                   f'{label}: exit {r.returncode}, "{says}"' + ('' if r.returncode == code_wanted else '\n       ' + (r.stdout + r.stderr).strip()))
+        second_review(tmp, env)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('all passed' if not failures else f'{len(failures)} failed')

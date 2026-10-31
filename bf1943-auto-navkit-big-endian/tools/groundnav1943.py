@@ -578,7 +578,7 @@ def build(lv, cls, log=print, game=None):
     meta_sources['soldier rsnv'] = soldier
     stats = rsnvgrid1943.export_surfaces(lv, cls, g, kept, table, nodes, edges, seeds, out, st, meta_sources, sea, log,
                                          soldier=soldier, objectives=spawn_seeds.objectives)
-    vc.record(lv, 'worlds', want, cls)
+    vc.record(lv, 'worlds', dict(want, sha256=sha256(out)), cls)   # the file itself too (second review)
     stats['seconds'] = round(time.time() - t0, 1)
     log(f'{lv} {cls}: wrote {out} in {stats["seconds"]:.0f} s')
     return out, stats

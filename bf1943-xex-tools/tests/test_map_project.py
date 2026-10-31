@@ -6,7 +6,11 @@ Ghidra's headless analyzer exits 0 when a post-script throws, and ValidateXex.ja
 a pass. Run against a scratch workspace with BF1943_JAVA naming a stand-in that exits 0 and does what each case says:
 - writes nothing (the script threw): the step fails, and an old PASS left from an earlier run is gone;
 - writes PASS (and a warning on stderr): the step passes;
-- exits 1: the step fails.
+- exits 1: the step fails;
+- -Script ApplyHelpers.java: a helper-application.txt cut short (no closing "function count=" line) fails, a whole one
+  passes;
+- -Script DumpCode.java (a script whose result cannot be confirmed): refused before java runs (before 2026-10-31 any
+  such script's failure passed as success).
 Windows only (PowerShell); skips elsewhere.
 """
 import os
@@ -21,9 +25,14 @@ FAKE = r'''import os, sys
 args = sys.argv[1:]
 mode = os.environ['FAKE_JAVA_MODE']
 root = args[args.index('-postScript') + 2]
+open(os.path.join(root, 'java-ran'), 'w').write(args[args.index('-postScript') + 1])
 sys.stderr.write('WARNING: a JVM warning on stderr\n')
 if mode == 'pass':
     open(os.path.join(root, 'saved-validation.txt'), 'w').write('PASS functions=1 made up\n')
+if mode == 'apply_partial':
+    open(os.path.join(root, 'helper-application.txt'), 'w').write('__savegprlr_14 82000000..82000010 instructions=4/4\n')
+if mode == 'apply_whole':
+    open(os.path.join(root, 'helper-application.txt'), 'w').write('__savegprlr_14 x\nsuffix entries=1\nfunction count=2\n')
 sys.exit(1 if mode == 'exit1' else 0)
 '''
 
@@ -47,10 +56,10 @@ def main():
         open(cmd, 'w', encoding='ascii').write(f'@"{sys.executable}" -B "{fake}" %*\r\n')
         saved = os.path.join(root, 'work', 'xex-analysis', 'saved-validation.txt')
 
-        def run(mode):
+        def run(mode, *args):
             env = dict(os.environ, BF1943_RESEARCH=root, BF1943_JAVA=cmd, FAKE_JAVA_MODE=mode)
             return subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                                   os.path.join(TOOLS, 'map_project.ps1'), '-ValidateOnly'], env=env, cwd=root,
+                                   os.path.join(TOOLS, 'map_project.ps1'), *(args or ['-ValidateOnly'])], env=env, cwd=root,
                                   capture_output=True, text=True)
         open(saved, 'w').write('PASS functions=33232 from an earlier run\n')
         r = run('silent')
@@ -62,6 +71,18 @@ def main():
               'a pass written this run (and a warning on stderr) passes' + ('' if r.returncode == 0 else ': ' + r.stderr[-300:]))
         r = run('exit1')
         check(r.returncode != 0, 'java exiting 1 fails the step')
+        r = run('apply_partial', '-Script', 'ApplyHelpers.java')
+        check(r.returncode != 0 and 'did not finish' in r.stderr,
+              'ApplyHelpers.java stopped part way (no closing "function count=" line): the step fails'
+              + ('' if r.returncode else ': it passed'))
+        r = run('apply_whole', '-Script', 'ApplyHelpers.java')
+        check(r.returncode == 0, 'ApplyHelpers.java whole: the step passes' + ('' if r.returncode == 0 else ': ' + r.stderr[-300:]))
+        ran = os.path.join(root, 'work', 'xex-analysis', 'java-ran')
+        os.remove(ran)
+        r = run('silent', '-Script', 'DumpCode.java')
+        check(r.returncode != 0 and 'cannot confirm' in r.stderr and not os.path.exists(ran),
+              'a script whose result cannot be confirmed (DumpCode.java) is refused before java runs'
+              + ('' if r.returncode else ': it passed'))
 
 
 if __name__ == '__main__':

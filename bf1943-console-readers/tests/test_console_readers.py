@@ -39,6 +39,7 @@ def build_stfs(path, read_only, top_name='top.txt'):
     h[0:4] = b'LIVE'
     header_size = 0x971A
     struct.pack_into('>I', h, 0x340, header_size)
+    h[0x379] = 0x24                                     # the volume descriptor's size
     h[0x37B] = 1 if read_only else 0
     struct.pack_into('<H', h, 0x37C, 1)
     h[0x37E:0x381] = (0).to_bytes(3, 'little')
@@ -241,6 +242,50 @@ def main(argv):
         except ValueError as e:
             why = str(e)
         c.check('second copies' in why, 'stfs: a package whose second hash-table copies are current is refused', why)
+        # 2026-10-30 second review: two table copies over more than one level (level-1 entries choose the current
+        # level-0 copy, which the reader does not follow) refused; a read-only one of that size still reads; a header or
+        # file table cut short is a damaged package, not an IndexError
+        for read_only, wanted in ((False, 'level-1'), (True, None)):
+            build_stfs(path, read_only)
+            with open(path, 'r+b') as f:
+                f.seek(0x395)
+                f.write(struct.pack('>I', 0xAB))                        # 171 allocated blocks
+            try:
+                stfs.Package(path).f.close()
+                why = 'read without an error'
+            except ValueError as e:
+                why = str(e)
+            label = 'read-only package' if read_only else 'package with two copies of each table'
+            c.check(wanted in why if wanted else why == 'read without an error',
+                    f'stfs: a {label} of more than 0xAA blocks is {"refused" if wanted else "read"}', why)
+        for label, cut in (('a header cut short', 0x200), ('a file table cut short', table + 0x100)):
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                f.truncate(cut)
+            try:
+                stfs.Package(path).f.close()
+                why = 'read without an error'
+            except ValueError as e:
+                why = str(e)
+            except Exception as e:
+                why = f'{type(e).__name__}: {e}'
+            c.check(why.startswith('damaged package'), f'stfs: {label} is a damaged package', why)
+        # 2026-10-30 second review (user's): no signature, or a header that is no STFS header, is refused
+        for label, edit in (('4,096 zero bytes', lambda f: (f.truncate(0), f.write(bytes(0x1000)))),
+                            ('another signature', lambda f: (f.seek(0), f.write(b'XEX2'))),
+                            ('a volume descriptor of another size', lambda f: (f.seek(0x379), f.write(bytes([0x10])))),
+                            ('a file table of no blocks', lambda f: (f.seek(0x37C), f.write(bytes(2))))):
+            build_stfs(path, True)
+            with open(path, 'r+b') as f:
+                edit(f)
+            try:
+                stfs.Package(path).f.close()
+                why = 'read without an error'
+            except ValueError as e:
+                why = str(e)
+            except Exception as e:
+                why = f'{type(e).__name__}: {e}'
+            c.check(why.startswith('not an STFS package'), f'stfs: {label} is not an STFS package', why)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print('all passed' if not c.failed else f'{c.failed} check(s) failed')

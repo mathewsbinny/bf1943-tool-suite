@@ -419,10 +419,10 @@ namespace Bfbc2Dbx.Gui
                 }
                 if (!e.IsContainer && value.Text != XmlExport.ValueText(doc, e))
                 {
-                    bool rounded;
-                    e.Payload = XmlImport.EncodeValue(doc, e, value.Text, out rounded);
+                    string note;
+                    e.Payload = XmlImport.EncodeValue(doc, e, value.Text, out note);
                     valueChanged = true;
-                    if (rounded) Log("Rounded to the nearest 4-byte value: " + XmlExport.ValueText(doc, e));
+                    if (note != null) Log("Value written: " + XmlExport.ValueText(doc, e) + " (" + note + ")");
                 }
                 if (!valueChanged && changedAttributes.Count == 0) return;
                 PushUndo(before);
@@ -461,6 +461,31 @@ namespace Bfbc2Dbx.Gui
             return "# edited " + label + " in " + (guid ?? "partition") + " (no command form)";
         }
 
+        // A command for the edit script when each argument survives DbxEdit's reading of a script line (split at
+        // '|', the line trimmed, one line); else a comment saying it has no command form, so that a replay never
+        // does something else than the window did.
+        // the set-everywhere dialog's value: true, false or a byte (written as the user likes: " 7", "+7", "007")
+        internal static bool SetValue(string v, out byte b)
+        {
+            b = 0;
+            if (v == "true") { b = 1; return true; }
+            if (v == "false") return true;
+            return byte.TryParse(v, out b);
+        }
+
+        // set= with the value as DbxEdit reads it (true, false or the plain number), so the replay takes it
+        internal static string SetCommand(string name, string typed, byte b)
+        {
+            return ScriptCommand("set=", name, typed == "true" || typed == "false" ? typed : b.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        internal static string ScriptCommand(string verb, params string[] args)
+        {
+            bool ok = args.All(a => a != null && a.IndexOfAny(new[] { '|', '\r', '\n' }) < 0 && a == a.Trim());
+            string line = verb + string.Join("|", args.Select(a => a ?? ""));
+            return ok ? line : "# " + line.Replace("\r", " ").Replace("\n", " ") + " (no command form: a value holds '|', a line break or a space at an end)";
+        }
+
         void GoToReference()
         {
             var e = Selected;
@@ -476,6 +501,12 @@ namespace Bfbc2Dbx.Gui
             var inst = InstanceOf(tree.SelectedNode);
             if (inst == null) return;
             string guid = doc.Get(inst, "guid");
+            if (string.IsNullOrEmpty(guid))
+            {
+                // Drop matches by GUID: with none it would take every instance that has none
+                Log("This instance has no GUID: it cannot be removed by GUID (DbxEdit's drop), so it is left.");
+                return;
+            }
             if (MessageBox.Show(this, "Remove instance " + Label(inst) + "?\n\nList entries pointing to it are removed, other references to it become null.",
                                 "Remove instance", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
             Snapshot();
@@ -562,7 +593,7 @@ namespace Bfbc2Dbx.Gui
             Snapshot();
             string guid = doc.Get(inst, "guid"), array = doc.Get(e, "name");
             if (!new Editor(doc).AddItem(guid, array, r, null)) { undo.Pop(); Log("additem: the array has no item to copy the shape from"); return; }
-            script.Add("additem=" + guid + "|" + array + "|" + r);
+            script.Add(ScriptCommand("additem=", guid, array, r));
             Log("additem " + r + " -> " + array);
             Rebuild(e);
         }
@@ -576,7 +607,7 @@ namespace Bfbc2Dbx.Gui
             Snapshot();
             int n = new Editor(doc).Replace(from, to);
             if (n == 0) { undo.Pop(); Log("replace: not found: " + from); return; }
-            script.Add("replace=" + from + "|" + to);
+            script.Add(ScriptCommand("replace=", from, to));
             Log("replace " + from + " -> " + to + ": " + n + " string(s)");
             Rebuild(Selected);
         }
@@ -593,7 +624,7 @@ namespace Bfbc2Dbx.Gui
             var list = except.Split('|').Where(x => x.Length > 0).ToList();
             int n = new Editor(doc).ReplacePrefix(from, to, list);
             if (n == 0) { undo.Pop(); Log("replaceprefix: no string starts with " + from); return; }
-            script.Add("replaceprefix=" + from + "|" + to + (list.Count > 0 ? "|" + string.Join("|", list) : ""));
+            script.Add(ScriptCommand("replaceprefix=", new[] { from, to }.Concat(list).ToArray()));
             Log("replaceprefix " + from + " -> " + to + ": " + n + " string(s)");
             Rebuild(Selected);
         }
@@ -604,7 +635,7 @@ namespace Bfbc2Dbx.Gui
             if (string.IsNullOrEmpty(name)) return;
             Snapshot();
             int n = new Editor(doc).DropField(name);
-            script.Add("dropfield=" + name);
+            script.Add(ScriptCommand("dropfield=", name));
             Log("dropfield " + name + ": " + n + " element(s)");
             Rebuild(null);
         }
@@ -616,11 +647,11 @@ namespace Bfbc2Dbx.Gui
             string v = Prompt.Ask(this, "Set bool / byte field everywhere", "Value (true, false or 0-255):", "true");
             if (v == null) return;
             byte b;
-            if (v == "true") b = 1; else if (v == "false") b = 0; else if (!byte.TryParse(v, out b)) { Log("set: not true, false or 0-255"); return; }
+            if (!SetValue(v, out b)) { Log("set: not true, false or 0-255"); return; }
             Snapshot();
             int n = new Editor(doc).SetByte(name, b);
             if (n == 0) { undo.Pop(); Log("set: no bool/byte field " + name); return; }
-            script.Add("set=" + name + "|" + v);
+            script.Add(SetCommand(name, v, b));
             Log("set " + name + " = " + v + ": " + n + " field(s)");
             Rebuild(Selected);
         }
@@ -632,7 +663,7 @@ namespace Bfbc2Dbx.Gui
             if (string.IsNullOrEmpty(g) || g == current) return;
             Snapshot();
             new Editor(doc).SetPartitionGuid(g);
-            script.Add("partguid=" + g);
+            script.Add(ScriptCommand("partguid=", g));
             Log("partguid " + g);
             Rebuild(null);
         }

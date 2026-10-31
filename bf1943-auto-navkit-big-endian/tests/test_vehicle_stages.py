@@ -213,7 +213,9 @@ if __name__ == '__main__':
         check(not rep['problems'] and 'absent' in rep['worlds'].get('jeep', {}) and not os.path.isfile(jeep),
               f'a class the level has none of is no problem, and its old world goes ({rep["worlds"]})')
         open(jeep, 'wb').write(b'a jeep world')
-        vc.record(LV, 'worlds', dict(vc.inputs(st, LV, 'jeep'), soldier='0' * 64), 'jeep')
+        # stamped by hand: record() refuses a world on a soldier world other than the current export (second review)
+        edit_settings(lambda s: s.setdefault('vehicles', {}).setdefault('worlds', {}).update(
+            jeep=dict(vc.inputs(st, LV, 'jeep'), soldier='0' * 64, time='t')))
         rep = nv.check(LV, ['jeep'], log=quiet)
         check(any('not built from the current' in p for p in rep['problems']),
               f'a world on another soldier world is a problem, not checked as current ({rep["problems"]})')

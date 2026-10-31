@@ -32,10 +32,12 @@ level unlike every shipped one.
 
 **The game folder is never written.** DbxEdit, DbxEditGUI and LevelDiff refuse to write into the BF1943 game folder
 (`BF1943_GAME`, else the Xenia kit's `dist\xenon`, as core `game1943.find_game` finds it), however the path is cased
-and through any link or junction, as `fbrb1943.py` does: `xml` of a partition still in the game folder fails (its
-`.xml` would go beside it), and an output there is refused. Every file is written beside its target and moved into
-place, so a failed write leaves the old file and a hard link at the output is replaced, never written through
-(writing over the input is safe: it was read whole).
+and through any link, junction or share (`\\localhost\C$\...`: since 2026-10-31 the folders are compared by identity -
+volume serial number and file index - not only by name): `xml` of a partition still in the game folder fails (its
+`.xml` would go beside it), and an output there is refused. Every file is written beside its target (as
+`~<7 hex digits>.tmp`, short so that a target within the 260-character limit fits) and moved into place, so a failed
+write leaves the old file and a hard link at the output is replaced, never written through (writing over the input is
+safe: it was read whole). A target that another program holds open is reported as in use, a read-only one as read-only.
 
 DbxEdit runs on .NET Framework, which cannot open paths longer than 260 characters. BF1943's partition names are
 long: extract into a short folder (for example `C:\dbx`).
@@ -130,7 +132,14 @@ takes the types from **the original file**: `--like`, or `<name>.dbx` next to th
 
 - **Unchanged values** keep their exact bytes, so an unedited XML gives back the original file exactly.
 - **Changed values** keep their field's type. Decimals with more digits than the game stores are rounded,
-  and the import reports how many.
+  and the import reports how many. A stored 0 is the integer 0 and the decimal 0.0 alike, so it does not decide:
+  the list's other values do, else the field elsewhere in the file, else decimal (until 2026-10-31 a decimal 0 edited
+  to `5` became the integer 5, a denormal). A value written as another kind than its field's (`1.5` in an integer
+  field), a NaN or an infinity is written and listed as a `note:`.
+- **Refused** (exit 1, `import failed: line N`, nothing written): an element with more than 15 attributes (the
+  count is 4 bits of the binary's head byte; such a file was written corrupt until 2026-10-31), a NUL character
+  (a string ends at its zero byte), anything after the root element but comments, and a character reference that is
+  not a Unicode character (`&#xZZ;`, a surrogate, past U+10FFFF).
 - **New elements** take their type from the same field elsewhere in the file. Add more files to learn
   from with `--types`.
 - **Guesses:** anything still unknown is guessed from the XML, every guess is listed, and the exit code
@@ -167,6 +176,7 @@ not crashes: what the game does with a broken one has not been tried.
 | a reference in a class-typed field points to that class or a subclass - the field's class is the schema's | 3,789 references, 19 fields |
 | the same for references into other files, with `--bundle` | 6,447 references |
 | the items of 29 arrays hold what the shipped levels put there: the nearest common schema base, for example `CapturePointEntityData.Spawners` a `SpawnEntityData`, `*.Geometry` a geometry entity, `LevelData.Objects` and event connections a `GameObjectData` | every item of those arrays |
+| no item of those arrays is null (2026-10-31; `LevelData.Objects` reports its own), and a group's `MemberDatas` name instances of the level partition, not of another | every item of those arrays |
 | model groups, forests and their members have `PhysicsData`, `MeshEntityType` and `MemberType` (terrain may leave `PhysicsData` null) *(BFBC2's, `MemberType` added)* | 21 groups, 130 members |
 | a group's members are its kind: static, rigid or middlegrowth model group member, or tree member for the forest | 21 groups |
 | a member's `InstanceCount` is the number of its `SpawnDatas` | 130 members |
@@ -316,7 +326,7 @@ Commands (a `@file` argument reads more commands from a file, one per line; `#` 
 | `graft=<src.dbx>\|<guid>[\|<before guid>]` | copies an instance from another file, with every instance of that file it references |
 | `copyfield=<src.dbx>\|<src guid>\|<field>\|<guid>` | copies one field (arrays included) from another file's instance |
 | `additem=<guid>\|<array>\|<ref>[\|<before ref>]` | adds a reference to an array field of an instance |
-| `setfield=<guid>\|<field>\|<value>` | sets a field of an instance, typed as the stored value (text, numbers, an integer or a decimal, bool / byte), or a reference field's reference |
+| `setfield=<guid>\|<field>\|<value>` | sets a field of an instance, typed as the stored value (text, numbers, bool / byte; an integer field takes integers only, a decimal field decimals only), or a reference field's reference |
 | `set=<field>\|<true\|false\|0-255>` | sets every bool / byte field called `<field>` |
 | `partguid=<guid>` | sets the partition's own GUID (for a copy under a new name) |
 
@@ -328,6 +338,18 @@ An empty `<old>` in `replace` or `replaceprefix` is refused.
 integer 2 (a denormal 2.8e-45 as a decimal), which the XML shows as `2` like the decimal 2.0, and DbxEditGUI's edit
 scripts record whole decimals that way. It also wrote a reference field's value as text and left the reference.
 Both now follow the stored value; a script made earlier can be replayed with the current DbxEdit.
+
+**`setfield` and the window before 2026-10-31** still wrote an integer into a decimal field holding 0 (a stored 0 is
+both kinds; `Pos` `1/0/0` set to `1/0/5` stored the integer 5), and wrote a decimal into an integer field (`1.5`, `2.0`,
+`3000000000`, or a hash typed in its unsigned form) as "rounded". Now the stored non-zero values decide, else the field
+elsewhere in the file, else decimal; an integer field refuses anything but an integer (a whole-number field such as a
+hash or an `Id` also takes 2147483648-4294967295, its unsigned form), a decimal field anything but a decimal (exit 1);
+a NaN or an infinity is written and said so, and `-0` keeps its sign.
+
+**DbxEditGUI's edit script** records a command only when DbxEdit reads it back the same: a value holding `|`, a line
+break or a space at either end (script lines are trimmed) is recorded as a `#` comment; set-everywhere records its value
+as `true`, `false` or the plain number. An instance without a GUID cannot be removed (DbxEdit's `drop` matches by GUID;
+`drop` of none matched every GUID-less instance).
 
 **Known limitation - `import` gives new fields no type from `--types`.** A field the reference does not match
 (for example in an instance with a new guid) is typed by guess even when the same field exists in the `--types`
@@ -349,7 +371,9 @@ keeps running). Files skipped in a folder conversion are logged as warnings.
 
 The commands that walk the tree recursively (`edit`, `import`, `check`, `fixslots`, the window, LevelDiff) take files
 nested up to 1,000 containers deep and refuse deeper ones by name; `xml` and `roundtrip` take any nesting. Every game
-file is far below the limit.
+file is far below the limit. `import` counts the XML's containers the same way (until 2026-10-31 it counted every
+element, so a value inside the 1,000th container, which `edit` takes, was refused). A path longer than Windows' 260
+characters is explained as such.
 
 ## Tests
 
@@ -366,6 +390,12 @@ checks of `tests\csharp_regressions.py` (its docstring lists them; each failed o
 - the level check (a 100,000-node cull tree, the tiling without `ReferencedObject`, `--slots-from`) and `fixslots`;
 - LevelDiff (partition and instance attributes, an integer turned decimal, exit codes, GUID pairing, a linear `--all`);
 - DbxEditGUI through reflection (no window is shown): open, save, undo, the game folder, the edit script's commands.
+
+The second review's checks (each failed on the code of 2026-10-30, ff18792): 4-byte values by their field's kind
+(a stored 0, integers, hashes, NaN, `-0`, import notes), import's refusals (16 attributes, NUL, content after the
+root, bad character references) and a value in the 1,000th container, writes through `\\localhost\<drive>$`, a
+250-character target and a target held open, null and other-partition `MemberDatas`, and the window's edit script,
+drop without a GUID and a decimal 0 edited.
 
 `python -B ..\tests\test_bf1943_tools.py dbxedit` (in the `bf1943` tier of `run_tests.py`; it builds through
 `csbuild.py`): DbxEdit on Wake Island's partitions, as above, and LevelDiff on a partition against

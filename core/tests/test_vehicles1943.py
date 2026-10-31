@@ -81,6 +81,23 @@ if __name__ == '__main__':
         slotted = type('Slotted', (), {'__slots__': (), 'data': lambda self, n: b'7'})()
         got = [r for _p, r, _o in vehicles1943.local_entries(slotted, part)]
         check(got == [7.0], f'a game object without attributes still gets its entries ({got})')
+        # 2026-10-30 second review: a Transform of fewer than 16 numbers is left out (it was kept, and entry_points then
+        # failed on its shape); the blueprint's whole entry still counts
+        class ShortInstance(Instance):
+            def __init__(self, radius):
+                super().__init__(radius)
+                self.children[0] = Child('Transform', '/'.join(['0'] * 9 + ['1', '2', '3']))
+        vehicles1943.dbx = SimpleNamespace(parse=lambda data: SimpleNamespace(instances=[ShortInstance('2'), Instance('3')]),
+                                           value=lambda c: c.value)
+        ref = SimpleNamespace(attr=lambda k: 'objects/vehicles/made_up/short/ab12' if k == 'ref' else None)
+        entity = SimpleNamespace(element=SimpleNamespace(child=lambda n: ref if n == 'Vehicle' else None),
+                                 matrix=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [10, 0, 0, 1]])
+        try:
+            got = vehicles1943.entry_points(Copy(0), entity)
+            why = [e['radius'] for e in got]
+        except Exception as e:
+            why = f'{type(e).__name__}: {e}'
+        check(why == [3.0], f'a Transform of 12 numbers is left out, the whole one kept ({why})')
     finally:
         vehicles1943.dbx = real
     print('all passed' if not failures else f'{len(failures)} failed')

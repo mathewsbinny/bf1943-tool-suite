@@ -24,6 +24,21 @@ folder, check()); a scratch copy of older exes can be passed to see the checks f
 - DbxEditGUI (through reflection, no window shown): opening a damaged file keeps the open document; an undo past a
   save marks the document modified; saving over the opened file under another spelling of its path keeps a .bak;
   saving into the game folder is refused; the edit script's commands replay to the window's own bytes.
+
+Second review (each failed on the code of ff18792, 2026-10-30):
+- values: setfield and import write a decimal into a decimal field holding 0 (not the integer, a denormal); setfield
+  refuses 1.5, 2.0 and 3000000000 in an integer field, takes a hash's unsigned form, refuses a decimal there, says
+  NaN instead of "rounded", keeps "-0"; import notes a decimal written into an integer field;
+- import xml: 16 attributes, a NUL (raw or &#0;), a second root or garbage after the root, &#xZZ;, &#x110000; and
+  &#xD800; are refused with their line (exit 1, nothing written); a value inside the 1,000th container imports back;
+- writes2: the game folder through \\localhost\<drive>$ is refused; a 250-character target is written; a target held
+  open by another program is explained as in use, not read-only; 32 edits writing into one folder at once all succeed
+  (the short temporary names first came from a time-seeded Random and collided across processes; passes on ff18792);
+- level2: a null and an other-partition MemberDatas entry are errors;
+- LevelDiff (in check_leveldiff): a reference list whose entry's other attribute, entry's value or own attribute
+  differs is a change, named, and a list against itself is none;
+- gui: the edit script records values holding | or an end space as comments, set's value as DbxEdit reads it; drop
+  of a GUID-less instance removes nothing; a decimal 0 edited to 2 in the window is 2.0.
 """
 import importlib.util
 import os
@@ -416,6 +431,177 @@ def check_leveldiff(t):
     took = time.time() - t0
     t.check(code == 1 and out.count('Thing  ') >= n and took < 8, f'LevelDiff: --all lists {n} instances only in A in {took:.1f} s (linear)')
 
+    # reference lists: the same references, but an item's other attribute, an item's value or the list's own
+    # attribute differ (until 2026-10-31 only the references were compared: "changed: 0", exit 0)
+    def reflist(item_attr='1', item_value='', list_attr='a'):
+        m2 = Made()
+        items = [m2.t('item', [('ref', G2), ('flag', item_attr)], item_value), m2.t('item', [('ref', G3)], '')]
+        inst = m2.c('instance', [('guid', G1), ('type', 'Test.Thing')], [m2.c('array', [('name', 'List'), ('tag', list_attr)], items)])
+        return m2.file(m2.c('partition', [('guid', P0)], [inst]))
+    base = put('rl-a.dbx', reflist())
+    for name, data, says in (('rl-attr.dbx', reflist(item_attr='2'), 'List[0] -> ' + G2),
+                             ('rl-value.dbx', reflist(item_value='v'), 'List[0] -> ' + G2),
+                             ('rl-list.dbx', reflist(list_attr='b'), 'List: (list)')):
+        code, out = t.run(base, put(name, data), tool=t.ldiff)
+        t.check(code == 1 and says in out and 'changed: 1' in out,
+                f'LevelDiff: a reference list whose {name[3:-4]} differs is a change, named ({says}) (exit {code})' + ('' if says in out else ': ' + out[-300:]))
+    code, out = t.run(base, base, '--summary', tool=t.ldiff)
+    t.check(code == 0 and 'changed: 0' in out, f'LevelDiff: a reference list against itself has no change (exit {code})')
+
+
+def values_file():
+    """G1 Test.Thing: Scale 0.0 (decimal), Pos 1/0/0 (decimals), Count 3 (integer), Id 0x9abcdef0 (a hash), F 1.5."""
+    m = Made()
+    inst = m.c('instance', [('guid', G1), ('type', 'Test.Thing')], [
+        m.floats('field', [('name', 'Scale')], [0.0]), m.floats('field', [('name', 'Pos')], [1.0, 0.0, 0.0]),
+        m.ints('field', [('name', 'Count')], [3]), m.ints('field', [('name', 'Id')], [0x9ABCDEF0]),
+        m.floats('field', [('name', 'F')], [1.5])])
+    return m.file(m.c('partition', [('guid', P0), ('primaryInstance', G1)], [inst]))
+
+
+def check_values(t):
+    """setfield and import type a 4-byte value by its field's kind; a stored 0 says nothing about it."""
+    folder = t.folder('values')
+    src = os.path.join(folder, 'a.dbx')
+    open(src, 'wb').write(values_file())
+    out = os.path.join(folder, 'o.dbx')
+
+    def edit(*commands):
+        if os.path.exists(out):
+            os.remove(out)
+        return t.run('edit', src, out, *commands)
+
+    def nums(path, name):
+        return dbx.numbers(dbx.read(path).instance(G1).child(name))[1]
+
+    code, msg = edit(f'setfield={G1}|Scale|2', f'setfield={G1}|Pos|1/0/5')
+    t.check(code == 0 and nums(out, 'Scale') == [struct.pack('>f', 2.0)] and nums(out, 'Pos')[2] == struct.pack('>f', 5.0),
+            f'values: setfield on a decimal field holding 0 writes decimals (2.0, 5.0), not the integers 2 and 5 (denormals) (exit {code})')
+    t.run('xml', src)
+    x = open(src[:-4] + '.xml', encoding='utf-8').read().replace('name="Scale">0<', 'name="Scale">2<').replace('name="Pos">1/0/0<', 'name="Pos">1/0/5<')
+    xp = os.path.join(folder, 'edited.xml')
+    open(xp, 'w', encoding='utf-8', newline='').write(x)
+    imp = os.path.join(folder, 'imp.dbx')
+    code, msg = t.run('import', xp, imp, '--like', src)
+    t.check(code == 0 and nums(imp, 'Scale') == [struct.pack('>f', 2.0)] and nums(imp, 'Pos')[2] == struct.pack('>f', 5.0),
+            f'values: import of a decimal 0 edited to 2 and 5 writes decimals (exit {code})')
+    for value, what in (('1.5', 'a decimal'), ('2.0', 'a decimal written whole'), ('3000000000', 'an integer past its range')):
+        code, msg = edit(f'setfield={G1}|Count|{value}')
+        t.check(code == 1 and not os.path.exists(out), f'values: setfield refuses {what} ("{value}") in an integer field (exit {code})')
+    code, msg = edit(f'setfield={G1}|Id|2596069104')
+    t.check(code == 0 and nums(out, 'Id') == [bytes.fromhex('9abcdef0')], f'values: a hash field takes its unsigned form (exit {code})')
+    code, msg = edit(f'setfield={G1}|Id|7.5')
+    t.check(code == 1, f'values: a hash field refuses a decimal (exit {code})')
+    code, msg = edit(f'setfield={G1}|F|NaN')
+    t.check(code == 0 and 'NaN' in msg and 'rounded' not in msg, f'values: setfield NaN is written and said so, not called rounded ({msg.strip()[-120:]})')
+    code, msg = edit(f'setfield={G1}|F|-0')
+    t.check(code == 0 and nums(out, 'F') == [bytes.fromhex('80000000')], f'values: setfield "-0" keeps its sign (exit {code})')
+    x = open(src[:-4] + '.xml', encoding='utf-8').read().replace('name="Count">3<', 'name="Count">1.5<')
+    open(xp, 'w', encoding='utf-8', newline='').write(x)
+    code, msg = t.run('import', xp, imp, '--like', src)
+    t.check(code == 0 and 'note:' in msg and "Count]: '1.5' written as a decimal in an integer field" in msg,
+            f'values: import notes a decimal written into an integer field ({msg.strip()[-160:]})')
+
+
+def check_import_xml(t):
+    """import refuses XML it cannot write faithfully: 16 attributes, NUL, content after the root, bad character
+    references (exit 1, 'import failed: line N'); a value inside the 1,000th container imports."""
+    folder = t.folder('importxml')
+    head = f'<?xml version="1.0"?>\n<partition guid="{P0}">\n\t<instance guid="{G1}" type="T.X">\n'
+    tail = '\t</instance>\n</partition>\n'
+    cases = {
+        'attrs16': head + '\t\t<field ' + ' '.join(f'a{k}="v{k}"' for k in range(16)) + '>x</field>\n' + tail,
+        'nul-ref': head + '\t\t<field name="Name">ab&#0;cd</field>\n' + tail,
+        'nul-raw': head + '\t\t<field name="Name">ab\0cd</field>\n' + tail,
+        'second-root': head + tail + f'<partition guid="{P0}"><field name="X">y</field></partition>\n',
+        'garbage': head + tail + '<<<\n',
+        'bad-hex': head + '\t\t<field name="Name">&#xZZ;</field>\n' + tail,
+        'past-unicode': head + '\t\t<field name="Name">&#x110000;</field>\n' + tail,
+        'surrogate': head + '\t\t<field name="Name">&#xD800;</field>\n' + tail,
+    }
+    for name, xml in cases.items():
+        xp = os.path.join(folder, name + '.xml')
+        open(xp, 'w', encoding='utf-8', newline='').write(xml)
+        out = os.path.join(folder, name + '.dbx')
+        code, msg = t.run('import', xp, out)
+        t.check(code == 1 and 'import failed: line' in msg and not os.path.exists(out),
+                f'import xml: {name} is refused with its line, nothing written (exit {code})' + ('' if code == 1 else ': ' + msg.strip()[-160:]))
+    xp = os.path.join(folder, 'ok15.xml')
+    open(xp, 'w', encoding='utf-8', newline='').write(head + '\t\t<field ' + ' '.join(f'a{k}="v{k}"' for k in range(15)) + '>x</field>\n' + tail)
+    code, msg = t.run('import', xp, os.path.join(folder, 'ok15.dbx'))
+    code2, msg2 = t.run('xml', os.path.join(folder, 'ok15.dbx'))
+    t.check(code == 3 and code2 == 0, f'import xml: 15 attributes import and read back (exit {code}, xml {code2})')
+    # 1,000 containers with a value in the innermost: edit takes it, so import must too
+    m = Made()
+    tag = m.s('complex')
+    deep = os.path.join(folder, 'deep.dbx')
+    open(deep, 'wb').write(m.file(m.c('partition', [('guid', P0)], [bytes([tag, 0xA0, 0]) * 999 + m.t('field', [('name', 'Leaf')], 'v') + b'\0' * 999])))
+    t.run('xml', deep)
+    back = os.path.join(folder, 'deep2.dbx')
+    code, msg = t.run('import', os.path.join(folder, 'deep.xml'), back, '--like', deep)
+    t.check(code == 0 and open(back, 'rb').read() == open(deep, 'rb').read(),
+            f'import xml: a value inside the 1,000th container imports back byte for byte, as edit takes the file (exit {code})')
+
+
+def check_writes2(t):
+    """the game folder through a loopback share, a target near 260 characters, a target open elsewhere."""
+    root = t.folder('writes2')
+    game = os.path.join(root, 'Game')
+    os.makedirs(os.path.join(game, 'levels'))
+    env = {**t.env, 'BF1943_GAME': game}
+    src = os.path.join(root, 'in.dbx')
+    open(src, 'wb').write(thing())
+    drive, rest = os.path.splitdrive(game)
+    unc = '\\\\localhost\\' + drive[0] + '$' + rest + '\\levels\\unc.dbx'
+    if os.path.isdir(os.path.dirname(unc)):
+        code, out = t.run('edit', src, unc, 'partguid=' + G3, env=env)
+        t.check(code == 2 and 'game folder' in out and not os.path.exists(os.path.join(game, 'levels', 'unc.dbx')),
+                f'writes: the game folder through \\\\localhost\\{drive[0]}$ is refused (exit {code})')
+    else:
+        print('skip writes: no administrative share \\\\localhost\\' + drive[0] + '$')
+    base = os.path.join(root, 'L')
+    need = 250 - len(base) - len('\\out.dbx') - 1
+    if need > 10:
+        deep = base + '\\' + 'a' * need
+        os.makedirs('\\\\?\\' + deep)
+        target = deep + '\\out.dbx'
+        code, out = t.run('edit', src, target, 'partguid=' + G3)
+        t.check(code == 0 and os.path.isfile('\\\\?\\' + target), f'writes: a {len(target)}-character target is written (its temporary file fits) (exit {code})')
+    else:
+        print('skip writes: the temporary folder is too deep for a 250-character target')
+    held = os.path.join(root, 'held.dbx')
+    open(held, 'wb').write(thing())
+    with open(held, 'rb'):
+        code, out = t.run('edit', src, held, 'partguid=' + G3)
+    t.check(code == 2 and 'in use' in out and 'read-only' not in out,
+            f'writes: a target open in another program is explained as in use, not read-only (exit {code})')
+    # many writers into one folder at once: their temporary files must not collide (a time-seeded name did)
+    par = os.path.join(root, 'par')
+    os.makedirs(par)
+    procs = [subprocess.Popen([t.exe, 'edit', src, os.path.join(par, f'o{k}.dbx'), 'partguid=' + G3], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, env=t.env, creationflags=NO_WINDOW) for k in range(32)]
+    codes = []
+    for p in procs:
+        p.communicate(timeout=300)
+        codes.append(p.returncode)
+    t.check(codes == [0] * 32 and sorted(os.listdir(par)) == sorted(f'o{k}.dbx' for k in range(32)),
+            f'writes: 32 edits writing into one folder at once all succeed, no temporary file left ({codes.count(0)} of 32)')
+
+
+def check_level2(t):
+    """BF1943's check: a null entry in a model group's MemberDatas is an error."""
+    folder = t.folder('level2')
+    m = Made()
+    lvl = m.c('instance', [('guid', G1), ('type', 'Entity.LevelData'), ('id', 'x')], [m.c('array', [('name', 'Objects')], [m.t('item', [('ref', G2)], '')])])
+    grp = m.c('instance', [('guid', G2), ('type', 'Entity.StaticModelGroupEntityData')], [
+        m.t('field', [('ref', 'a/b/' + G3), ('name', 'PhysicsData')], ''), m.t('field', [('ref', 'a/b/' + G3), ('name', 'MeshEntityType')], ''),
+        m.c('array', [('name', 'MemberDatas')], [m.t('item', [('ref', 'null')], ''), m.t('item', [('ref', 'a/b/' + G3)], '')])])
+    p = os.path.join(folder, 'lvl.dbx')
+    open(p, 'wb').write(m.file(m.c('partition', [('guid', P0), ('primaryInstance', G1)], [lvl, grp])))
+    code, out = t.run('check', p)
+    t.check(code == 1 and 'MemberDatas[0]: is null' in out and 'MemberDatas[1]: refers to a/b/' in out,
+            f'level: a null and an other-partition entry in MemberDatas are errors (exit {code})')
+
 
 GUI_HARNESS = r'''
 using System;
@@ -479,6 +665,36 @@ static class Harness
         Console.WriteLine("cmd-value=" + ec.Invoke(null, new object[] { doc2, inst, child("Scale"), new List<string>(), true, "Scale" }));
         Console.WriteLine("cmd-ref=" + ec.Invoke(null, new object[] { doc2, inst, child("Target"), new List<string> { "ref" }, false, "Target" }));
         Console.WriteLine("cmd-bool=" + ec.Invoke(null, new object[] { doc2, inst, child("On"), new List<string>(), true, "On" }));
+
+        // review 2: commands that cannot carry their values, set's value as DbxEdit reads it, drop without a GUID,
+        // a decimal field holding 0 edited in the window
+        Action<string, Func<object>> say = (key, f) => { object v; try { v = f(); } catch (Exception) { v = "False"; } Console.WriteLine(key + "=" + v); };
+        say("script-pipe", () => ((string)mw.GetMethod("ScriptCommand", Any).Invoke(null, new object[] { "replace=", new[] { "a|b", "c" } })).StartsWith("#"));
+        say("script-space", () => ((string)mw.GetMethod("ScriptCommand", Any).Invoke(null, new object[] { "replace=", new[] { "a", "c " } })).StartsWith("#"));
+        say("script-plain", () => (string)mw.GetMethod("ScriptCommand", Any).Invoke(null, new object[] { "replace=", new[] { "a", "c" } }) == "replace=a|c");
+        say("script-set", () => (string)mw.GetMethod("SetCommand", Any).Invoke(null, new object[] { "On", "+7", (byte)7 }) == "set=On|7");
+        var dbxType = asm.GetType("Bfbc2Dbx.DbxFile");
+        Func<object> zeroFile = () => dbxType.GetMethod("Read", Any).Invoke(null, new object[] { a[5] });
+        say("drop-null", () =>
+        {
+            object zero = zeroFile();
+            var ed = asm.GetType("Bfbc2Dbx.Editor");
+            object editor = Activator.CreateInstance(ed, Any, null, new[] { zero }, null);
+            var args = new object[] { null, 0 };
+            int n = (int)ed.GetMethod("Drop", Any, null, new[] { typeof(string), typeof(int).MakeByRefType() }, null).Invoke(editor, args);
+            return n == 0;
+        });
+        say("zero-decimal", () =>
+        {
+            object zero = zeroFile();
+            var zi = dbxType.GetMethod("Instance", Any).Invoke(zero, new object[] { a[4] });
+            object scale = null;
+            foreach (var c in (System.Collections.IList)zi.GetType().GetField("Children", Any).GetValue(zi))
+                if ((string)dbxType.GetMethod("Get", Any).Invoke(zero, new object[] { c, "name" }) == "Scale") scale = c;
+            var args = new object[] { zero, scale, "2", null };
+            var payload = (byte[])asm.GetType("Bfbc2Dbx.XmlImport").GetMethod("EncodeValue", Any).Invoke(null, args);
+            return BitConverter.ToString(payload) == "01-04-40-00-00-00";
+        });
         return 0;
     }
 }
@@ -504,7 +720,14 @@ def check_gui(t):
     game = os.path.join(folder, 'Game')
     os.makedirs(os.path.join(game, 'levels'))
     env = {**t.env, 'BF1943_GAME': game}
-    r = subprocess.run([harness, os.path.join(exe_dir, 'DbxEditGUI.exe'), good, bad, game, G1], capture_output=True, text=True,
+    # a decimal Scale holding 0.0, and two instances without a GUID
+    zm = Made()
+    zfile = zm.file(zm.c('partition', [('guid', P0)], [
+        zm.c('instance', [('guid', G1), ('type', 'Test.Thing')], [zm.floats('field', [('name', 'Scale')], [0.0])]),
+        zm.c('instance', [('type', 'Test.Other')], []), zm.c('instance', [('type', 'Test.Other')], [])]))
+    zero = os.path.join(folder, 'zero.dbx')
+    open(zero, 'wb').write(zfile)
+    r = subprocess.run([harness, os.path.join(exe_dir, 'DbxEditGUI.exe'), good, bad, game, G1, zero], capture_output=True, text=True,
                        errors='replace', env=env, timeout=300)
     got = dict(ln.split('=', 1) for ln in r.stdout.splitlines() if '=' in ln)
     for key, what in (('open-damaged-keeps', 'opening a damaged file keeps the open document'),
@@ -520,6 +743,14 @@ def check_gui(t):
     code, msg = t.run('edit', good, out, want['cmd-value'], f'setfield={G1}|Target|{G1}')
     t.check(code == 0 and field_raw(out, G1, 'Scale') == bytes([1, 4]) + struct.pack('>f', 2.0),
             f'gui: the recorded setfield replays to the window\'s bytes (a decimal 2.0) (exit {code})')
+    for key, what in (('script-pipe', 'a value holding | is recorded as a comment, not a command that splits it'),
+                      ('script-space', 'a value with a space at an end (the script reader trims lines) is recorded as a comment'),
+                      ('script-plain', 'a plain replace is recorded as the command'),
+                      ('script-set', 'set everywhere with "+7" records set=On|7, which DbxEdit reads (it refuses "+7")'),
+                      ('drop-null', 'drop of an instance without a GUID removes nothing (it took every GUID-less instance)'),
+                      ('zero-decimal', 'a decimal field holding 0.0 edited to "2" in the window becomes 2.0, not the integer 2')):
+        t.check(got.get(key) == 'True', f'gui: {what}' + ('' if key in got else ': ' + (r.stdout + r.stderr).strip()[-300:]))
 
 
-ALL = (check_reader, check_nesting, check_writes, check_edit, check_level, check_leveldiff, check_gui)
+ALL = (check_reader, check_nesting, check_writes, check_edit, check_level, check_leveldiff, check_values, check_import_xml,
+       check_writes2, check_level2, check_gui)

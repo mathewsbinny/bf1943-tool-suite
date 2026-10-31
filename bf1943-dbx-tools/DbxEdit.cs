@@ -257,6 +257,9 @@ namespace Bfbc2Dbx
         // game file is far below it). Reading, converting to XML and round-tripping take any nesting.
         public const int MaxEditDepth = 1000;
 
+        // An element's attribute count is the low 4 bits of its head byte (FORMAT.md section 2).
+        public const int MaxAttributes = 15;
+
         // This file, when the recursive commands can take it (else InvalidDataException naming what).
         public DbxFile Walkable(string what)
         {
@@ -341,6 +344,10 @@ namespace Bfbc2Dbx
         // tag, head byte, attributes, then the value bytes or a container's byte
         static void WriteHead(List<byte> output, Element e)
         {
+            // one byte holds both: a 16th attribute would overflow into the type and corrupt the file
+            if (e.Kind < 0 || e.Kind > 15 || e.Attributes.Count > MaxAttributes)
+                throw new InvalidDataException("an element with type " + e.Kind + " and " + e.Attributes.Count + " attributes cannot be written (at most type 15 and "
+                                               + MaxAttributes + " attributes: both share one byte)");
             Varint.Write(output, e.Tag);
             output.Add((byte)(e.Kind << 4 | e.Attributes.Count));
             foreach (var a in e.Attributes)
@@ -624,9 +631,12 @@ namespace Bfbc2Dbx
         static Node Parse(string path)
         {
             var p = new TextParser(File.ReadAllText(path));
+            p.RefuseNul();
             p.SkipProlog();
             if (!p.At("<")) throw new InvalidDataException("no root element in " + path);
-            return p.Element();
+            var root = p.Element();
+            p.End();
+            return root;
         }
 
         sealed class TextParser
@@ -666,6 +676,29 @@ namespace Bfbc2Dbx
                 }
             }
 
+            // A string of the binary file ends at its zero byte: a NUL in the XML would cut the value short.
+            public void RefuseNul()
+            {
+                int at = s.IndexOf('\0');
+                if (at < 0) return;
+                Advance(at - pos);
+                throw Fail("a NUL character, which a .dbx string cannot hold (it ends at a zero byte)");
+            }
+
+            // After the root element only white space, comments and <?...?> may follow: anything else (a second
+            // root, a stray tag or text) would be dropped without a word.
+            public void End()
+            {
+                while (true)
+                {
+                    SkipSpace();
+                    if (pos >= s.Length) return;
+                    if (At("<!--")) SkipTo("-->");
+                    else if (At("<?")) SkipTo("?>");
+                    else throw Fail("content after the root element (a file holds one root element; this would be lost)");
+                }
+            }
+
             string Name()
             {
                 int start = pos;
@@ -689,21 +722,38 @@ namespace Bfbc2Dbx
                     else if (e == "gt") b.Append('>');
                     else if (e == "quot") b.Append('"');
                     else if (e == "apos") b.Append('\'');
-                    else if (e.StartsWith("#x") || e.StartsWith("#X")) b.Append(char.ConvertFromUtf32(Convert.ToInt32(e.Substring(2), 16)));
-                    else if (e.StartsWith("#")) b.Append(char.ConvertFromUtf32(int.Parse(e.Substring(1), CultureInfo.InvariantCulture)));
+                    else if (e.StartsWith("#"))
+                    {
+                        bool hex = e.StartsWith("#x") || e.StartsWith("#X");
+                        string digits = e.Substring(hex ? 2 : 1);
+                        int code;
+                        if (digits.Length == 0 || digits.Length > 8
+                            || !int.TryParse(digits, hex ? NumberStyles.AllowHexSpecifier : NumberStyles.None, CultureInfo.InvariantCulture, out code))
+                            throw Fail("&" + e + "; is not a character reference (&#<decimal>; or &#x<hex>;)");
+                        if (code == 0) throw Fail("&" + e + "; is a NUL character, which a .dbx string cannot hold (it ends at a zero byte)");
+                        if (code < 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF))
+                            throw Fail("&" + e + "; is not a Unicode character (a surrogate or past U+10FFFF)");
+                        b.Append(char.ConvertFromUtf32(code));
+                    }
                     else throw Fail("unknown entity &" + e + ";");
                     i = semi;
                 }
                 return b.ToString();
             }
 
-            // an element and its children (recursive: nesting is limited as for the binary commands)
+            // an element and its children (recursive: nesting is limited as for the binary commands, which count
+            // containers - an element with children, or the empty container an element with only a line break is -
+            // so a value element may sit inside the deepest container)
             public Node Element()
             {
-                if (++depth > DbxFile.MaxEditDepth)
-                    throw Fail("elements nested more than " + DbxFile.MaxEditDepth + " deep (DbxEdit imports files nested up to " + DbxFile.MaxEditDepth + ")");
+                depth++;
                 try { return ElementBody(); }
                 finally { depth--; }
+            }
+
+            InvalidDataException TooDeep()
+            {
+                return Fail("containers nested more than " + DbxFile.MaxEditDepth + " deep (DbxEdit imports files nested up to " + DbxFile.MaxEditDepth + ")");
             }
 
             Node ElementBody()
@@ -746,6 +796,7 @@ namespace Bfbc2Dbx
                         if (n.Children != null && realText) throw Fail("<" + n.Tag + "> has both text and child elements");
                         n.Text = n.Children == null ? text.ToString() : "";
                         n.Multiline = n.Children == null && !realText && n.Text.IndexOf('\n') >= 0;
+                        if (n.Multiline && depth > DbxFile.MaxEditDepth) throw TooDeep();
                         return n;
                     }
                     if (At("<!--")) { SkipTo("-->"); continue; }
@@ -762,6 +813,7 @@ namespace Bfbc2Dbx
                     }
                     if (At("<"))
                     {
+                        if (depth > DbxFile.MaxEditDepth) throw TooDeep();
                         if (n.Children == null) n.Children = new List<Node>();
                         n.Children.Add(Element());
                         continue;
@@ -796,6 +848,9 @@ namespace Bfbc2Dbx
 
         Element Build(Node x, Element old, string path)
         {
+            if (x.Attributes.Count > DbxFile.MaxAttributes)
+                throw new InvalidDataException("line " + x.Line + ": " + path + " has " + x.Attributes.Count + " attributes; a .dbx element holds at most "
+                                               + DbxFile.MaxAttributes + " (the count is 4 bits of its head byte)");
             var e = new Element { Tag = old != null ? old.Tag : file.Intern(x.Tag) };
             for (int i = 0; i < x.Attributes.Count; i++)
             {
@@ -901,11 +956,15 @@ namespace Bfbc2Dbx
             Guesses.Add("line " + x.Line + ": " + path + ": no type known, taken as " + what);
         }
 
-        // The value bytes for a new text of an existing element, typed like it (what the import does for a changed
-        // value). rounded: true if a decimal had to be rounded to the nearest 4-byte value.
-        public static byte[] EncodeValue(DbxFile f, Element e, string text, out bool rounded)
+        // The value bytes for a new text of an existing element, typed like it (setfield, DbxEditGUI): text; numbers of
+        // the stored width; a 4-byte number stays the kind its field holds - an integer field takes only integers (a
+        // whole-number field such as a hash also 2147483648-4294967295, its unsigned form), a decimal field only
+        // decimals. The kind is the stored values' (a stored 0 is either, so it says nothing), else the field's
+        // elsewhere in the file, else decimal. note: null, or what the caller should tell ("rounded to the nearest
+        // 4-byte value", a NaN or an infinity written). InvalidDataException when the value does not fit the field.
+        public static byte[] EncodeValue(DbxFile f, Element e, string text, out string note)
         {
-            var imp = new XmlImport(f, f, new TypeBook());
+            var imp = new XmlImport(f, f, null) { strict = true };
             var x = new Node { Tag = f.TagOf(e), Text = text };
             foreach (var a in e.Attributes) x.Attributes.Add(new KeyValuePair<string, string>(f.Table[a.Name], f.Table[a.Value]));
             byte[] payload;
@@ -916,8 +975,22 @@ namespace Bfbc2Dbx
                 if (!ex.Message.StartsWith(noLine)) throw;
                 throw new InvalidDataException(ex.Message.Substring(noLine.Length), ex);
             }
-            rounded = imp.Rounded > 0;
+            var notes = imp.Notes.Select(n => n.StartsWith("line 0: ") ? n.Substring(8) : n).ToList();
+            if (imp.Rounded > 0) notes.Insert(0, "rounded to the nearest 4-byte value");
+            note = notes.Count == 0 ? null : string.Join("; ", notes);
             return payload;
+        }
+
+        // setfield / DbxEditGUI: typed values keep their field's kind (refused otherwise), not the import's reading
+        bool strict;
+
+        // the field types of a file, learned once (only a field whose stored values are all 0 needs them)
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DbxFile, TypeBook> fileTypes =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<DbxFile, TypeBook>();
+
+        static TypeBook TypesOf(DbxFile f)
+        {
+            return fileTypes.GetValue(f, k => { var b = new TypeBook(); b.Learn(k); return b; });
         }
 
         byte[] Encode(int kind, Node x, Element old, TypeBook.Entry learned, string path)
@@ -947,19 +1020,43 @@ namespace Bfbc2Dbx
             var output = new List<byte>();
             Varint.Write(output, tokens.Length);
             Varint.Write(output, size);
+            // the kind of a 4-byte list: its stored values' (zeros say nothing), else the field's elsewhere
+            int listKind = Unknown;
+            bool known = false;
+            if (size == 4 && tokens.Length > 0)
+            {
+                var olds = new List<uint>();
+                for (int i = 0; i < oldCount && oldSize == 4; i++) olds.Add(BigEndian.U32(old.Payload, oldAt + 4 * i));
+                if (strict && learned == null && ListKind(olds, x.FirstValue, null) == Unknown) learned = TypesOf(file).Find(x.Tag, x.FirstValue);
+                listKind = ListKind(olds, x.FirstValue, learned);
+                known = old != null || (learned != null && learned.Floats + learned.Ints > 0);
+            }
             for (int i = 0; i < tokens.Length; i++)
             {
                 string token = tokens[i].Trim();
+                if (i < oldCount && size == oldSize && (size == 2 || size == 4 || size == 8)
+                    && XmlExport.Number(old.Payload, oldAt + size * i, size, x.FirstValue) == token)
+                {
+                    // a value shown as it was keeps its exact bytes (a -0, a NaN's payload)
+                    for (int k = 0; k < size; k++) output.Add(old.Payload[oldAt + size * i + k]);
+                    continue;
+                }
                 uint? oldBits = size == 4 && i < oldCount ? (uint?)BigEndian.U32(old.Payload, oldAt + 4 * i) : null;
                 if (size == 4)
                 {
-                    BigEndian.Put(output, FourBytes(token, x.FirstValue, oldBits, learned, x, path));
+                    int valueKind = oldBits.HasValue ? KindOfBits(oldBits.Value, x.FirstValue) : Unknown;
+                    if (valueKind == Unknown) valueKind = listKind;
+                    BigEndian.Put(output, strict ? FourBytesTyped(token, x.FirstValue, valueKind, x, path)
+                                                 : FourBytes(token, x.FirstValue, valueKind, known, x, path));
                 }
                 else if (size == 8)
                 {
                     double d;
                     if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out d))
-                        throw new InvalidDataException("line " + x.Line + ": " + path + ": '" + token + "' is not a number");
+                        throw new InvalidDataException("line " + x.Line + ": " + path + ": '" + token + "' is not a number (or out of the range of an 8-byte decimal)");
+                    if (d == 0 && token.StartsWith("-")) d = BitConverter.Int64BitsToDouble(long.MinValue);    // -0
+                    if ((double.IsNaN(d) || double.IsInfinity(d)) && (strict || i >= oldCount))
+                        Note(x, path, "'" + token + "' written as " + (double.IsNaN(d) ? "a NaN" : "an infinity"));
                     long bits = BitConverter.DoubleToInt64Bits(d);
                     BigEndian.Put(output, (uint)(bits >> 32));
                     BigEndian.Put(output, (uint)bits);
@@ -983,41 +1080,126 @@ namespace Bfbc2Dbx
             return XmlExport.IsWholeNumberField(field) || (bits >> 24) == 0 || ((bits >> 23) & 0xFF) == 0xFF;
         }
 
-        // A 4-byte value: the integer or the decimal reading of the token, whichever the XML would show as exactly
-        // this token. When both would (a whole decimal like 1.0 also shows as "1"), the original value's kind
-        // decides, else the field's usual kind, else decimal (reported).
-        uint FourBytes(string token, string field, uint? oldBits, TypeBook.Entry learned, Node x, string path)
+        const int Unknown = 0, Integer = 1, Decimal = 2;
+
+        // What one stored 4-byte value says about its field's kind. A stored 0 (or -0) is the integer 0 and the
+        // decimal 0.0 alike, so it says nothing; a whole-number field (a hash, an id) is always integer.
+        static int KindOfBits(uint bits, string field)
         {
-            var options = new List<uint>();
+            if (XmlExport.IsWholeNumberField(field)) return Integer;
+            if (bits == 0 || bits == 0x80000000) return Unknown;
+            return PrintsAsWhole(bits, field) ? Integer : Decimal;
+        }
+
+        // The kind of a list's values: most of its stored non-zero values', else the same field's elsewhere
+        // (learned), else Unknown.
+        static int ListKind(List<uint> olds, string field, TypeBook.Entry learned)
+        {
+            if (XmlExport.IsWholeNumberField(field)) return Integer;
+            int ints = 0, floats = 0;
+            foreach (uint b in olds)
+            {
+                int k = KindOfBits(b, field);
+                if (k == Integer) ints++;
+                else if (k == Decimal) floats++;
+            }
+            if (ints + floats > 0) return floats >= ints ? Decimal : Integer;
+            if (learned != null && learned.Floats + learned.Ints > 0) return learned.Floats >= learned.Ints ? Decimal : Integer;
+            return Unknown;
+        }
+
+        // Kind changes, NaNs and infinities the import or setfield wrote: told, not refused.
+        public readonly List<string> Notes = new List<string>();
+
+        void Note(Node x, string path, string what) { Notes.Add("line " + x.Line + ": " + path + ": " + what); }
+
+        // a decimal token as a 4-byte float ("-0" keeps its sign); false when it is not one or out of range
+        static bool ParseFloat(string token, out float f)
+        {
+            if (!float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out f)) return false;
+            if (f == 0 && token.StartsWith("-")) f = BitConverter.ToSingle(BitConverter.GetBytes(0x80000000u), 0);
+            return true;
+        }
+
+        static uint Bits(float f) { return BitConverter.ToUInt32(BitConverter.GetBytes(f), 0); }
+
+        // A 4-byte value read from XML: the integer or the decimal reading of the token, whichever the XML would show
+        // as exactly this token. When both would (a whole decimal like 1.0 also shows as "1"), kind decides (the
+        // stored value's, else its list's or field's: FORMAT.md section 6), else decimal (a guess, for a new element
+        // with nothing known). A reading of another kind than the field's is written and noted.
+        uint FourBytes(string token, string field, int kind, bool known, Node x, string path)
+        {
+            uint? asInt = null, asFloat = null;
             int whole;
             if (int.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out whole)
-                && XmlExport.Number(Be((uint)whole), 0, 4, field) == token) options.Add((uint)whole);
+                && XmlExport.Number(Be((uint)whole), 0, 4, field) == token) asInt = (uint)whole;
             float f;
-            if (float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out f))
+            if (ParseFloat(token, out f))
             {
-                uint bits = BitConverter.ToUInt32(BitConverter.GetBytes(f), 0);
-                if (XmlExport.Number(Be(bits), 0, 4, field) == token && !options.Contains(bits)) options.Add(bits);
+                uint bits = Bits(f);
+                if (XmlExport.Number(Be(bits), 0, 4, field) == token && bits != asInt) asFloat = bits;
             }
-            if (options.Count == 0)
+            if (asInt.HasValue && asFloat.HasValue)
             {
-                // not stored exactly either way (e.g. more digits than a 4-byte decimal holds): an integer for a whole
-                // number in an integer field, else the nearest decimal
-                bool integerField = oldBits.HasValue ? PrintsAsWhole(oldBits.Value, field) && oldBits.Value != 0
-                                  : learned != null && learned.Ints > learned.Floats;
-                if (integerField && int.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out whole)) return (uint)whole;
-                if (float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out f))
+                if (kind == Integer) return asInt.Value;
+                if (kind == Unknown && !known) Guess(x, path, "decimal for '" + token + "'");
+                return asFloat.Value;
+            }
+            if (asInt.HasValue || asFloat.HasValue)
+            {
+                int got = asInt.HasValue ? Integer : Decimal;
+                if (kind != Unknown && kind != got && (asInt ?? asFloat.Value) != 0) Note(x, path, "'" + token + "' written as " + (got == Integer ? "an integer" : "a decimal") + " in " + (kind == Integer ? "an integer" : "a decimal") + " field");
+                return asInt ?? asFloat.Value;
+            }
+            // not stored exactly either way (more digits than a 4-byte decimal holds, a NaN, ...): an integer in an
+            // integer field (a whole-number field also takes the unsigned form), else the nearest decimal
+            uint u;
+            if (kind == Integer && int.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out whole)) return (uint)whole;
+            if (kind == Integer && XmlExport.IsWholeNumberField(field) && uint.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out u)) return u;
+            if (ParseFloat(token, out f))
+            {
+                if (float.IsNaN(f) || float.IsInfinity(f)) Note(x, path, "'" + token + "' written as " + (float.IsNaN(f) ? "a NaN" : "an infinity"));
+                else
                 {
                     Rounded++;
-                    return BitConverter.ToUInt32(BitConverter.GetBytes(f), 0);
+                    if (kind == Integer) Note(x, path, "'" + token + "' written as a decimal in an integer field");
                 }
-                throw new InvalidDataException("line " + x.Line + ": " + path + ": '" + token + "' is not a number");
+                return Bits(f);
             }
-            if (options.Count == 1) return options[0];
-            // two readings: [0] integer, [1] decimal
-            if (oldBits.HasValue) return PrintsAsWhole(oldBits.Value, field) ? options[0] : options[1];
-            if (learned != null && learned.Floats + learned.Ints > 0) return learned.Floats >= learned.Ints ? options[1] : options[0];
-            Guess(x, path, "decimal for '" + token + "'");
-            return options[1];
+            throw new InvalidDataException("line " + x.Line + ": " + path + ": '" + token + "' is not a number");
+        }
+
+        // A 4-byte value typed in (setfield, DbxEditGUI): of the field's kind only. Unknown (only zeros stored, the
+        // field nowhere else in the file) is decimal.
+        uint FourBytesTyped(string token, string field, int kind, Node x, string path)
+        {
+            string where = "line " + x.Line + ": " + path + ": '" + token + "' ";
+            if (kind == Integer)
+            {
+                int whole;
+                uint u;
+                if (int.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out whole)) return (uint)whole;
+                bool unsigned = XmlExport.IsWholeNumberField(field);
+                if (unsigned && uint.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out u)) return u;
+                long big;
+                if (long.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out big))
+                    throw new InvalidDataException(where + "is out of the range of this 4-byte integer field ("
+                                                   + (unsigned ? "-2147483648 to 4294967295" : "-2147483648 to 2147483647") + ")");
+                throw new InvalidDataException(where + "is not an integer, and the field holds integers");
+            }
+            float f;
+            if (!ParseFloat(token, out f))
+                throw new InvalidDataException(where + "is not a number (or out of the range of a 4-byte decimal), and the field holds decimals");
+            uint bits = Bits(f);
+            if (float.IsNaN(f) || float.IsInfinity(f))
+                Note(x, path, "'" + token + "' written as " + (float.IsNaN(f) ? "a NaN" : "an infinity") + " (the XML shows it as the integer " + (int)bits + ")");
+            else
+            {
+                double d;
+                if (XmlExport.Number(Be(bits), 0, 4, field) != token && double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out d) && (double)f != d)
+                    Rounded++;
+            }
+            return bits;
         }
 
         static byte[] Be(uint v) { return new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v }; }
@@ -1062,6 +1244,7 @@ namespace Bfbc2Dbx
         public int Drop(string guid, out int references)
         {
             references = 0;
+            if (string.IsNullOrEmpty(guid)) return 0;          // not an instance's: a missing guid matches every guid-less one
             return Drop(file.TopLevel, guid, ref references);
         }
 
@@ -1133,13 +1316,13 @@ namespace Bfbc2Dbx
         }
 
         // The first direct child of the instance named <field> that is not a container. A reference field (with a
-        // ref attribute) gets <value> as its reference; any other value is typed like the stored one, as the import
-        // types a changed value: text, numbers of the stored width ('/'-separated), integer or decimal as the stored
-        // value is, bool or byte. False when there is no such field; InvalidDataException when the value does not
-        // fit it. rounded: a decimal was rounded to the nearest 4-byte value.
-        public bool SetField(string guid, string field, string value, out bool rounded)
+        // ref attribute) gets <value> as its reference; any other value is typed like the stored one
+        // (XmlImport.EncodeValue): text, numbers of the stored width ('/'-separated), an integer field integers only
+        // and a decimal field decimals only, bool or byte. False when there is no such field; InvalidDataException
+        // when the value does not fit it. note: what to tell (a decimal rounded, a NaN or infinity written), or null.
+        public bool SetField(string guid, string field, string value, out string note)
         {
-            rounded = false;
+            note = null;
             var instance = file.Instance(guid);
             if (instance == null || !instance.IsContainer) return false;
             var e = instance.Children.FirstOrDefault(c => file.Get(c, "name") == field && !c.IsContainer);
@@ -1150,7 +1333,7 @@ namespace Bfbc2Dbx
                 reference.Value = file.Intern(value);
                 return true;
             }
-            e.Payload = XmlImport.EncodeValue(file, e, value, out rounded);
+            e.Payload = XmlImport.EncodeValue(file, e, value, out note);
             return true;
         }
 
@@ -3168,6 +3351,12 @@ namespace Bfbc2Dbx
                 LevelCheck.Walk(f, i, "", (e, path) =>
                 {
                     string r = f.Get(e, "ref");
+                    string held;
+                    // a null entry where the shipped levels always hold an instance (LevelData Objects: reported as the
+                    // empty entry the game reads without a check)
+                    if (r == "null" && path.IndexOf('[') >= 0 && type + "." + Unindexed(path) != "LevelData.Objects"
+                        && arrayTypes.TryGetValue(type + "." + Unindexed(path), out held))
+                        c.Error(where + " " + path, "is null; in every shipped level these items are " + held + "s (a null one is read like any other)");
                     if (r == null || r == "null" || r.Length != 36 || r.IndexOf('/') >= 0) return;
                     string target = c.TypeOf(r);
                     if (target == null) return;                              // unresolved: reported already
@@ -3197,7 +3386,13 @@ namespace Bfbc2Dbx
                     string where = c.Where(g) + " MemberDatas[" + k + "]";
                     Element m;
                     string r = f.Get(members[k], "ref");
-                    if (r == null || !c.ByGuid.TryGetValue(r, out m)) continue;
+                    // null is reported with the arrays' items, a missing local instance with the references
+                    if (r == null || r == "null" || (r.Length == 36 && r.IndexOf('/') < 0 && !c.ByGuid.ContainsKey(r))) continue;
+                    if (!c.ByGuid.TryGetValue(r, out m))
+                    {
+                        c.Error(where, "refers to " + r + ", not to an instance of this partition: a group's members are the level's own instances (in every shipped level)");
+                        continue;
+                    }
                     if (c.TypeOf(m) != kind) { c.Error(where, "a " + c.TypeOf(g) + " holds " + kind + "s, not a " + c.TypeOf(m)); continue; }
                     int fp = Int(f, m, "FirstPhysicsPart"), pc = Int(f, m, "PhysicsPartCount"), per = Int(f, m, "PhysicsPartCountPerInstance"),
                         count = Int(f, m, "InstanceCount"), spawns = Items(f, m, "SpawnDatas").Count;
@@ -3714,6 +3909,9 @@ namespace Bfbc2Dbx
                                   + report.Kept + " unchanged, " + report.Changed + " changed, " + report.Added + " new, "
                                   + report.Removed + " removed"
                                   + (report.Rounded > 0 ? "; " + report.Rounded + " decimal(s) rounded to the nearest 4-byte value" : ""));
+                foreach (string n in report.Notes.Take(50)) Console.Error.WriteLine("note: " + n);
+                if (report.Notes.Count > 0)
+                    Console.Error.WriteLine(report.Notes.Count + " value(s) written as another kind than their field's (integer / decimal), or as a NaN or infinity - check them");
                 if (report.Guesses.Count == 0) return 0;
                 foreach (string g in report.Guesses.Take(50)) Console.Error.WriteLine("guess: " + g);
                 Console.Error.WriteLine(report.Guesses.Count + " value(s) typed by guess - check them, or give the original file (--like) or more files (--types)");
@@ -3904,13 +4102,13 @@ namespace Bfbc2Dbx
                     {
                         if (!Arguments(verb, p, 3, int.MaxValue, 2)) return 2;
                         string value = string.Join("|", p.Skip(2));          // a value may hold '|'
-                        bool rounded;
+                        string note;
                         try
                         {
-                            if (!editor.SetField(p[0], p[1], value, out rounded)) { Console.Error.WriteLine("setfield: no settable field " + p[1] + " in " + p[0]); return 1; }
+                            if (!editor.SetField(p[0], p[1], value, out note)) { Console.Error.WriteLine("setfield: no settable field " + p[1] + " in " + p[0]); return 1; }
                         }
                         catch (InvalidDataException e) { Console.Error.WriteLine("setfield " + p[0] + "|" + p[1] + ": " + e.Message); return 1; }
-                        if (rounded) Console.WriteLine("setfield " + p[1] + ": rounded to the nearest 4-byte value");
+                        if (note != null) Console.WriteLine("setfield " + p[1] + ": " + note);
                         fieldsSet++;
                         break;
                     }
@@ -4046,18 +4244,97 @@ namespace Bfbc2Dbx
             return p == f || p.StartsWith(f + "\\", StringComparison.Ordinal);
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct FileInformation
+        {
+            public uint Attributes, CreatedLow, CreatedHigh, AccessedLow, AccessedHigh, WrittenLow, WrittenHigh;
+            public uint VolumeSerial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetFileInformationByHandle(IntPtr handle, out FileInformation info);
+
+        // A file's or folder's identity (its volume's serial number and its file index), following links and
+        // junctions: one folder has one identity under every name it has - another case, a junction, a loopback
+        // share (\\localhost\C$\...), a mapped drive. Null when it cannot be opened.
+        static string Identity(string path)
+        {
+            IntPtr h = CreateFile(path, 0, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero);
+            if (h == new IntPtr(-1)) return null;
+            try
+            {
+                FileInformation i;
+                if (!GetFileInformationByHandle(h, out i)) return null;
+                return i.VolumeSerial.ToString("x8") + ":" + i.IndexHigh.ToString("x8") + i.IndexLow.ToString("x8");
+            }
+            finally { CloseHandle(h); }
+        }
+
+        // per process: the game folder and the identities of the folders written into (a folder conversion writes
+        // thousands of files into a few folders)
+        static string gameFolder, gameIdentity;
+        static bool gameKnown;
+        static readonly Dictionary<string, string> folderIdentity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        static string FolderIdentity(string folder)
+        {
+            string id;
+            if (!folderIdentity.TryGetValue(folder, out id)) folderIdentity[folder] = id = Identity(folder);
+            return id;
+        }
+
+        // True when full (an absolute path) lies in the game folder however it is spelled. The string comparison
+        // (Contains) only ever refuses; then the identity of every folder above the path's nearest existing part, as
+        // written and as Windows resolves it, is compared with the game folder's - which catches what no spelling
+        // rule does, such as \\localhost\C$\<game>.
+        public static bool InGameFolder(string full, out string game)
+        {
+            if (!gameKnown)
+            {
+                gameFolder = GameFolder();
+                gameIdentity = gameFolder == null ? null : Identity(gameFolder);
+                gameKnown = true;
+            }
+            game = gameFolder;
+            if (game == null) return false;
+            if (Contains(game, full)) return true;
+            if (gameIdentity == null) return false;
+            string cur = full;
+            while (cur != null && !File.Exists(cur) && !Directory.Exists(cur)) cur = Path.GetDirectoryName(cur);
+            if (cur == null) return false;
+            string real = Final(cur);
+            foreach (string start in real != null && real != cur ? new[] { cur, real } : new[] { cur })
+                for (string d = start; !string.IsNullOrEmpty(d); d = Path.GetDirectoryName(d))
+                    if ((d == start && File.Exists(d) ? null : FolderIdentity(d)) == gameIdentity) return true;
+            return false;
+        }
+
         static void Write(string path, byte[] data)
         {
             string full = Path.GetFullPath(path);
-            string game = GameFolder();
-            if (game != null && Contains(game, full))
-                throw new WriteRefusedException(full + " would be written in the game folder (" + game + ", also through a link or junction), "
+            string game;
+            if (InGameFolder(full, out game))
+                throw new WriteRefusedException(full + " would be written in the game folder (" + game + ", also through a link, a junction or a share), "
                                                 + "which the tools only read; not written");
             if (Directory.Exists(full)) throw new IOException(full + " is a folder; not written");
-            string tmp = Path.Combine(Path.GetDirectoryName(full), ".dbxedit-" + System.Guid.NewGuid().ToString("N") + ".tmp");
+            // a short name beside the target ("~" + 7 hex digits + ".tmp"): a target that fits Windows' 260-character
+            // limit leaves its temporary file room. The digits come from a new GUID (not a time-seeded Random:
+            // processes started together would pick the same names), and a name another writer holds is skipped
+            // by its error code (that writer may already have moved it away).
+            string dir = Path.GetDirectoryName(full), tmp = null;
+            FileStream fs = null;
+            for (int attempt = 0; fs == null; attempt++)
+            {
+                tmp = Path.Combine(dir, "~" + System.Guid.NewGuid().ToString("N").Substring(0, 7) + ".tmp");
+                try { fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
+                catch (IOException e)
+                {
+                    int code = Marshal.GetHRForException(e) & 0xFFFF;
+                    if (attempt >= 50 || (code != 80 && code != 183 && code != 32 && code != 5)) throw;    // exists, in use
+                }
+            }
             try
             {
-                using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (fs)
                 {
                     fs.Write(data, 0, data.Length);
                     fs.Flush(true);
@@ -4066,6 +4343,11 @@ namespace Bfbc2Dbx
                 {
                     int err = Marshal.GetLastWin32Error();
                     string why = new System.ComponentModel.Win32Exception(err).Message;
+                    bool readOnly = false;
+                    try { readOnly = File.Exists(full) && (File.GetAttributes(full) & FileAttributes.ReadOnly) != 0; } catch (Exception) { }
+                    if (err == 5 && readOnly) throw new UnauthorizedAccessException("cannot replace " + full + ": it is read-only (" + why + ")");
+                    if (err == 5 && File.Exists(full))       // not read-only: open in a program that does not let it be replaced
+                        throw new IOException("cannot replace " + full + ": it is open in another program (or you may not replace it): " + why, unchecked((int)0x80070020));
                     if (err == 5) throw new UnauthorizedAccessException("cannot replace " + full + ": " + why);
                     throw new IOException("cannot replace " + full + ": " + why, unchecked((int)0x80070000) | err);
                 }
@@ -4132,6 +4414,9 @@ namespace Bfbc2Dbx
         {
             if (e is WriteRefusedException)
                 return new[] { e.Message, "Write the output outside the game folder: the tools only read it (extract or copy what you edit elsewhere)." };
+            if (e is PathTooLongException)
+                return new[] { "A path is longer than Windows allows (260 characters; .NET Framework cannot go past it): " + e.Message,
+                               "Use a shorter folder (for example C:\\dbx), or shorter file names." };
             var io = e as IOException;
             int code = io != null ? (io.HResult & 0xFFFF) : 0;
             if (io != null && (code == 32 || code == 33))

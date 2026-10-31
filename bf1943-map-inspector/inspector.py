@@ -392,12 +392,21 @@ class Inspector:
 def main(argv):
     opts, args, k = {}, [], 1
     while k < len(argv):
-        if argv[k].startswith('--') and k + 1 < len(argv):
+        if argv[k].startswith('--'):
+            if k + 1 >= len(argv):
+                print(f'error: {argv[k]} needs a value')
+                return 2
             opts[argv[k]] = argv[k + 1]
             k += 2
         else:
             args.append(argv[k])
             k += 1
+    try:                                                    # bad options are said before the level loads
+        measure = measure_points(opts['--measure']) if '--measure' in opts else None
+        frames = frame_count(opts.get('--frames', '40'))
+    except ValueError as e:
+        print('error:', e)
+        return 2
     if not args:                                            # started without a level: ask for one
         from bfbc2core import pick
         lv = pick.pick_level('BF1943 Map Inspector')
@@ -416,16 +425,38 @@ def main(argv):
         e = lvl.by_guid(opts['--select'])
         if e is not None:
             ins.select(v, e, focus=True)
-    if '--measure' in opts:
-        ins.measure = [np.array([float(c) for c in p.split(',')]) for p in opts['--measure'].split(';')]
+    if measure is not None:
+        ins.measure = [np.array(p) for p in measure]
         ins.set_measuring(v, True)
         ins.update_overlay(v)
     if '--screenshot' in opts:
-        v.exit_after = int(opts.get('--frames', 40))
+        v.exit_after = frames
     v.run()
     if '--screenshot' in opts:
         return save_screenshot(opts['--screenshot'], v.screenshot)
     return 0
+
+
+def measure_points(text):
+    """--measure "x,y,z;x,y,z;...": one or more finite points; ValueError otherwise."""
+    try:
+        pts = [[float(c) for c in p.split(',')] for p in text.split(';') if p.strip()]
+    except ValueError:
+        pts = []
+    if not pts or any(len(p) != 3 or not all(np.isfinite(p)) for p in pts):
+        raise ValueError(f'--measure {text!r}: give points as "x,y,z;x,y,z;..."')
+    return pts
+
+
+def frame_count(text):
+    """--frames N: a whole number of frames, at least 1; ValueError otherwise."""
+    try:
+        n = int(text)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise ValueError(f'--frames {text!r}: give a whole number of frames (1 or more)')
+    return n
 
 
 def save_screenshot(path, shot):

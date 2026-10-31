@@ -82,7 +82,8 @@ Run these from the `bf1943-auto-navkit-little-endian` folder:
 python navkit.py levels            list levels; "yes (samplable)" = NavKit can build it
 python navkit.py prepare sp_01
 python navkit.py sample  sp_01     asks before it starts the game; add --yes to skip the question
-                                   (--pitch 0.8 or --pitch 0.2: only the normal or only the fine measurement)
+                                   (--pitch 0.8 or --pitch 0.2: only the normal or only the fine measurement;
+                                   --budget 800: more sampling per frame, when a run says the level ended first)
 python navkit.py build   sp_01
 python navkit.py check   sp_01
 python navkit.py install sp_01     restore sp_01 puts the original back

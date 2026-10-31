@@ -23,7 +23,8 @@ failures = []
 STEPS = [('map_functions.py', ['work/xex-analysis/functions.tsv', 'work/xex-analysis/sections.tsv']),
          ('classify_vmx.py', ['work/vmx128/classified.tsv']),
          ('inventory_vmx.py', ['work/vmx128/inventory.tsv']),
-         ('resolve_helpers.py', ['work/xex-analysis/helpers.tsv', 'work/xex-analysis/helper-entries.tsv'])]
+         ('resolve_helpers.py', ['work/xex-analysis/helpers.tsv', 'work/xex-analysis/helper-entries.tsv',
+                                 'work/xex-analysis/helper-branches.tsv'])]   # not pinned by hash, but a rerun keeps it
 # pinned evidence whose bytes also hold the tool's own hash: only its line endings are compared
 LINE_ENDINGS = ['research/evidence/xex-functions.json', 'research/evidence/xex-helper-resolution.json']
 INPUTS = ['work/xex-analysis/default.checked.memory.bin']

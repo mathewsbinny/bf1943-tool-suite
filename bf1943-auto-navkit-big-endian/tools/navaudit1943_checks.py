@@ -377,7 +377,7 @@ def load(lv, log=print):
     game = game1943.find_game(st.get('game'))         # the copy the level was prepared from (2026-10-30: the default)
     g = game1943.Game(game, lv)
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
-    hf = terrain.read(g.data(hf_name))
+    hf = terrain.read(nj.prepared_heightfield(st, lv, g.data(hf_name)))    # the prepared one (second review)
     mm = materialmap1943.for_level(g, lv, hf)
     soldier1943.configure()
     navdata.Y_OFFSET = soldier1943.HEIGHT / 2          # BF1943 builds store nodes and outlines 0.9 m up

@@ -750,11 +750,9 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             ladder_pairs.append((int(f_), int(t_)))
 
     # Sectors that contain kept surfaces.
-    sectors = set()
-    for k in np.nonzero(keep)[0]:
-        c = level.col_of[k]
-        x, z = s.min_x + (c % s.nx) * PITCH, s.min_z + (c // s.nx) * PITCH
-        sectors.add((int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff))
+    # (whole centimetres, navsample.column_sectors: the sectors detailed.py counts stacked floors in)
+    X_, Z_ = navsample.column_sectors(s, level.col_of[np.nonzero(keep)[0]])
+    sectors = set(zip((X_ - xoff).tolist(), (Z_ - zoff).tolist()))
     if sector_filter is not None:
         sectors &= set(sector_filter)
     if not sectors and sector_filter is None:
@@ -1024,13 +1022,22 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
         for nid, _pos, _k in nodes:
             owners[nid].add(sec)
     grid_min = (min(X for X, _ in a['sectors']), min(Y for _, Y in a['sectors']))
+    kept = np.nonzero(alv.keep)[0]
+    kept_sec = list(zip(*(v.tolist() for v in navsample.column_sectors(sa, alv.col_of[kept]))))
+    # a discarded attempt's order nodes and ladder counts must not stay: the retry reuses its node ids
+    # (id_start), and an ordinary node with a stale order id was pruned as an order node (2026-10-31)
+    order_ids, ladder_stats = set(ORDER_IDS), dict(LADDER_STATS)
     while True:
+        ORDER_IDS.clear()
+        ORDER_IDS.update(order_ids)
+        LADDER_STATS.clear()
+        LADDER_STATS.update(ladder_stats)
         # seeds: a's kept ground in the detailed sectors
         pts = []
-        for k in np.nonzero(alv.keep)[0]:
-            c = alv.col_of[k]
-            x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
-            if (int(math.floor(x / 100.0)) - xoff, int(math.floor(z / 100.0)) - zoff) in dset:
+        for k, (X, Z) in zip(kept, kept_sec):
+            if (X - xoff, Z - zoff) in dset:
+                c = alv.col_of[k]
+                x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
                 pts.append((x, float(alv.y[k]), z))
         # a's shared nodes on the seams between a detailed and a normal sector, per detailed sector
         carried = defaultdict(list)

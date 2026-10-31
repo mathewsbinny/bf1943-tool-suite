@@ -57,9 +57,57 @@ def placeholders():
         check(True, 'a duplicate index is an error')
 
 
+def files_whole():
+    """--navflags with a level that cannot be written (a duplicate index): no level's existing flags file is changed -
+    the old tool had already truncated it to 0 bytes - and a good run replaces them whole."""
+    import tempfile
+
+    def obj(name, index, x):
+        return dict(name=name, location='', index=index, role='flag', initial_owner='TeamNeutral', capture_radius=None,
+                    position=[x, 0.0, x], spawns=[])
+    maps = {'lv_a': [obj('A', '1', 1.0)], 'lv_b': [obj('B', '3', 1.0), obj('C', '3', 2.0)]}
+    saved = spawnmap.spawn_map, spawnmap.WORK
+    with tempfile.TemporaryDirectory() as tmp:
+        spawnmap.WORK = tmp
+        spawnmap.spawn_map = lambda game, lv: dict(level=lv, bundle='x.fbrb', objectives=maps[lv],
+                                                   unowned_soldier_spawns=[], unowned_vehicle_spawns=[])
+        paths = {lv: os.path.join(tmp, 'levels', lv, 'navkit', f'{lv}.flags.txt') for lv in maps}
+        for lv, p in paths.items():
+            os.makedirs(os.path.dirname(p))
+            with open(p, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(f'# rsflags 1 {lv}\nflag 0 base 1 0.00 0.00 0.00 20.00 good\n')
+        before = {lv: open(p, 'rb').read() for lv, p in paths.items()}
+        import contextlib
+        import io
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                spawnmap.main(['spawnmap.py', tmp, 'lv_a', 'lv_b', '--navflags'])
+            check(False, 'a duplicate index stops --navflags')
+        except ValueError:
+            pass
+        finally:
+            spawnmap.spawn_map, spawnmap.WORK = saved[0], tmp
+        after = {lv: open(p, 'rb').read() for lv, p in paths.items()}
+        check(after == before, f'--navflags with a level that cannot be written: no flags file changed '
+                               f'({ {lv: len(v) for lv, v in after.items()} } bytes)')
+        maps['lv_b'] = [obj('B', '3', 1.0)]
+        spawnmap.spawn_map = lambda game, lv: dict(level=lv, bundle='x.fbrb', objectives=maps[lv],
+                                                   unowned_soldier_spawns=[], unowned_vehicle_spawns=[])
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                spawnmap.main(['spawnmap.py', tmp, 'lv_a', 'lv_b', '--navflags'])
+        finally:
+            spawnmap.spawn_map, spawnmap.WORK = saved
+        texts = {lv: open(p, encoding='utf-8').read() for lv, p in paths.items()}
+        left = [n for lv, p in paths.items() for n in os.listdir(os.path.dirname(p)) if n.endswith('.tmp')]
+        check('flag 3 flag 0 1.00 0.00 1.00 0.00 B' in texts['lv_b'] and 'flag 1 flag' in texts['lv_a'] and not left,
+              '... a good run writes every level\'s file whole, no temporary file left')
+
+
 if __name__ == '__main__':
     navflags()
     placeholders()
+    files_whole()
     if '--made-up' in sys.argv:                       # the quick tier: no game data
         print('all passed' if not failures else f'{len(failures)} failed')
         sys.exit(1 if failures else 0)

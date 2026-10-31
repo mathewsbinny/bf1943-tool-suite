@@ -85,6 +85,22 @@ def build(lv, classes, sample=False, log=print):
     return out
 
 
+def world_identity(w, lv, cls):
+    """Problems where a vehicle world's own header and META disagree with what it should be: the level (header level
+    id, META level), the class (META class and layer) and its parameters (header radius, META params digest)."""
+    meta = w.meta or {}
+    out = []
+    if w.level_id != rsnv.fnv1a(lv) or meta.get('level') != lv:
+        out.append(f'the world is of another level (META level {meta.get("level")!r}, level id {w.level_id:#010x})')
+    if meta.get('class') != cls or meta.get('layer') != vc.CLASS_IDS[cls]:
+        out.append(f'the world is of another class (META class {meta.get("class")!r}, layer {meta.get("layer")!r})')
+    if abs(float(w.radius) - float(vc.value(cls, 'radius'))) > 1e-3:
+        out.append(f'radius {w.radius:g} m in its header, the {cls} class has {vc.value(cls, "radius"):g} m')
+    if meta.get('params') != vc.params_id(cls):
+        out.append(f'made with other {cls} parameters (META params {str(meta.get("params"))[:12]})')
+    return out
+
+
 def on_cells(w):
     """Nodes whose position is not on a walkable cell of their area (or have none)."""
     bad = 0
@@ -115,6 +131,12 @@ def check(lv, classes=CLASSES, log=print, required=None):
                                               'islands': len(S.islands)}, 'worlds': {}, 'problems': []}
     transfers = []
     probs = report['problems']
+    try:
+        # the soldier world must be the export of the current, passed build: a world stamped on it is checked against
+        # its SHA-256 only (2026-10-30 second review: a world finished after the soldier was built again passed)
+        vc.soldier_world(st, lv, sp)
+    except (vc.StaleError, FileNotFoundError) as e:
+        probs.append(f'soldier world: {e}')
     for cls in classes:
         p = world_path(lv, cls)
         try:
@@ -143,7 +165,19 @@ def check(lv, classes=CLASSES, log=print, required=None):
             else:
                 report.setdefault('notes', []).append(stale)
             continue
+        h = sha256(p)
+        if stamp.get('sha256') != h:
+            # 2026-10-30 second review: the stamp named the inputs only, so another file put in the world's place (a
+            # valid world of another level, radius 99) passed with no problem
+            why = (f'{cls}: {os.path.basename(p)} is not the world its builder wrote (its SHA-256 is not the stamped '
+                   f'one): build it again (navexport_vehicles1943.py {lv} --classes {cls})')
+            if cls in required:
+                probs.append(why)
+            else:
+                report.setdefault('notes', []).append(why)
+            continue
         V = rsnv.load(p)
+        probs += [f'{cls}: {x}' for x in world_identity(V, lv, cls)]
         v = V.validate()
         probs += [f'{cls}: {x}' for x in v]
         off = on_cells(V)
@@ -178,7 +212,7 @@ def check(lv, classes=CLASSES, log=print, required=None):
                     x, z = float(S.node_pos[sn][0]), float(S.node_pos[sn][2])
                     if IWO_NO_GO[0] <= x <= IWO_NO_GO[1] and IWO_NO_GO[2] <= z <= IWO_NO_GO[3]:
                         probs.append(f'lcvp: alight {k} in the no-go strip at ({x:.1f}, {z:.1f})')
-        report['worlds'][cls] = {'path': p, 'sha256': sha256(p), 'bytes': os.path.getsize(p), 'nodes': len(V.node_pos),
+        report['worlds'][cls] = {'path': p, 'sha256': h, 'bytes': os.path.getsize(p), 'nodes': len(V.node_pos),
                                  'edges': len(V.edge_target), 'areas': len(V.areas), 'islands': [r[0] for r in V.islands][:6],
                                  'cells': V.meta.get('counts', {}).get('cells'),
                                  'tight edges': V.meta.get('counts', {}).get('tight edges'),

@@ -26,10 +26,16 @@ python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
   Windows (one name twice, or names equal but for case), a file where another entry's folder goes, and an entry
   named as the manifest - before 2026-10-30 the later entry silently replaced the earlier one.
 - `replace` writes a copy of the bundle with the named entries replaced (names as `list` shows them). It refuses
-  to write into the game folder (core `game1943.find_game`) or over the input bundle. Both commands also treat the
-  input bundle's own game copy as read-only: the nearest folder above the bundle whose `levels` folder holds
-  bundles. A changed bundle goes
-  elsewhere, for the Xenia kit or a mod folder to use.
+  to write into the game folder (core `game1943.find_game`) or over the input bundle, and refuses a name that two
+  entries hold (equal, or equal but for case), as `extract` does. Both commands also treat the input bundle's own
+  game copy as read-only: the nearest folder above the bundle that holds `config.zz`, `levels\levels-common-00.fbrb`
+  and a `build_overlay-00.fbrb` in the game's own layout (one this tool refuses to read, so no bundle it writes can
+  stand in for it). A mod folder laid out as the game (replaced bundles in `levels\<level>\`) is not a game copy
+  (2026-10-30 second review: any folder with `levels\*.fbrb` counted, and every output inside a mod folder was
+  refused). Whether a path lies in a game folder is decided by file identity along its folders too, so another
+  spelling of it (`\\localhost\C$\...`, `\\127.0.0.1\C$\...`, `\\?\C:\...`) is the same folder. A changed bundle
+  goes elsewhere, for the Xenia kit or a mod folder to use. `build` refuses a gzip template whose flag byte is not 0
+  (the game's bundles have 0); its header would announce a field that is not copied.
 - Every file (entry, manifest, bundle copy) is written to a temporary file beside it and then moved into place, so
   an existing file there is replaced, never written into: a hard link there to a game file (which resolving paths
   cannot see) loses its name in the output, and the game file stays as it was. A failed write leaves the old file

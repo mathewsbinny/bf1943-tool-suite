@@ -298,6 +298,7 @@ def write_world(lv, cls, sets, nodes, edges, offm, out, sector_offsets, header, 
     meta['level'] = lv
     meta['class'] = cls
     meta['layer'] = layer
+    meta['params'] = vc.params_id(cls)          # the class's parameters (navexport_vehicles1943.check compares them)
     meta['counts'] = {'nodes': len(nodes), 'edges': len(edge_rows), 'areas': len(area_rows), 'portals': len(port),
                       'sectors': len(sect_rows), 'islands': len(island_rows), 'transfers': len(offm),
                       'cells': int(sum(cs.n for cs in sets))}

@@ -18,7 +18,12 @@ Opcode names for EA-specific opcodes are descriptive labels, not recovered origi
 Command line:
 
   python -B apt.py <menu .res>      validate one movie: its action blocks, instructions and problems
-                                    (exit 0 = no problem, 1 = problems found)
+                                    (exit 0 = no problem, 1 = problems found, 2 = the movie could not be read:
+                                    not a menu .res, cut short, or a count or pointer past its .apt)
+
+A damaged movie raises ValueError (never IndexError or struct.error, 2026-10-30 second review): every count is at
+most what the file could hold, and the frame items read over all characters at most one per word of the .apt (so a
+crafted movie cannot make validation read for hours).
 """
 import struct
 import sys
@@ -29,29 +34,44 @@ FUNCTION_MARKERS = (0x98765432, 0x12345678)
 
 
 def be32(b, o):
+    if o < 0 or o + 4 > len(b):
+        raise ValueError(f'damaged movie: a word at 0x{o:x} lies past the end ({len(b)} bytes)')
     return struct.unpack_from('>I', b, o)[0]
 
 
 def bigf(raw):
-    """[(name, bytes)] from a BIGF archive (total size little-endian, the rest big-endian), in order."""
-    if raw[:4] != b'BIGF' or struct.unpack_from('<I', raw, 4)[0] != len(raw):
+    """[(name, bytes)] from a BIGF archive (total size little-endian, the rest big-endian), in order. ValueError for
+    a header or file past the archive's end."""
+    if len(raw) < 16 or raw[:4] != b'BIGF' or struct.unpack_from('<I', raw, 4)[0] != len(raw):
         raise ValueError('not a BIGF archive of this size')
+    count = be32(raw, 8)
+    if count > (len(raw) - 16) // 10:
+        raise ValueError(f'damaged BIGF archive: {count} files in {len(raw)} bytes')
     out, p = [], 16
-    for _ in range(be32(raw, 8)):
-        off, size = struct.unpack_from('>II', raw, p)
-        end = raw.index(0, p + 8)
-        out.append((raw[p + 8:end].decode('ascii'), raw[off:off + size]))
+    for _ in range(count):
+        off, size = struct.unpack_from('>II', raw, p) if p + 8 <= len(raw) else (None, None)
+        end = raw.find(0, p + 8)
+        if off is None or end < 0:
+            raise ValueError('damaged BIGF archive: its file list runs past the end')
+        if off + size > len(raw):
+            raise ValueError(f'damaged BIGF archive: a file at 0x{off:x} of {size} bytes runs past the end')
+        out.append((raw[p + 8:end].decode('ascii', 'replace'), raw[off:off + size]))
         p = end + 1
     return out
 
 
 def write_bigf(files, template):
     """A BIGF archive with the given (name, bytes) in order, laid out as `template` is: the same header
-    words and header padding, each file 4-byte aligned. Rebuilding the template's own files reproduces it."""
-    head = 16 + sum(8 + len(n) + 1 for n, _ in files)
-    if head != 16 + sum(8 + len(n) + 1 for n, _ in bigf(template)):
-        raise ValueError('file names differ from the template')
-    first = be32(template, 16)
+    words and header padding, each file 4-byte aligned. Rebuilding the template's own files reproduces it. The
+    names must be the template's, in its order (only the offsets and sizes are written)."""
+    names = [n for n, _ in bigf(template)]
+    if [n for n, _ in files] != names:
+        raise ValueError(f'file names differ from the template ({[n for n, _ in files]} against {names})')
+    head = 16 + sum(8 + len(n) + 1 for n in names)
+    first = min((be32(template, 16 + sum(8 + len(n) + 1 for n in names[:k])) for k in range(len(names))),
+                default=head)
+    if first < head:
+        raise ValueError('damaged BIGF template: a file starts inside its header')
     out = bytearray(template[:first])
     p, offsets = 16, []
     for name, data in files:
@@ -137,7 +157,9 @@ class Apt:
     def __init__(self, raw_res):
         self.files = bigf(raw_res)
         names = [n for n, _ in self.files]
-        self.name = next(n[:-4] for n in names if n.endswith('.apt'))
+        self.name = next((n[:-4] for n in names if n.endswith('.apt')), None)
+        if self.name is None or self.name + '.const' not in names:
+            raise ValueError(f'not a menu movie: the archive holds {names}, no <name>.apt and <name>.const')
         self.apt = dict(self.files)[self.name + '.apt']
         self.const = dict(self.files)[self.name + '.const']
         c = self.const
@@ -145,8 +167,8 @@ class Apt:
             raise ValueError('bad .const header')
         self.movie, count, first = be32(c, 20), be32(c, 24), be32(c, 28)
         self.constants = []
-        for k in range(count):
-            kind, value = struct.unpack_from('>II', c, first + 8 * k)
+        for k in range(self.counted(count, 8, 'constants', c)):
+            kind, value = be32(c, first + 8 * k), be32(c, first + 8 * k + 4)
             self.constants.append(self.cstr(value, c) if kind == 1 else (kind, value))
         m = self.movie
         if be32(self.apt, m) != 9 or be32(self.apt, m + 4) != SIGNATURE:
@@ -155,21 +177,31 @@ class Apt:
     def u(self, o):
         return be32(self.apt, o)
 
+    def counted(self, n, size, what, data=None):
+        """n, when n records of size bytes could fit in the file (the .apt unless data); ValueError otherwise."""
+        limit = len(self.apt if data is None else data) // size
+        if n > limit:
+            raise ValueError(f'damaged movie: {n} {what}, more than the {limit} its file could hold')
+        return n
+
     @staticmethod
     def cstr(o, b):
-        return b[o:b.index(0, o)].decode('latin1')
+        end = b.find(0, o)
+        if o >= len(b) or end < 0:
+            raise ValueError(f'damaged movie: a string at 0x{o:x} does not end inside its file')
+        return b[o:end].decode('latin1')
 
     def s(self, o):
         return self.cstr(o, self.apt) if o else None
 
     def characters(self):
         m = self.movie
-        return [self.u(self.u(m + 24) + 4 * i) for i in range(self.u(m + 20))]
+        return [self.u(self.u(m + 24) + 4 * i) for i in range(self.counted(self.u(m + 20), 4, 'characters'))]
 
     def imports(self):
         """(movie, symbol, character id) for each import (count at movie +40, table at +44, 16-byte rows)."""
         m, out = self.movie, []
-        for i in range(self.u(m + 40)):
+        for i in range(self.counted(self.u(m + 40), 16, 'imports')):
             row = self.u(m + 44) + 16 * i
             out.append((self.s(self.u(row)), self.s(self.u(row + 4)), self.u(row + 8)))
         return out
@@ -177,20 +209,33 @@ class Apt:
     def exports(self):
         """(symbol, character id) for each export (count at movie +48, table at +52, 8-byte rows)."""
         m = self.movie
-        return [(self.s(self.u(self.u(m + 52) + 8 * i)), self.u(self.u(m + 52) + 8 * i + 4)) for i in range(self.u(m + 48))]
+        return [(self.s(self.u(self.u(m + 52) + 8 * i)), self.u(self.u(m + 52) + 8 * i + 4)) for i in range(self.counted(self.u(m + 48), 8, 'exports'))]
 
-    def frames(self, char):
-        """[(frame index, [(item address, item type)])] of a Movie or Sprite character."""
-        count, table = self.u(char + 8), self.u(char + 12)
-        return [(f, [(self.u(self.u(table + 8 * f + 4) + 4 * k), self.u(self.u(self.u(table + 8 * f + 4) + 4 * k)))
-                     for k in range(self.u(table + 8 * f))]) for f in range(count)]
+    def frames(self, char, budget=None):
+        """[(frame index, [(item address, item type)])] of a Movie or Sprite character. budget: a one-item list of the
+        frame items still allowed (action_items shares one over all characters: at most one item per word of the .apt;
+        2026-10-30 second review: a crafted movie made validation read count x items words, hours for 1 MB)."""
+        budget = budget if budget is not None else [len(self.apt) // 4]
+        count, table = self.counted(self.u(char + 8), 8, 'frames'), self.u(char + 12)
+        out = []
+        for f in range(count):
+            n, lst = self.counted(self.u(table + 8 * f), 4, 'frame items'), self.u(table + 8 * f + 4)
+            budget[0] -= n
+            if budget[0] < 0:
+                raise ValueError(f'damaged movie: more frame items than words in the .apt ({len(self.apt) // 4})')
+            items = []
+            for k in range(n):
+                item = self.u(lst + 4 * k)
+                items.append((item, self.u(item)))
+            out.append((f, items))
+        return out
 
     def action_items(self):
         """(owner description, frame item address, offset of its bytecode pointer, bytecode address)."""
-        out = []
+        out, budget = [], [len(self.apt) // 4]
         for ci, c in [(None, self.movie)] + [(i, c) for i, c in enumerate(self.characters()) if c and self.u(c) == 5]:
             who = 'movie' if ci is None else ci
-            for f, items in self.frames(c):
+            for f, items in self.frames(c, budget):
                 for item, kind in items:
                     if kind == 1:
                         out.append((f'char {who} frame {f} action', item, 4, self.u(item + 4)))
@@ -211,6 +256,8 @@ class Apt:
 
     def decode(self, pc):
         """The instruction at pc and the pc after it."""
+        if not 0 <= pc < len(self.apt):
+            raise ValueError(f'damaged movie: an instruction at 0x{pc:x}, past the end of the .apt')
         a, code = self.apt, self.apt[pc]
         if code not in OPS:
             raise ValueError(f'unknown opcode 0x{code:02x} at 0x{pc:x}')
@@ -219,6 +266,8 @@ class Apt:
         if layout.startswith('A'):
             p = (p + 3) & ~3
             layout = layout[1:]
+        if p + OPERAND_BYTES[layout] > len(a):
+            raise ValueError(f'damaged movie: the operands of 0x{code:02x} at 0x{pc:x} run past the end of the .apt')
         if layout == 'I':
             args['value'] = struct.unpack_from('>i', a, p)[0]
         elif layout == 'J':
@@ -239,18 +288,18 @@ class Apt:
             args['value'] = struct.unpack_from('>H', a, p)[0]
         elif layout == 'L':
             n, lst = self.u(p), self.u(p + 4)
-            args['items'] = [self.u(lst + 4 * k) for k in range(n)]
+            args['items'] = [self.u(lst + 4 * k) for k in range(self.counted(n, 4, 'list items'))]
         elif layout in ('F1', 'F2'):
             name_ptr, nparams, third = self.u(p), self.u(p + 4), self.u(p + 8)
             if layout == 'F2':
                 # name, parameter count, register count and flags (one word), parameter list, body size
                 params, size = self.u(p + 12), self.u(p + 16)
-                args['params'] = [(self.u(params + 8 * k), self.u(params + 8 * k + 4)) for k in range(nparams)]
+                args['params'] = [(self.u(params + 8 * k), self.u(params + 8 * k + 4)) for k in range(self.counted(nparams, 8, 'parameters'))]
                 args['regflags'] = third
                 markers = p + 20
             else:
                 params, size = third, self.u(p + 12)
-                args['params'] = [self.u(params + 4 * k) for k in range(nparams)]
+                args['params'] = [self.u(params + 4 * k) for k in range(self.counted(nparams, 4, 'parameters'))]
                 markers = p + 16
             if (self.u(markers), self.u(markers + 4)) != FUNCTION_MARKERS:
                 raise ValueError(f'function header markers missing at 0x{pc:x}')
@@ -270,8 +319,10 @@ class Apt:
             pc = nxt
 
     def validate(self):
-        """Every block decodes to an End with no End inside a function; branches, With bodies and function
-        ends land on instruction starts."""
+        """Every block decodes to an End with no End inside a function; branches and With bodies land on the
+        block's instruction starts (2026-10-30 second review: the byte after the End passed, and Rewriter.block then
+        failed on it); function ends on an instruction start up to the End. ValueError when the movie's characters or
+        frames cannot be read (the command line's exit 2)."""
         problems, blocks, count = [], self.action_blocks(), 0
         for owner, start in blocks:
             try:
@@ -280,7 +331,7 @@ class Apt:
                 problems.append(f'{owner} @0x{start:x}: {e}')
                 continue
             count += len(ins)
-            starts = {i.pc for i in ins} | {ins[-1].pc + 1}
+            starts = {i.pc for i in ins}
             for i in ins:
                 if 'body' in i.args:
                     end = i.args['body'] + i.args['size']
@@ -377,9 +428,14 @@ class Rewriter:
         by_pc = {i.pc: i for i in ins}
         for i in ins:
             if 'target' in i.args and isinstance(i.args['target'], int):
+                if i.args['target'] not in by_pc:
+                    raise ValueError(f'{i.label} at 0x{i.pc:x} -> 0x{i.args["target"]:x}, not an instruction of the block')
                 i.args['target'] = by_pc[i.args['target']]
             if 'body' in i.args:
-                i.args['end'] = by_pc[i.args.pop('body') + i.args.pop('size')]
+                end = i.args.pop('body') + i.args.pop('size')
+                if end not in by_pc:
+                    raise ValueError(f'{i.label} at 0x{i.pc:x}: body end 0x{end:x} is not an instruction of the block')
+                i.args['end'] = by_pc[end]
         return ins
 
     def block(self, start):
@@ -466,13 +522,34 @@ class Rewriter:
         return write_bigf(files, template)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
+def main(argv):
+    """0: no problem, 1: problems found, 2: the movie could not be read (2026-10-30 second review: a damaged movie
+    raised a traceback, exit 1 as if problems were found)."""
+    if len(argv) < 2 or argv[1] in ('-h', '--help'):
         print(__doc__)
-        sys.exit(0 if len(sys.argv) > 1 else 1)
-    apt = Apt(open(sys.argv[1], 'rb').read())
-    blocks, n, problems = apt.validate()
+        return 0 if len(argv) > 1 else 1
+    try:
+        with open(argv[1], 'rb') as f:
+            apt = Apt(f.read())
+        blocks, n, problems = apt.validate()
+    except (OSError, ValueError) as e:
+        print(f'error: {argv[1]} could not be read as a menu movie: {e}', file=sys.stderr)
+        try:
+            from bfbc2core import errors
+            errors.logger().error(f'{argv[1]}: not read as a menu movie: {e}')
+        except ImportError:
+            pass
+        return 2
     print(f'{apt.name}: {blocks} action blocks, {n} instructions, {len(problems)} problems')
     for p in problems[:40]:
         print('  ', p)
-    sys.exit(1 if problems else 0)                  # a script can tell an invalid movie from a sound one
+    return 1 if problems else 0                     # a script can tell an invalid movie from a sound one
+
+
+if __name__ == '__main__':
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'core'))
+    from bfbc2core import errors
+    errors.setup('apt', gui=False)                  # a log; an unexpected error explained in words (exit 1)
+    with errors.guard():
+        sys.exit(main(sys.argv))

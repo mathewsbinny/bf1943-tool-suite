@@ -39,6 +39,7 @@ class FakeGuest:
     def __init__(self):
         self.mem = {}
         self.writes = []
+        self.calls = []
         _, code, tail = bots.build()
         self.put(bots.CODE, code + tail)
         hook = [w for a, w, _ in bots.build()[0] if a == bots.HOOK][0]
@@ -62,10 +63,15 @@ class FakeGuest:
     def u32(self, address):
         return struct.unpack('>I', self.read(address, 4))[0]
 
+    def write(self, address, data):
+        """One process write: every word lands at once (self.calls holds it as one entry; self.writes word by word)."""
+        buf, at = self.region(address, len(data))
+        buf[at:at + len(data)] = data
+        self.calls.append((address, bytes(data)))
+        self.writes.extend((address + 4 * k, struct.unpack_from('>I', data, 4 * k)[0]) for k in range(len(data) // 4))
+
     def write_u32(self, address, value):
-        buf, at = self.region(address, 4)
-        struct.pack_into('>I', buf, at, value)
-        self.writes.append((address, value))
+        self.write(address, struct.pack('>I', value))
 
 
 def make_match(g, tick=500):
@@ -195,21 +201,25 @@ def whole_commands():
     gm.write_command(g, BLOCK, 0, 499, 1.0, 0.5, 1.5, 0.25, 1 << 40 | 1 << 22)
     before = {o: g.u32(at + o) for o in range(bots.C_STAMP, bots.BOT_SIZE, 4)}
     g.writes.clear()
+    g.calls.clear()
     gm.write_command(g, BLOCK, 0, 500, -1.0, -0.5, -1.5, -0.25, 1 << 12)
-    steps = [(a - at, v) for a, v in g.writes]
+    calls = [(a - at, len(d)) for a, d in g.calls]
+    check(calls == [(bots.C_SEQ, 4), (bots.C_STAMP, bots.C_BUTTONS_LO + 4 - bots.C_STAMP), (bots.C_SEQ, 4)],
+          f'write_command: three writes, the sequence odd, the stamp and fields in one, the sequence even ({calls})')
+    # each write lands whole between the guest's loads
+    steps = [[(a - at + 4 * k, struct.unpack_from('>I', d, 4 * k)[0]) for k in range(len(d) // 4)] for a, d in g.calls]
     after = {o: g.u32(at + o) for o in range(bots.C_STAMP, bots.BOT_SIZE, 4)}
     whole = lambda m: bots.guest_command(m.get, 500)
     seen = set()
     for delay in range(13):
-        for gap in (1, 2, 4, 9):
+        for gap in (1, 2, 4, 9, 40):     # 40: the record stays open past all of the guest's tries
             mem, pending, loads = dict(before), list(steps), [0]
 
             def word(off):
                 v = mem[off]
                 loads[0] += 1
                 if pending and loads[0] >= delay and (loads[0] - delay) % gap == 0:
-                    o, w = pending.pop(0)
-                    mem[o] = w
+                    mem.update(pending.pop(0))
                 return v
             seen.add(bots.guest_command(word, 500))
     check(seen == {whole(before), whole(after), None} and whole(before) != whole(after),

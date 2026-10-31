@@ -60,7 +60,7 @@ with unclosed elements):
 
 The tree is read and written without recursion, so `xml` and `roundtrip` take any nesting the format allows (an
 export whose indentation would pass 2^28 tabs is refused). The commands that walk the tree recursively (`edit`,
-`import`, `check`, `fixslots`, DbxEditGUI, LevelDiff) take files nested up to 1,000 containers deep and refuse
+`import` (counting the XML's containers, section 6), `check`, `fixslots`, DbxEditGUI, LevelDiff) take files nested up to 1,000 containers deep and refuse
 deeper ones by name; every game file is far below that.
 
 ## 3. XML output (`DbxEdit xml`)
@@ -92,8 +92,14 @@ exactly `.dbx` (Windows' `*.dbx` pattern also matches `.dbxold`, whose XML would
 exports, LevelDiff's `--json`) is written to a temporary file beside the target and moved into its place, so a failed
 write leaves the old file and a hard link at the target is replaced, never written through. Nothing is written into
 the BF1943 game folder (`BF1943_GAME`, else the Xenia kit's `dist\xenon` in the suite, as core `game1943.find_game`
-finds it), however the path is cased and through whatever link or junction it leads there: such a write is refused
-(`xml` counts the file as FAILED, the other commands exit 2). This is the rule of the suite's `fbrb1943.py`.
+finds it), however the path is cased and through whatever link, junction or share it leads there: such a write is
+refused (`xml` counts the file as FAILED, the other commands exit 2). This is the rule of the suite's `fbrb1943.py`.
+The paths are compared as Windows resolves them (case folded, links followed), and then by identity: the volume serial
+number and file index of every folder above the target's nearest existing part, as written and as resolved, against
+the game folder's - so `\\localhost\C$\<game>\...` is refused too (2026-10-31). The temporary file is
+`~<7 hex digits>.tmp` (until 2026-10-31 a 45-character name, which pushed targets near 260 characters past .NET
+Framework's limit). When the target cannot be replaced, a read-only target is reported as read-only and any other one
+(held open by a program that does not share deletion) as in use.
 
 ## 4. Writing (`DbxEdit edit`, `DbxEdit roundtrip`)
 
@@ -123,7 +129,7 @@ without its arguments or with an empty one it needs (each command's usage is pri
   starts with one of the non-empty exceptions (ignoring case), gets `<new>` in place of that start; if the
   entry's start was all lower case, `<new>` is lower-cased too. Fails if none matched; an empty `<old>` is
   refused (every string would match, tag names included).
-- `drop=<guid>`: walks the tree from the last element to the first, at every level. An `instance` with that
+- `drop=<guid>` (a GUID, not empty): walks the tree from the last element to the first, at every level. An `instance` with that
   GUID is removed. Any other element whose `ref` equals the GUID (a local reference to it) is removed if it is
   an `item`; otherwise all its `ref` attributes become `null`, and its children are still visited. A reference
   `<partition>/<guid>` names another partition's instance and is left as it is (a graft keeps its source's
@@ -134,11 +140,15 @@ without its arguments or with an empty one it needs (each command's usage is pri
   with a two-byte value and an attribute `name` equal to `<field>`, sets the second byte. Fails if none.
 - `setfield=<guid>|<field>|<value>`: on the first direct child of that instance named `<field>` that is not a
   container. A reference field (one with a `ref` attribute) gets `<value>` as its reference. Any other value is
-  typed like the stored one, as `import` types a changed value (section 6): text; numbers of the stored width,
-  `/`-separated; a 4-byte number stays an integer or a decimal as stored (`2` in a decimal field is 2.0; before
-  2026-10-30 it wrote the integer 2, which shows as `2` in the XML too); bool or byte. A decimal with more digits
+  typed like the stored one: text; numbers of the stored width, `/`-separated; bool or byte. A 4-byte number keeps
+  its field's kind: each value's stored kind, for a stored 0 or -0 (both kinds) most of the list's stored non-zero
+  values', else the same field's (tag + first attribute value) elsewhere in the file, else decimal. An integer field
+  takes only an integer of -2147483648..2147483647 (a whole-number field of section 3, such as a hash, also
+  2147483648..4294967295, stored as its bits); a decimal field takes only a decimal (`2` is 2.0; `-0` keeps its sign;
+  `NaN` and `Infinity` are written and reported). A value shown as it was keeps its bytes. A decimal with more digits
   than 4 bytes hold is rounded and reported. Fails (exit 1, nothing written) when there is no such field or the
-  value does not fit it. `<value>` may hold `|`.
+  value does not fit it. `<value>` may hold `|`. (Before 2026-10-30 any whole value was written as an integer; before
+  2026-10-31 a stored 0 chose the integer, and an integer field took decimals as "rounded".)
 - `partguid=<guid>`: sets the `guid` attribute of the top-level partition.
 - `additem=<guid>|<array>|<ref>[|<before ref>]`: adds an item to the direct child `array` of that instance
   named `<array>`, shaped like its first existing item but with only a `ref` attribute; at the end, or
@@ -180,9 +190,13 @@ normally the original `.dbx` the XML was exported from (`--like`, or `<name>.dbx
   bytes. Unchanged attributes keep its string indexes. The reference's string table is kept and new
   strings are appended, so an unedited XML gives the original file byte for byte.
 - **Changed values** keep the reference element's kind and number size. A 4-byte token is read as the
-  integer or the decimal that the XML would print as exactly that token. If both would (`1`), the
-  reference value's reading decides. If neither would (more digits than a 4-byte decimal holds), an
-  integer field takes the integer and anything else the nearest decimal, which is counted as rounded.
+  integer or the decimal that the XML would print as exactly that token; a token shown as the reference value
+  was keeps its bytes. If both readings would (`1`), the kind decides: the reference value's, but a stored 0 or -0
+  is both, so for it most of the list's stored non-zero values', else the field's in the reference and `--types`
+  files, else decimal. If neither would (more digits than a 4-byte decimal holds), an integer field takes the
+  integer (a whole-number field also its unsigned form) and anything else the nearest decimal, which is counted
+  as rounded. A token of the other kind than its field's (`1.5` in an integer field), a NaN or an infinity is
+  written and listed as a `note:` on stderr.
 - **New elements** take kind, size and integer-or-decimal from the same field (tag + first attribute
   value) in the reference or the `--types` files. With no such field, the XML's own shape decides, and
   each such guess is reported:
@@ -192,6 +206,13 @@ normally the original `.dbx` the XML was exported from (`--like`, or `<name>.dbx
   - `/`-separated numbers are 4-byte numbers;
   - anything else is text.
 - New files (no reference) get header value 0, container byte 0, first byte 1 and no trailing bytes.
+
+The import refuses (exit 1, `import failed: line N: ...`, nothing written) what it cannot write as it is: an
+element with more than 15 attributes (section 2: the count is the low 4 bits of the head byte), a NUL character, raw
+or `&#0;` (a string ends at its zero byte), anything after the root element but white space, comments and `<?...?>`,
+a character reference that is not a Unicode character (not decimal or hex digits, a surrogate, past U+10FFFF), and
+containers nested deeper than 1,000 (an element with children, or one holding only a line break, counts; a value
+element inside the 1,000th container is taken, as `edit` takes the binary).
 
 Exit code 0 means written; 1 means failed; 3 means written, but some values were typed by guess.
 
@@ -234,10 +255,12 @@ evidence). *Where* is `<type> <guid> [<field path>]`, as above.
   (looked up on the instance's class, then its bases) to an instance that is not that class or one derived from
   it. With `--bundle`, the same for references into other files (the target's type is read from that file).
 - **Error:** an item (or a field of a complex item) of one of the arrays in `LevelRules1943.ArrayTypes` (keyed
-  `<instance type>.<array path without indices>`) refers to an instance that is not of the listed class.
+  `<instance type>.<array path without indices>`) refers to an instance that is not of the listed class, or is
+  `null` (2026-10-31; `LevelData.Objects` is left to the null-entry error above).
 - **Error:** a `StaticModelGroupEntityData`, `RigidModelGroupEntityData`, `MiddlegrowthModelGroupEntityData` or
   `ForestEntityData` whose `MemberDatas` item is not its member class (`...MemberData`; `TreeMemberData` for the
-  forest). For each member, in `MemberDatas` order, with *run* starting at 0: `InstanceCount` must equal the number of
+  forest), or names no instance of this partition (a reference into another partition, 2026-10-31; a missing local
+  one is the unresolved-reference error). For each member, in `MemberDatas` order, with *run* starting at 0: `InstanceCount` must equal the number of
   `SpawnDatas`; `FirstPhysicsPart` must equal *run*; `PhysicsPartCount - FirstPhysicsPart` must equal
   `InstanceCount x PhysicsPartCountPerInstance`; then *run* = `PhysicsPartCount`.
 - **Warning:** an instance listed twice in LevelData `Objects`.

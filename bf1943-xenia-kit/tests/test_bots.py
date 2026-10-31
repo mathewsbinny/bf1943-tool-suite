@@ -79,16 +79,21 @@ def mailbox():
             if m == op and mm and mm.group(2) == base:
                 found.add(int(mm.group(1), 0))
         return found
+    copy = {bots.G_STAMP, bots.G_THROTTLE, bots.G_STRAFE, bots.G_YAW, bots.G_PITCH, bots.G_BUTTONS_HI, bots.G_BUTTONS_LO}
+    check(min(copy) >= bots.BLOCK_SIZE - bots.BOT0 and bots.ALLOC_SIZE >= bots.BLOCK_SIZE + bots.BOT_SIZE * bots.MAX_BOTS
+          and bots.ALLOC_SIZE <= 0x7FFF, 'the guest-only command copies lie after the host-visible block, inside the allocation')
     check(offsets('stw', 'r22') == {bots.R_SEQ, bots.R_PLAYER, bots.R_SOLDIER, bots.R_TEAM, bots.R_X, bots.R_Y, bots.R_Z,
-                                    bots.R_SEQ_END}, f'the guest writes exactly the state record\'s words: {sorted(offsets("stw", "r22"))}')
+                                    bots.R_SEQ_END} | copy,
+          f'the guest writes exactly the state record\'s words and its command copy: {sorted(offsets("stw", "r22"))}')
     check(offsets('lwz', 'r22') == {bots.C_STAMP, bots.C_THROTTLE, bots.C_STRAFE, bots.C_YAW, bots.C_PITCH, bots.C_BUTTONS_HI,
-                                    bots.C_BUTTONS_LO, bots.C_SEQ}, f'and reads exactly the command record\'s: {sorted(offsets("lwz", "r22"))}')
+                                    bots.C_BUTTONS_LO, bots.C_SEQ} | copy,
+          f'and reads exactly the command record\'s and its copy\'s: {sorted(offsets("lwz", "r22"))}')
     header = {bots.H_MAGIC, bots.H_VERSION, bots.H_BOTS, bots.H_BOT_SIZE, bots.H_FLAGS_MAX, bots.H_FLAG_SIZE, bots.H_MANAGER}
     flags = {bots.F_SEQ, bots.F_ENTITY, bots.F_OWNER, bots.F_CONTROL, bots.F_ENABLED, bots.F_RADIUS, bots.F_X, bots.F_Y,
              bots.F_Z, bots.F_SEQ_END}
     check(offsets('stw', 'r29') == header | flags, f'the header (at creation) and flag records: {sorted(offsets("stw", "r29"))}')
     check(offsets('stw', 'r3') >= {bots.H_FLAGS, bots.H_TICK}, 'the tick\'s flag count and tick go to the header')
-    want = [f'std r22, -0x58(r1)', f'ld r22, -0x58(r1)', f'cmplwi r5, {bots.STALE:#x}', f'li r3, {bots.BLOCK_SIZE:#x}',
+    want = [f'std r22, -0x58(r1)', f'ld r22, -0x58(r1)', f'cmplwi r5, {bots.STALE:#x}', f'li r3, {bots.ALLOC_SIZE:#x}',
             'bl 0x82627d10', 'bl 0x825c5470', 'bl 0x825c1290', 'lbz r5, 0xad(r27)', 'lwz r5, 0x80(r27)', 'lwz r5, 0xa0(r27)',
             'lwz r5, 0x114(r5)', f'lis r4, {bots.MAGIC >> 16:#x}', f'ori r4, r4, {bots.MAGIC & 0xFFFF:#x}',
             f'lis r5, {((bots.CP_TYPE + 0x8000) >> 16) - 0x10000:#x}', f'addi r5, r5, {bots.CP_TYPE & 0xFFFF:#x}']
@@ -98,19 +103,23 @@ def mailbox():
     k = text.index(f'cmplwi r5, {bots.STALE:#x}')
     check(text[k + 1].startswith('bgt ') and text[k - 1] == 'subf r5, r6, r5', 'a command older than STALE ticks branches '
           'past the copy (tick - stamp, unsigned)')
-    k = text.index(f'li r3, {bots.BLOCK_SIZE:#x}')
+    k = text.index(f'li r3, {bots.ALLOC_SIZE:#x}')
     check(text[k + 1] == 'bl 0x82627d10', 'the block is allocated with the game allocator')
     command_snapshot()
+    torn_read_keeps_last()
     match_key()
+    host_left_hold()
     flag_radius_and_header()
 
 
 CTX, MANAGER, PLAYERS, HOST, OTHER = 0x40000000, 0x41000000, 0x42000000, 0x43000000, 0x44000000
+BOT, BOT2 = 0x45000000, 0x45001000
 
 
-def run_entry(mem, calls=None, limit=1000, until=('forget', 'make', 'respawn', 'out', 'create')):
+def run_entry(mem, calls=None, limit=1000, until=('forget', 'forget_held', 'make', 'respawn', 'out', 'create')):
     """The bot code from its start (after the server's own player update) on the interpreter, to the first of the
-    paths it takes: 'forget', 'make' (make the bots), 'respawn' (bots exist: per-bot work), 'out' or 'create'."""
+    paths it takes: 'forget', 'forget_held' (the host left: forget and hold), 'make' (make the bots), 'respawn' (bots
+    exist: per-bot work), 'out' or 'create'."""
     d = decoded()
     start = [a for a, (m, o) in d.ins.items() if m == 'bl' and o == ['0x8238eb68']][0] + 4
     reg = {'r1': 0x70000000}
@@ -121,52 +130,97 @@ def run_entry(mem, calls=None, limit=1000, until=('forget', 'make', 'respawn', '
     return stops[reg['_stop']], reg
 
 
-def match(state=1, manager=MANAGER, recorded=MANAGER, players=(HOST,), host=HOST):
+def set_players(mem, players, manager=MANAGER):
+    """The manager's player list: begin, end, and the entries."""
+    mem.update({manager + 0x54: PLAYERS, manager + 0x58: PLAYERS + 4 * len(players)})
+    mem.update({PLAYERS + 4 * k: p for k, p in enumerate(players)})
+
+
+def match(state=1, manager=MANAGER, recorded=MANAGER, players=(HOST, BOT), host=HOST, slots=(BOT,), hold=0):
     """A guest memory: the server context's player manager and its players, and the bot code's data area (its state,
-    the manager and host player it recorded, a bot in slot 0, a mailbox)."""
+    the manager and host player it recorded, the bots in its slots (when state is 1), a mailbox, the hold)."""
     d = bots.DATA
     mem = {CTX + 0x28: manager, d + bots.STATE: state, d + bots.MANAGER: recorded, d + bots.HOST_PLAYER: host if state else 0,
-           d + bots.SLOTS: 0x45000000 if state else 0, d + bots.MBOX: 0x46000000 if state else 0,
-           d + bots.MBOX_MAGIC: bots.MAGIC if state else 0}
+           d + bots.MBOX: 0x46000000 if state else 0, d + bots.MBOX_MAGIC: bots.MAGIC if state else 0, d + bots.HOLD: hold}
+    mem.update({d + bots.SLOTS + 4 * k: p for k, p in enumerate(slots if state else ())})
     if manager:
-        mem.update({manager + 0x54: PLAYERS, manager + 0x58: PLAYERS + 4 * len(players)})
-        mem.update({PLAYERS + 4 * k: p for k, p in enumerate(players)})
+        set_players(mem, players, manager)
     return mem
 
 
 def match_key():
     """Which match the bots belong to: the player manager and its first player (the host's), as recorded when they were
-    made. Before 2026-10-30 a missing manager left everything in place, and only the manager was compared: a new match
-    whose manager reused the old address took the old match's freed bot players as its own."""
-    cases = [('the same match (manager and first player as recorded)', match(), 'respawn'),
+    made, and every bot slot's player still in the manager's list. Before 2026-10-30 a missing manager left everything
+    in place, and only the manager was compared: a new match whose manager reused the old address took the old match's
+    freed bot players as its own; until the slot check (2026-10-30) a new match whose manager and host both reused the
+    old addresses still did, and a bot the game removed was still stepped."""
+    d = bots.DATA
+    cases = [('the same match (manager and first player as recorded, the bot in the list)', match(), 'respawn'),
              ('no player manager (between matches)', match(manager=0), 'forget'),
              ('the manager\'s address reused by a new match (its first player another)',
               match(players=(OTHER, HOST)), 'forget'),
              ('an empty player list', match(players=()), 'forget'),
              ('another manager', match(manager=0x41100000), 'forget'),
-             ('no bots yet in this match', match(state=0), 'make')]
+             ('no bots yet in this match', match(state=0), 'make'),
+             ('the manager and the host both at reused addresses, none of the bots in the list (a new match)',
+              match(players=(HOST,)), 'forget'),
+             ('the host left, its bots still in the list', match(players=(BOT,)), 'forget_held'),
+             ('no bot was made (the server was full)', match(players=(HOST,), slots=()), 'respawn')]
     for what, mem, want in cases:
         got, _ = run_entry(mem)
         check(got == want, f'match key: {what}: {got} (expected {want})')
-    # forget: everything of the old match cleared, the new manager (0 when none) remembered
+    # a bot the game removed: its slot cleared (never touched again), the others kept, the match goes on
+    mem = match(players=(HOST, BOT2), slots=(BOT, BOT2))
+    got, _ = run_entry(mem)
+    check(got == 'respawn' and mem.get(d + bots.SLOTS) == 0 and mem.get(d + bots.SLOTS + 4) == BOT2,
+          f'slot check: a bot gone from the list has its slot cleared, the others are kept ({got})')
+    # forget: everything of the old match cleared, the hold too, the new manager (0 when none) remembered
     names = decoded().names
     for manager in (0, 0x41100000):
-        mem = match(manager=manager)
+        mem = match(manager=manager, hold=1)
         for _ in interpret(names['forget'], names['out'], {'r30': manager, 'r31': bots.DATA, 'r1': 0x70000000},
                            lambda a: mem.get(a, 0), mem.__setitem__):
             pass
-        d = bots.DATA
-        check(all(mem.get(d + o) == 0 for o in (bots.STATE, bots.MBOX, bots.MBOX_MAGIC, bots.HOST_PLAYER))
+        check(all(mem.get(d + o) == 0 for o in (bots.STATE, bots.MBOX, bots.MBOX_MAGIC, bots.HOST_PLAYER, bots.HOLD))
               and not any(mem.get(d + bots.SLOTS + 4 * k) for k in range(bots.MAX_BOTS)) and mem[d + bots.MANAGER] == manager,
-              f'forget (manager {manager:#x}): state, mailbox, key and slots cleared, the manager remembered')
+              f'forget (manager {manager:#x}): state, mailbox, key, hold and slots cleared, the manager remembered')
     # making the bots records the host's player as the match's key (run to the creation loop: the block is cleared
     # and its header written on the way)
     mem = match(state=0)
     mem[HOST + 0x120] = 0x47000000                            # the host has a soldier
-    got, reg = run_entry(mem, {0x82627d10: lambda r: 0x48000000}, limit=10000, until=('forget', 'respawn', 'out', 'create'))
-    check(got == 'create' and mem.get(bots.DATA + bots.HOST_PLAYER) == HOST and mem.get(bots.DATA + bots.STATE) == 1
-          and mem.get(bots.DATA + bots.MBOX) == 0x48000000 and mem.get(0x48000000 + bots.H_MAGIC) == bots.MAGIC,
+    got, reg = run_entry(mem, {0x82627d10: lambda r: 0x48000000}, limit=20000, until=('forget', 'respawn', 'out', 'create'))
+    check(got == 'create' and mem.get(d + bots.HOST_PLAYER) == HOST and mem.get(d + bots.STATE) == 1
+          and mem.get(d + bots.MBOX) == 0x48000000 and mem.get(0x48000000 + bots.H_MAGIC) == bots.MAGIC,
           'making the bots records the host\'s player with the mailbox and the state')
+
+
+def host_left_hold():
+    """The host leaves with the bots still in the match: they are forgotten and nothing more is made (the hold) until
+    the list empties or the manager changes. Before 2026-10-30 the next tick made a new set, a bot as its host. Each
+    tick runs whole (forget's clearing included) to out, respawn or the creation loop."""
+    d = bots.DATA
+    allocated = []
+    alloc = {0x82627d10: lambda r: allocated.append(r['r3']) or 0x48000000}
+    run = lambda mem: run_entry(mem, alloc, limit=20000, until=('respawn', 'out', 'create'))[0]
+    mem = match(players=(BOT,))
+    mem[BOT + 0x120] = 0x47000000                             # the bot has a soldier, as the host's had
+    first = run(mem)
+    check(first == 'out' and mem.get(d + bots.HOLD) == 1 and mem.get(d + bots.STATE) == 0 and not mem.get(d + bots.SLOTS),
+          f'the host left: the bots forgotten and the hold set ({first}, hold {mem.get(d + bots.HOLD)})')
+    ticks = [run(mem) for _ in range(3)]
+    check(ticks == ['out'] * 3 and not allocated,
+          f'held: no new bots while the bot-only match goes on ({ticks}, {len(allocated)} allocations)')
+    set_players(mem, ())
+    got = run(mem)
+    check(got == 'out' and mem.get(d + bots.HOLD) == 0, f'the list empties: the hold is cleared ({got})')
+    set_players(mem, (OTHER,))
+    mem[OTHER + 0x120] = 0x47000000
+    got = run(mem)
+    check(got == 'create' and len(allocated) == 1, f'then a host with a soldier: the bots are made again ({got})')
+    mem = match(state=0, hold=1, recorded=0x41100000)
+    got = run(mem)
+    check(got == 'out' and mem.get(d + bots.HOLD) == 0 and mem.get(d + bots.MANAGER) == MANAGER,
+          f'another manager: the hold is cleared ({got})')
 
 
 def flag_radius_and_header():
@@ -270,26 +324,63 @@ def interpret(start, stop, reg, load, store, calls=None, sync=None, limit=1000):
     raise AssertionError(f'the bot code from {start:#x} did not reach {sorted(hex(s) for s in stops)}')
 
 
-def run_command_read(word, tick):
+COPY = ('G_STAMP', 'G_THROTTLE', 'G_STRAFE', 'G_YAW', 'G_PITCH', 'G_BUTTONS_HI', 'G_BUTTONS_LO')
+
+
+def run_command_read(word, tick, last=None):
     """Runs the bot code's command read (from after the frame's + 0x84 copy to push) on the interpreter: word(offset)
-    gives the command record's words (the host may write between loads). The frame buffer's command fields as stored
-    ((throttle, strafe, yaw, pitch, hi, lo)), or None when it stays neutral."""
+    gives the command record's words (the host may write between loads); last is the bot's guest-only copy of its last
+    whole command (7 words, updated in place as the code leaves it; None: all zero, a new block). The frame buffer's
+    command fields as stored ((throttle, strafe, yaw, pitch, hi, lo)), or None when it stays neutral."""
     d = decoded()
     start = [a for a, (m, o) in d.ins.items() if m == 'stw' and o == ['r5', f'{bots.BUF + 0x84:#x}(r1)']][0] + 4
     stack, rec = 0x70000000, 0x60000000
     reg = {'r1': stack, 'r22': rec, 'r31': bots.DATA}
     buf = {}
+    copy = {rec + getattr(bots, n): (last[k] if last else 0) for k, n in enumerate(COPY)}
 
     def load(at):
-        return word(at - rec) if rec <= at < rec + bots.BOT_SIZE else {bots.DATA + bots.TICK: tick}[at]
+        if rec <= at < rec + bots.BOT_SIZE:
+            return word(at - rec)
+        return copy[at] if at in copy else {bots.DATA + bots.TICK: tick}[at]
 
     def store(at, v):
-        buf[at - stack - bots.BUF] = v
+        if at in copy:
+            copy[at] = v
+        else:
+            buf[at - stack - bots.BUF] = v
     for _ in interpret(start, d.names['push'], reg, load, store):
         pass
+    if last is not None:
+        last[:] = [copy[rec + getattr(bots, n)] for n in COPY]
     if not buf:
         return None
     return tuple(buf.get(o) for o in (8, 0x0C, 0x88, 0x8C, 0x78, 0x7C))
+
+
+def torn_read_keeps_last():
+    """A read that finds the host writing (its sequence odd, or changing, every try) uses the bot's last whole command
+    while that is fresh: a held button stays held, no edge (before 2026-10-30 the frame was neutral that tick, a
+    release and a new press, which flips toggles such as ChangePose). bots.guest_command, given the same copy, agrees."""
+    jump = 1 << 12
+    def record(seq, stamp, throttle=0x3F800000):
+        return {bots.C_SEQ: seq, bots.C_STAMP: stamp, bots.C_THROTTLE: throttle, bots.C_STRAFE: 0, bots.C_YAW: 0,
+                bots.C_PITCH: 0, bots.C_BUTTONS_HI: 0, bots.C_BUTTONS_LO: jump}
+    code_last, model_last, held, agree = [0] * 7, [0] * 7, [], True
+    # tick 1001: the host mid-write (odd, with a new throttle already in); 1002: whole again; 1003-1012: the host
+    # stopped mid-write: the copy is used until it is more than STALE ticks old, then the frame is neutral
+    plan = [(1000, record(8, 999)), (1001, record(9, 1000, 0xBF800000)), (1002, record(10, 1001))] +         [(t, record(11, 1002, 0)) for t in range(1003, 1003 + bots.STALE + 2)]
+    for tick, rec in plan:
+        got = run_command_read(rec.get, tick, code_last)
+        ref = bots.guest_command(rec.get, tick, model_last)
+        agree &= (None if ref is None else tuple(ref[1:])) == got and code_last == model_last
+        held.append(bool(got and got[5] & jump))
+        if tick == 1001:
+            check(got is not None and got[0] == 0x3F800000, 'a torn read uses the last whole command, not the half-written one')
+    edges = sum(1 for a, b in zip([False] + held, held) if b and not a)
+    want = [True] * 3 + [t - 1001 <= bots.STALE for t in range(1003, 1003 + bots.STALE + 2)]
+    check(held == want and edges == 1, f'Jump held through a torn read: one press, no release (held {held}, {edges} edges)')
+    check(agree, 'bots.guest_command with the copy takes what the bot code takes, tick by tick')
 
 
 def command_snapshot():

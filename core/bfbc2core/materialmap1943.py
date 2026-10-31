@@ -53,7 +53,11 @@ def read(data):
     grid = np.zeros((side, side), np.uint8)
     p = 6
     for t in range(tiles):
+        if p + 4 > len(data):
+            raise ValueError(f'tile {t}: the file ends at {len(data)} bytes, before the tile')
         n = struct.unpack_from('>I', data, p)[0]
+        if p + 4 + n + 512 > len(data):
+            raise ValueError(f'tile {t}: {n} bytes of body and its row lengths run past the end of the file')
         body = data[p + 4:p + 4 + n]
         p += 4 + n
         lens = struct.unpack_from('>256H', data, p)
@@ -69,6 +73,8 @@ def read(data):
             while i < len(row):
                 b = row[i]
                 if i + 1 < len(row) and row[i + 1] == b:
+                    if i + 2 >= len(row):           # 2026-10-30 second review: an IndexError before
+                        raise ValueError(f'tile {t}: a row ends inside a run (a pair with no count byte)')
                     dec += bytes([b]) * (row[i + 2] + 1)
                     i += 3
                 else:
@@ -82,10 +88,21 @@ def read(data):
         px = grid[ty * tile_rows:(ty + 1) * tile_rows, tx * tile_w:(tx + 1) * tile_w]
         px[:, 0::2] = raw & 0x0F
         px[:, 1::2] = raw >> 4
+    if p + 4 > len(data):
+        raise ValueError('the file ends before the name table')
     nbytes = struct.unpack_from('>I', data, p)[0]
-    names = [n.decode('ascii') for n in data[p + 4:p + 4 + nbytes].split(b'\0')[:-1]]
     if p + 4 + nbytes != len(data):
         raise ValueError(f'{len(data) - p - 4 - nbytes} bytes after the name table')
+    table = data[p + 4:p + 4 + nbytes]
+    # every name ends with a zero byte, and every material the map uses has one (2026-10-30 second review: a last name
+    # without its zero byte was dropped, and lookups of it gave None)
+    if table and not table.endswith(b'\0'):
+        last = table.rsplit(b'\0', 1)[-1][:40]
+        raise ValueError(f'the name table\'s last name ({last!r}) does not end with a zero byte')
+    names = [n.decode('ascii') for n in table.split(b'\0')[:-1]]
+    used = int(grid.max()) if grid.size else -1
+    if used >= len(names):
+        raise ValueError(f'the map uses material {used}, and the name table names {len(names)}')
     return MaterialMap(names, grid)
 
 

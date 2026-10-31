@@ -42,7 +42,8 @@ def category_1943(t):
 
 
 def load(level, game=None, terrain_stride=2, log=print):
-    sys.path[:0] = [NAVKIT_TOOLS, SPAWN_MAP]
+    # each folder once (2026-10-30 second review: every load put both in front again, so sys.path grew per level)
+    sys.path[:0] = [p for p in (NAVKIT_TOOLS, SPAWN_MAP) if p not in sys.path]
     import levelobjects1943 as lo
     game = game1943.find_game(game)
     lv = level.replace('\\', '/').split('/')[-1].lower()

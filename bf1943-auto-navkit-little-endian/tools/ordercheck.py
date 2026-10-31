@@ -142,6 +142,8 @@ class PathData:
         return False
 
     def nearest_group(self, p, radius=15.0):
+        if not len(self.ids):                    # a file with no route nodes: none near anything
+            return None, None
         d = np.hypot(self.pos[:, 0] - p[0], self.pos[:, 2] - p[2])
         d = np.where(np.abs(self.pos[:, 1] - Y_OFFSET - p[1]) <= 4.0, d, 1e9)
         k = int(np.argmin(d))
@@ -160,7 +162,7 @@ def main(argv):
     results = {}
     for path in argv[2:]:
         pdata = PathData(path)
-        biggest = max(pdata.group_size.values())
+        biggest = max(pdata.group_size.values(), default=0)
         res = []
         for k, n, p in pts:
             on = pdata.on_area(p)

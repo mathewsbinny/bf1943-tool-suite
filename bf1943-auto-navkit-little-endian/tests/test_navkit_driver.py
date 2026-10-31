@@ -52,10 +52,16 @@ def project(root):
     return navkit.Project(root)
 
 
+def hpd(n=0):
+    """A small path-data file that reads back exactly (no sectors); n tells one from another (a header word)."""
+    import hpdtool
+    return hpdtool.write(hpdtool.HpdFile((2, 2, 0, 1, n) + (0,) * 31, []))
+
+
 def install_restore(root):
     pr = project(root)
     built = os.path.join(pr.out_dir('mp_x'), 'pathdata.hpd')
-    touch(built, b'NAVKIT')
+    touch(built, hpd(1))
     dest = pr.pathdata('mp_x')
     navkit.install(pr, 'mp_x', log=QUIET)
     check(pr.dice_pathdata('mp_x') is None and not os.path.isfile(navparity.reference_of(root, 'mp_x')),
@@ -68,9 +74,9 @@ def install_restore(root):
           '... restore removes NavKit\'s file and the marker')
     orig = pr.pathdata('sp_y')
     touch(orig, b'DICE')
-    touch(os.path.join(pr.out_dir('sp_y'), 'pathdata.hpd'), b'NAVKIT1')
+    touch(os.path.join(pr.out_dir('sp_y'), 'pathdata.hpd'), hpd(2))
     navkit.install(pr, 'sp_y', log=QUIET)
-    touch(os.path.join(pr.out_dir('sp_y'), 'pathdata.hpd'), b'NAVKIT2')
+    touch(os.path.join(pr.out_dir('sp_y'), 'pathdata.hpd'), hpd(3))
     navkit.install(pr, 'sp_y', log=QUIET)
     with open(orig + navkit.BACKUP_SUFFIX, 'rb') as f:
         check(f.read() == b'DICE' and pr.dice_pathdata('sp_y') == orig + navkit.BACKUP_SUFFIX,

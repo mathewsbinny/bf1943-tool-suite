@@ -377,5 +377,74 @@ if __name__ == '__main__':
     check(c0 > best, f'with the legacy 0.999 the search returns {c0} where {best} exists (the bug reproduced)')
     check(c1 == best, f"with the file's scale {q / rsnv.H_SCALE_ONE:.6f} the search returns the cheapest, {c1}")
     check(w1.h_scale_q == q and w0.h_scale == rsnv.H_SCALE_LEGACY, 'the scale round-trips; 0 reads as 0.999')
+    # 2026-10-31: a scale over 1 is refused, as rsnav's rsn_load refuses it (it loaded, and the search went greedy)
+    over = os.path.join(tmp, 'chain_over.rsnv')
+    chain_file(over, (1 << 24) + 1)
+    try:
+        rsnv.load(over)
+        refused = 'loaded'
+    except ValueError as x:
+        refused = str(x)
+    check('heuristic scale is over 1' in refused, f'a heuristic scale over 1 is refused at load ({refused})')
+    chain_file(over, 1 << 24)
+    check(rsnv.load(over).validate() == [], 'a heuristic scale of exactly 1 is accepted')
+    # 2026-10-30 second review: edge kinds this reader does not name, as rsnav treats them (rsn_edge_cost): a kind
+    # under 32 is used with no kind extra (an IndexError before), a kind past 31 is never used (it was, with no mask);
+    # the file loads, with a note
+    for kind, label in ((7, 'kind 7'), (40, 'kind 40')):
+        s3, h3 = tiny()
+        t_, c_, f_ = s3['EDGE'][0]                                      # edge 0 -> 1
+        s3['EDGE'][0] = ((t_ & 0xFFFFFF) | kind << 24, c_, f_)
+        kp = os.path.join(tmp, f'kind{kind}.rsnv')
+        rsnv.write(kp, s3, h3)
+        wk = rsnv.load(kp)
+        notes = getattr(wk, 'notes', [])
+        check(wk.validate() == [] and any(str(kind) in n for n in notes), f'{label}: the file loads, with a note ({notes})')
+        try:
+            got = rsnv.search(wk, 0, 2, kind_extra=[0, 0, 0, 0, 500, 0, 0])[:3]
+        except Exception as e:
+            got = f'{type(e).__name__}: {e}'
+        want = ('done', 76, [0, 1, 2]) if kind < 32 else ('done', 666, [0, 3, 2])     # round by the jump (70 + 500)
+        check(got == want, f'{label}: the search treats it as rsnav does ({got}, wanted {want})')
+    # rsnv.write moves a new file into place: a hard link at the path is replaced, not written through
+    other = os.path.join(tmp, 'other.rsnv')
+    rsnv.write(other, *tiny())
+    before = open(other, 'rb').read()
+    linked = os.path.join(tmp, 'linked.rsnv')
+    try:
+        os.link(other, linked)
+        made_link = True
+    except (OSError, AttributeError, NotImplementedError):
+        made_link = False
+        print('skip rsnv.write over a hard link: no hard link could be made here')
+    if made_link:
+        s4, h4 = tiny()
+        h4['sea_level'] = 9.0
+        rsnv.write(linked, s4, h4)
+        check(open(other, 'rb').read() == before and rsnv.load(linked).sea_level == 9.0
+              and not [n for n in os.listdir(tmp) if n.endswith('.tmp')],
+              'rsnv.write replaces a hard link at its path, never writes through it, no temporary file left')
+    # 2026-10-30 second review (user's): a filter that discounts (wading x 64/256) keeps the heuristic admissible.
+    # Node 3 wades: 0 -> 3 -> 2 costs 96 x 64 >> 8 = 24 plus 70 x 64 >> 8 = 17, 41, against 76 along 0 -> 1 -> 2
+    s5, h5 = tiny()
+    s5['NAUX'] = [(0, 0, 0, 0)] * 3 + [(0, 0, 0, rsnv.NAUX_WADE)]
+    wp = os.path.join(tmp, 'wade.rsnv')
+    rsnv.write(wp, s5, h5)
+    ww = rsnv.load(wp)
+    got = rsnv.search(ww, 0, 2, water_scale=(256, 256, 64))[:3]
+    check(got == ('done', 41, [0, 3, 2]), f'a discounting water scale: the search finds the cheapest path ({got}, wanted 41)')
+    check(rsnv.search(ww, 0, 2)[:3] == ('done', 76, [0, 1, 2]), 'without the discount the plain path stays the answer')
+    # a META holding JSON null (or a list) loads with a dictionary, as an unreadable one does: readers call meta.get
+    for label, meta in (('null', b'null'), ('a list', b'[1, 2]')):
+        s6, h6 = tiny()
+        s6['META'] = meta
+        mp = os.path.join(tmp, 'meta.rsnv')
+        rsnv.write(mp, s6, h6)
+        try:
+            m6 = rsnv.load(mp).meta
+            why = m6.get('exporter', 'none')
+        except Exception as e:
+            why = f'{type(e).__name__}: {e}'
+        check(why == 'none', f'a META holding {label} reads as a dictionary ({why})')
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

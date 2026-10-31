@@ -16,9 +16,11 @@ version (import or update) is compared with the source: a file changed there is 
 suite's copy is still exactly that recorded version; a file changed in both places is left alone and reported
 as a conflict, to merge by hand; files new in the source are added. The update is recorded like an import.
 
-Every item of a plan (sources committed, destinations free and named once) and every --update destination is checked
-before anything is written. A run that still stops part-way records the files it wrote, with the error under
-"incomplete", so no copied or updated file is left without its record.
+Every item of a plan (sources committed, destinations free, named once and none inside another) and every --update
+destination is checked before anything is written. Each file is written beside its place, checked against its blob
+id, moved into place, and then recorded, so a file is either in place and recorded or not there at all (a failed write
+leaves no partial file). A run that stops part-way records what it wrote or created (a destination folder too), with
+the error under "incomplete"; `--update <destination>` then finishes it.
 """
 import argparse
 import datetime
@@ -27,6 +29,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True
 SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,6 +44,28 @@ def git(*args):
 
 def blob_id(data):
     return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest()
+
+
+def place(path, data, blob, new):
+    """path holding data: written to a temporary file beside it, checked against blob, then moved into place
+    (os.replace). new: path must not exist (an import). A failure leaves path as it was and no temporary file
+    (2026-10-30 second review: a write that failed part-way left a cut file, never recorded)."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix='.import-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+        with open(tmp, 'rb') as f:
+            if blob_id(f.read()) != blob:
+                sys.exit(f'written file differs from its source: {path}')
+        if new and os.path.exists(path):
+            sys.exit(f'destination appeared while importing, refusing to overwrite: {path}')
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
 
 def tracked(commit, source):
@@ -88,12 +113,9 @@ def import_one(commit, source, destination, note, item=None):
         if blob_id(data) != blob:
             sys.exit(f'blob mismatch reading {path}')
         d = dst if single else os.path.join(dst, rel)
-        os.makedirs(os.path.dirname(d), exist_ok=True)
-        with open(d, 'xb') as f:
-            f.write(data)
-        with open(d, 'rb') as f:
-            if blob_id(f.read()) != blob:
-                sys.exit(f'written file differs from its source: {d}')
+        if not single and not os.path.isdir(dst):
+            item['created'] = True                      # the destination folder exists from here on: recorded
+        place(d, data, blob, new=True)
         copied.append({'path': rel, 'bytes': len(data), 'git_blob': blob, 'sha256': hashlib.sha256(data).hexdigest()})
     print(f'{len(copied):4d} files  {source} -> {os.path.relpath(dst, SUITE)}')
     return item
@@ -145,9 +167,7 @@ def update_one(commit, manifest, destination, item=None):
         data = git('cat-file', 'blob', blob)
         if blob_id(data) != blob:
             sys.exit(f'blob mismatch reading {path}')
-        os.makedirs(os.path.dirname(local), exist_ok=True)
-        with open(local, 'wb') as f:
-            f.write(data)
+        place(local, data, blob, new=False)             # never a cut file, never written through a hard link
         updated.append({'path': rel, 'bytes': len(data), 'git_blob': blob, 'sha256': hashlib.sha256(data).hexdigest(),
                         **({'previous_git_blob': old['git_blob']} if old else {'new': True})})
     print(f'{len(updated):4d} files updated, {len(conflicts)} to merge by hand  {source} -> {destination}')
@@ -174,12 +194,15 @@ def run_recorded(manifest, entry, work):
     try:
         work(items)
     except BaseException as e:
-        if any(i.get('files') for i in items):
+        # anything written or created is recorded (2026-10-30 second review: a destination folder made before its
+        # first file failed was left unrecorded, and both a new import and --update then refused it)
+        if any(i.get('files') or i.get('created') for i in items):
             entry['incomplete'] = str(e) if isinstance(e, SystemExit) else f'{type(e).__name__}: {e}'
             manifest['imports'].append(entry)
             save_manifest(manifest)
+            dests = ' '.join(i['destination'] for i in items if 'destination' in i)
             print(f'stopped part-way; the {sum(len(i.get("files", ())) for i in items)} file(s) written so far are '
-                  f'recorded in {MANIFEST} (marked incomplete)', file=sys.stderr)
+                  f'recorded in {MANIFEST} (marked incomplete); finish with: --update {dests}', file=sys.stderr)
         raise
     manifest['imports'].append(entry)
     save_manifest(manifest)
@@ -220,12 +243,17 @@ def main():
     commit = git('rev-parse', 'HEAD').decode().strip()
     # every item checked before anything is written (2026-10-30: a later item's missing source stopped the run after
     # the earlier items were copied, and those were never recorded)
-    seen = set()
+    seen = {}
     for i in plan:
         _, dst, _ = check_import(commit, i['source'], i['destination'])
-        if os.path.normcase(dst) in seen:
+        key = os.path.normcase(dst)
+        if key in seen:
             sys.exit(f"destination named twice in the plan: {i['destination']}")
-        seen.add(os.path.normcase(dst))
+        for other, name in seen.items():
+            # 2026-10-30 second review: 'a' and 'a/b' passed, and the second stopped the run after the first was copied
+            if os.path.commonpath([key, other]) in (key, other):
+                sys.exit(f"destination {i['destination']} lies inside {name}, or the other way round: one import each")
+        seen[key] = i['destination']
     dirty = [l[3:] for l in git('status', '--porcelain', '--untracked-files=no').decode('utf-8').splitlines()]
     with open(MANIFEST, encoding='utf-8') as f:
         manifest = json.load(f)

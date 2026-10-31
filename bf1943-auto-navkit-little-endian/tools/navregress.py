@@ -46,6 +46,23 @@ COUNTS = ['sectors_candidate', 'areas_candidate', 'detailed_candidate', 'islands
           'ai_main_candidate']
 
 
+OFFSET_FIELD = r'name="{}"[^>]*>\s*(-?\d+)(?:\.0*)?\s*<'
+
+
+def sector_offsets(path):
+    """(XOffset, ZOffset) of a level's SectorOffsets.xml (DbxEdit's XML of Precomputed/Infantry/SectorOffsets).
+    ValueError, naming the file, when a field is missing or not a whole number."""
+    with open(path, encoding='utf-8', errors='replace') as f:
+        t = f.read()
+    out = []
+    for name in ('XOffset', 'ZOffset'):
+        m = re.search(OFFSET_FIELD.format(name), t)
+        if not m:
+            raise ValueError(f'{path}: no whole-number {name} field (not the XML DbxEdit makes of SectorOffsets?)')
+        out.append(int(m.group(1)))
+    return tuple(out)
+
+
 def inputs(root, lv):
     """The build inputs of a level, as navkit.py build uses them; raises if something is missing."""
     L = os.path.join(root, 'work', 'levels', lv)
@@ -65,9 +82,10 @@ def inputs(root, lv):
         so = glob.glob(os.path.join(L, 'dist', 'levels', lv, 'Precomputed', 'Infantry', 'SectorOffsets.xml'))
         if not so:
             raise RuntimeError(f'{lv}: no navkit.json and no SectorOffsets.xml (run navkit.py prepare {lv})')
-        t = open(so[0], encoding='utf-8').read()
-        xoff = int(re.search(r'name="XOffset">(-?\d+)<', t).group(1))
-        zoff = int(re.search(r'name="ZOffset">(-?\d+)<', t).group(1))
+        try:
+            xoff, zoff = sector_offsets(so[0])
+        except ValueError as e:
+            raise RuntimeError(f'{lv}: {e}')
     files = {k: os.path.join(L, k) for k in ('forbid_tris.npy', 'dynamic_tris.npy', 'stair_tris.npy', 'soldier_spawns.json')}
     missing = [k for k, p in files.items() if not os.path.isfile(p)]
     if missing:
@@ -196,6 +214,18 @@ def compare(ref, now, tol):
     return worse, better, counts
 
 
+def save_run(target, run):
+    """A run as JSON at target, put in place whole (a killed write leaves the previous file)."""
+    tmp = target + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(run, f, indent=1)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def merged_rows(rows, existing):
     """This run's level rows, then the rows of the run being replaced for the levels this run did not measure."""
     done = {r['level'] for r in rows}
@@ -279,7 +309,7 @@ def main(argv):
         for k, a, b in counts:
             print(f'       count:  {k} {a} -> {b}')
     run = {'name': 'regression_last', 'date': time.strftime('%Y-%m-%d %H:%M'), 'levels': rows}
-    json.dump(run, open(navparity.save_path(root, 'regression_last'), 'w', encoding='utf-8', newline='\n'), indent=1)
+    save_run(navparity.save_path(root, 'regression_last'), run)
     if '--save' in args:
         name = opt('--save')
         target = navparity.save_path(root, name)
@@ -287,11 +317,7 @@ def main(argv):
         if os.path.isfile(target):                         # a subset run keeps the other levels' rows of the run it
             with open(target, encoding='utf-8') as f:      # replaces, whichever run that is
                 existing = json.load(f)['levels']
-        run = dict(run, name=name, levels=merged_rows(rows, existing))
-        tmp = target + '.tmp'
-        with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
-            json.dump(run, f, indent=1)
-        os.replace(tmp, target)
+        save_run(target, dict(run, name=name, levels=merged_rows(rows, existing)))
         print(f'saved as reference run "{name}"')
     print(('all passed' if not failed else f'{failed} level(s) worse or failed') + f' ({duration(time.time() - start)})')
     return 1 if failed else 0

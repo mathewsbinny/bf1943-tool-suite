@@ -117,6 +117,7 @@ def build(args):
     xenia_exe = os.path.join(args.xenia, netfix.EXE)
     if not os.path.isfile(xenia_exe):
         raise FileNotFoundError(f'{xenia_exe} not found: give the folder that holds xenia_canary.exe')
+    launcher_text(dict(netfix=os.path.join(args.xenia, netfix.FIXED), title=title), args.gpu)   # refused before any work
     say('1/5 checking the package')
     package_hash = sha256_file(args.package)
     if package_hash != KNOWN['game']['package_sha256']:
@@ -233,11 +234,39 @@ def launch_args(manifest, gpu):
     return [manifest['netfix'], f'--gpu={gpu}', '--license_mask=1', os.path.join(manifest['title'], 'default.xex')]
 
 
+# cmd.exe reads a batch file in the console's code page, the OEM one unless changed (437 or 850 on most Windows):
+# launch.cmd is written in it, and a path it cannot hold is refused. Before 2026-10-30 the file was UTF-8, so a folder
+# such as "Xenia José" became another name and launch.cmd failed ("The system cannot find the path specified").
+LAUNCHER_ENCODING = 'oem' if os.name == 'nt' else 'ascii'
+
+
+def cmd_quoted(path):
+    """A path as one quoted cmd.exe argument: '%' doubled (cmd expands %...% even inside quotes, so a folder such as
+    "50%off" broke the line before 2026-10-30); a path the batch file's code page cannot hold is refused."""
+    try:
+        if path.encode(LAUNCHER_ENCODING).decode(LAUNCHER_ENCODING) != path:
+            raise UnicodeError
+    except UnicodeError:
+        raise ValueError(f'launch.cmd cannot name {path!r}: cmd.exe reads it in code page {LAUNCHER_ENCODING!r}, which '
+                         'cannot hold every character of that path; use a folder whose name it can (for example plain '
+                         'letters and digits)') from None
+    if '"' in path:
+        raise ValueError(f'a path with a double quote cannot be passed on: {path!r}')
+    return '"' + path.replace('%', '%%') + '"'
+
+
+def launcher_text(manifest, gpu):
+    """launch.cmd's text (raises ValueError when a path cannot be written in it)."""
+    netfix_exe, gpu_flag, license_flag, title = launch_args(manifest, gpu)
+    cmd = ' '.join([cmd_quoted(netfix_exe), gpu_flag, license_flag, cmd_quoted(title)])
+    return ('@echo off\r\nrem Made by bf1943-xenia-kit: Battlefield 1943 in Xenia, offline with Local Match.\r\n'
+            f'cd /d {cmd_quoted(os.path.dirname(netfix_exe))}\r\nstart "" {cmd}\r\n')
+
+
 def write_launcher(out, manifest, gpu):
-    cmd = ' '.join(f'"{a}"' if ' ' in a or a.endswith('.exe') or a.endswith('.xex') else a for a in launch_args(manifest, gpu))
-    with open(os.path.join(out, 'launch.cmd'), 'w', encoding='utf-8', newline='\r\n') as f:  # each '\n' written as CRLF
-        f.write('@echo off\nrem Made by bf1943-xenia-kit: Battlefield 1943 in Xenia, offline with Local Match.\n'
-                f'cd /d "{os.path.dirname(manifest["netfix"])}"\nstart "" {cmd}\n')
+    text = launcher_text(manifest, gpu)
+    with open(os.path.join(out, 'launch.cmd'), 'wb') as f:
+        f.write(text.encode(LAUNCHER_ENCODING))
 
 
 def load(out):

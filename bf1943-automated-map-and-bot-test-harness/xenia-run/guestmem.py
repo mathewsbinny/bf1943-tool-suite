@@ -154,12 +154,15 @@ class Guest:
     def u32(self, guest):
         return struct.unpack('>I', self.read(guest, 4))[0]
 
-    def write_u32(self, guest, value):
-        data = struct.pack('>I', value)
+    def write(self, guest, data):
+        """data at a guest address in one WriteProcessMemory call."""
         done = ctypes.c_size_t()
-        if not k32.WriteProcessMemory(self.handle, ctypes.c_void_p(self.base + guest), data, 4, ctypes.byref(done)) \
-                or done.value != 4:
-            raise OSError(f'cannot write guest {guest:#010x}, Windows error {ctypes.get_last_error()}')
+        if not k32.WriteProcessMemory(self.handle, ctypes.c_void_p(self.base + guest), data, len(data),
+                                      ctypes.byref(done)) or done.value != len(data):
+            raise OSError(f'cannot write guest {guest:#010x} ({len(data)} bytes), Windows error {ctypes.get_last_error()}')
+
+    def write_u32(self, guest, value):
+        self.write(guest, struct.pack('>I', value))
 
 
 def f32(bits):
@@ -250,14 +253,17 @@ def flag_records(g, block):
 
 def write_command(g, block, k, stamp, throttle=0.0, strafe=0.0, yaw=0.0, pitch=0.0, buttons=0):
     """Slot k's command under its sequence lock (bots.py, C_SEQ; as navhost writes it): the sequence odd, the stamp
-    and fields, then the sequence even and new, aligned 32-bit words. The guest takes none of it until the end."""
+    and fields in one write, then the sequence even and new: three writes, so the record is open as briefly as the
+    process calls allow (a guest read that finds it open uses the bot's last whole command; before 2026-10-30 each field
+    was its own write, nine in all). The guest takes none of it until the end."""
     at = block + bots.BOT0 + bots.BOT_SIZE * k
+    fields = struct.pack('>7I', stamp, bits32(throttle), bits32(strafe), bits32(yaw), bits32(pitch), buttons >> 32,
+                         buttons & 0xFFFFFFFF)
+    if bots.C_BUTTONS_LO + 4 - bots.C_STAMP != len(fields):
+        raise RuntimeError('the command record\'s fields are not seven consecutive words: bots.py changed its layout')
     odd = (g.u32(at + bots.C_SEQ) + 1 | 1) & 0xFFFFFFFF
     g.write_u32(at + bots.C_SEQ, odd)
-    for name, value in (('C_STAMP', stamp), ('C_THROTTLE', bits32(throttle)), ('C_STRAFE', bits32(strafe)),
-                        ('C_YAW', bits32(yaw)), ('C_PITCH', bits32(pitch)), ('C_BUTTONS_HI', buttons >> 32),
-                        ('C_BUTTONS_LO', buttons & 0xFFFFFFFF)):
-        g.write_u32(at + getattr(bots, name), value)
+    g.write(at + bots.C_STAMP, fields)
     g.write_u32(at + bots.C_SEQ, (odd + 1) & 0xFFFFFFFF)
 
 

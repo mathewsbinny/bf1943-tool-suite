@@ -109,6 +109,47 @@ tests\               the rule tests on made-up data (water, edits, area links, p
   sampling run exit code 1. The window's Cancel and close end the step and what it started (`taskkill /T`), close the
   game and restore `opfor.ini` without freezing the window.
 
+## Second review (2026-10-31)
+
+- `apply --out` naming the game's path data (the installed file, its `.opfor-orig`, anything under `Output\win32\ai`)
+  is refused before anything is built or written, on a NavKit base too. A failed `apply` (a `BuildError` included) is
+  exit code 1 and its `.report.txt` ends with the error, never a previous run's success; `build` alike.
+- A 0.2 m run writes its `.sectors.json` as "pending" first and the covered sectors only when both runs finish: the
+  samples of a run that failed part-way are refused by `build` and `navregress.py` (before, with no record, they passed
+  for samples from before the record).
+- `--budget <ms>` (sample, all): the sampling time per frame of every run, as a run that ended with the level asks for;
+  `--pitch` takes only 0.8 or 0.2.
+- `install` puts a file in only when it reads back exactly (`--from notes.txt` is refused), written beside and replaced.
+- SectorOffsets: one reader (`navregress.sector_offsets`) for `prepare`, the settings of older runs and `navregress`;
+  a malformed file is a clear error naming it. `opfor.ini` with a byte-order mark keeps one `[dev]` section.
+- Sectors of sample columns are counted in whole centimetres (`navsample.column_sectors`), the same in `navbuild` and
+  `detailed.py`. Before, a column on a sector line fell on either side by float32 rounding of the run's minimum and
+  pitch, and the two disagreed. On the sample files on this PC (sp_01 and the four BF1943 levels, 0.8 m and 0.2 m runs)
+  no level's sector set and no stacked-floor choice changes; the stacked-floor counts of 19 - 31 sectors per 0.8 m run
+  (none on coral_sea, whose run minimum is exact) move by up to 92 columns, none across the 100-column threshold.
+- The detailed pass made again without sectors that have no 0.2 m ground restores the order-node ids and ladder counts
+  first: the retry reuses the discarded attempt's node ids, and an ordinary node with a stale order id was pruned.
+- **Detailed zones follow `NeedsDetailedPathfinding`** (`levelobjects.FLAG_DETAILED`, flags[5] in `objects.json`; it
+  tested `ForbidPathfinding`, flags[0], while saying `NeedsDetailedPathfinding`). Measured on the 13 BFBC2 campaign
+  levels on this PC (their shipped path data, read only; the object rule alone, 5 m around each flagged object's
+  collision box):
+
+  | flag | DICE's 458 detailed sectors found | extra sectors (DICE builds at 0.8 m) |
+  |---|---|---|
+  | `ForbidPathfinding` (before) | 387 (84.5 %) | 157 |
+  | `NeedsDetailedPathfinding` (now) | 396 (86.5 %) | 29 |
+  | either | 435 (95.0 %) | 164 |
+
+  Flagged sectors per level, before -> now (dropped / added; of those, DICE-detailed): sp_003_b 32 -> 28 (-4 / +0;
+  0 / 0), sp_004_b 25 -> 21 (-4 / +0; 0 / 0), sp_005 55 -> 46 (-13 / +4; 3 / 3), sp_005_b 30 -> 42 (-3 / +15; 0 / 14),
+  sp_006 57 -> 45 (-20 / +8; 1 / 7), sp_007 96 -> 45 (-51 / +0; 6 / 0), sp_008 23 -> 20 (-5 / +2; 0 / 2), sp_008_b
+  19 -> 22 (-0 / +3; 0 / 3), sp_009 0 -> 4 (+4; 4), sp_01 44 -> 36 (-16 / +8; 5 / 5), sp_02 46 -> 26 (-23 / +3;
+  12 / 3), sp_03 60 -> 52 (-10 / +2; 3 / 1), sp_04 57 -> 38 (-25 / +6; 9 / 6). With the stacked-floor sectors of its
+  0.8 m samples (the only campaign samples on this PC), sp_01's whole choice goes from 33 of DICE's 41 detailed sectors
+  and 11 extra to 37 and 5 extra. The Onslaught maps were not measured (not on this PC). An `objects.json` from before
+  this flag was extracted is refused: run `prepare` again; the detailed-sector cache is redone by itself. Levels need a
+  new 0.2 m sampling run where their choice changed (`build` says so), and a regression run.
+
 ## Detailed zones, ladders and walkability rules (2026-10-21 / 22)
 
 All 15 levels with DICE path data, rebuilt and measured on PC ground (`navregress.py`, run `regression_det_v6`,
@@ -131,7 +172,8 @@ DICE has none).
   0.2 and merges them with the normal build.
 - **Detailed zones (pitch 0.2):** chosen by `tools\detailed.py` without DICE's data - sectors near an object whose
   blueprint sets `NeedsDetailedPathfinding`, and sectors with 100+ stacked-floor columns in the 0.8 m samples (93 % of
-  DICE's choice on 14 levels). Built with 6 x 6 tiles, link step 0.3 m, a Gabriel-pruned route graph and coverage
+  DICE's choice on 14 levels - measured 2026-10-21 with `ForbidPathfinding`, which the code tested until 2026-10-31;
+  see "Second review" above). Built with 6 x 6 tiles, link step 0.3 m, a Gabriel-pruned route graph and coverage
   nodes every 4 m.
 - **Ladder links:** `navkit.py prepare` writes `ladders.json` (`tools\ladders.py`: placed ladder objects and their
   collision boxes); the build seeds the far end of a ladder whose near end is walkable and links a node at each end.

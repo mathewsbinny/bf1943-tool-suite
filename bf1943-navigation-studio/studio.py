@@ -380,18 +380,20 @@ class Studio:
 def main(argv):
     opts, args, k = {}, [], 1
     while k < len(argv):
-        if argv[k].startswith('--') and k + 1 < len(argv):
+        if argv[k].startswith('--'):
+            if k + 1 >= len(argv):
+                print(f'error: {argv[k]} needs a value')
+                return 2
             opts[argv[k]] = argv[k + 1]
             k += 2
         else:
             args.append(argv[k])
             k += 1
-    if '--path' in opts:                                    # a bad --path is said before the level loads
-        try:
-            path_points(opts['--path'])
-        except ValueError as e:
-            print('error:', e)
-            return 2
+    try:                                                    # bad options are said before the level loads
+        checked = check_options(opts)
+    except ValueError as e:
+        print('error:', e)
+        return 2
     if not args:                                            # started without a level: ask for one
         from bfbc2core import pick
         lv = pick.pick_level('BF1943 Navigation Studio')
@@ -407,7 +409,7 @@ def main(argv):
     print(f'navigation: {hpd}')
     navdata.Y_OFFSET = NODE_HEIGHT
     nav = navdata.load(hpd, lvl.heightfield)
-    st = Studio(lvl, nav, opts.get('--color', 'island').replace('-', ' '))      # small-islands: the 'small islands' mode
+    st = Studio(lvl, nav, checked['color'])
     st.triangles = st.scene.triangle_count()
     v = viewer.Viewer(st.scene, f'BF1943 Navigation Studio - {lvl.name}',
                       panels=[st.panel_main, st.panel_islands, st.panel_selection, st.panel_path, st.panel_status])
@@ -416,34 +418,77 @@ def main(argv):
     for name, i in st.layers.items():
         if name in hide:
             v.set_layer_visible(i, False)
-    if '--island' in opts and 0 <= int(opts['--island']) < len(nav.islands):
-        v.camera.focus(nav.islands[int(opts['--island'])].centre, 60.0)
-    if '--path' in opts:                                    # tests: a path test between two points
+    if checked['island'] is not None and checked['island'] < len(nav.islands):
+        v.camera.focus(nav.islands[checked['island']].centre, 60.0)
+    if checked['path'] is not None:                         # tests: a path test between two points
         st.set_path_mode(v, True)
-        for p in path_points(opts['--path']):
+        for p in checked['path']:
             st.path_point(v, p)
         r = st.route
         print('path: ' + (f'cost {r.cost:.1f} m, {len(r.nodes)} nodes' if r.found else f'none - {r.reason}'))
-    if '--focus' in opts:                                   # tests: the camera on a point
-        v.camera.focus(np.array([float(c) for c in opts['--focus'].split(',')]), float(opts.get('--distance', 45)))
-    if '--yaw' in opts:                                     # the orbit camera's angles (radians; pitch 1.5 looks down)
-        v.camera.yaw = float(opts['--yaw'])
-    if '--pitch' in opts:
-        v.camera.pitch = max(-1.55, min(1.55, float(opts['--pitch'])))
+    if checked['focus'] is not None:                        # tests: the camera on a point
+        v.camera.focus(np.array(checked['focus']), checked['distance'])
+    if checked['yaw'] is not None:                          # the orbit camera's angles (radians; pitch 1.5 looks down)
+        v.camera.yaw = checked['yaw']
+    if checked['pitch'] is not None:
+        v.camera.pitch = max(-1.55, min(1.55, checked['pitch']))
     if '--screenshot' in opts:
-        v.exit_after = int(opts.get('--frames', 40))
+        v.exit_after = checked['frames']
     v.run()
     if '--screenshot' in opts:
         return save_screenshot(opts['--screenshot'], v.screenshot)
     return 0
 
 
+def check_options(opts):
+    """The options' values, checked before the level loads: {'color', 'island', 'frames', 'path', 'focus', 'distance',
+    'yaw', 'pitch'} (None where not given); ValueError naming the option otherwise."""
+    def number(key, default=None):
+        if key not in opts:
+            return default
+        try:
+            v = float(opts[key])
+        except ValueError:
+            v = float('nan')
+        if not np.isfinite(v):
+            raise ValueError(f'{key} {opts[key]!r}: give a number')
+        return v
+
+    def whole(key, default=None, low=0):
+        if key not in opts:
+            return default
+        try:
+            n = int(opts[key])
+        except ValueError:
+            n = low - 1
+        if n < low:
+            raise ValueError(f'{key} {opts[key]!r}: give a whole number ({low} or more)')
+        return n
+    color = opts.get('--color', 'island').replace('-', ' ')   # small-islands: the 'small islands' mode
+    if color not in COLOR_MODES:
+        raise ValueError(f'--color {opts["--color"]!r}: give one of {", ".join(m.replace(" ", "-") for m in COLOR_MODES)}')
+    focus = None
+    if '--focus' in opts:
+        focus = points(opts['--focus'], 1, '--focus', '"x,y,z"')[0]
+    return {'color': color, 'island': whole('--island'), 'frames': whole('--frames', 40, 1),
+            'path': path_points(opts['--path']) if '--path' in opts else None, 'focus': focus,
+            'distance': number('--distance', 45.0), 'yaw': number('--yaw'), 'pitch': number('--pitch')}
+
+
+def points(text, count, key, form):
+    """count points "x,y,z" separated by ";", all finite; ValueError otherwise."""
+    try:
+        pts = [[float(c) for c in p.split(',')] for p in text.split(';') if p.strip()]
+    except ValueError:
+        pts = []
+    if len(pts) != count or any(len(p) != 3 or not all(np.isfinite(p)) for p in pts):
+        raise ValueError(f'{key} {text!r}: give {form}')
+    return pts
+
+
 def path_points(text):
     """--path "x,y,z;x,y,z": exactly two points (the start and the end); ValueError otherwise."""
-    pts = [[float(c) for c in p.split(',')] for p in text.split(';') if p.strip()]
-    if len(pts) != 2 or any(len(p) != 3 for p in pts):
-        raise ValueError(f'--path {text!r}: give two points, "x,y,z;x,y,z"')
-    return pts
+    return points(text, 2, '--path', 'two points, "x,y,z;x,y,z"')
 
 
 def save_screenshot(path, shot):

@@ -72,7 +72,8 @@ def main():
     with (ROOT/'work/xex-analysis/helper-entries.tsv').open('w',encoding='utf-8', newline='\r\n') as f:
         f.write('address\tname\n')
         for e in targets.values():f.write(f"{e['address']:08x}\t{e['name']}\n")
-    with (ROOT/'work/xex-analysis/helper-branches.tsv').open('w',encoding='utf-8', newline='\n') as f:
+    # helper-branches.tsv is CRLF too, as recorded: before 2026-10-31 it was written LF, so a rerun changed its bytes
+    with (ROOT/'work/xex-analysis/helper-branches.tsv').open('w',encoding='utf-8', newline='\r\n') as f:
         f.write('address\ttarget\tlink\tname\n')
         for c in calls:f.write(f"{c['address']:08x}\t{c['target']:08x}\t{int(c['link'])}\t{c['name']}\n")
     print(result['summary'])

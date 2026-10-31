@@ -170,20 +170,45 @@ def current(st, kind, want, cls=None):
     return have is not None and all(have.get(k) == v for k, v in want.items())
 
 
-def record(lv, kind, value, cls=None):
-    """Stamps a finished step; nothing when navkit.json now holds another preparation (prepared meanwhile)."""
+def soldier_changed(st, lv, soldier):
+    """Why a world built on the soldier world whose SHA-256 is soldier may not be stamped now (None when it may): that
+    file must still be the export of the current, passed build (navkit.json 'exported' and 'build_from')."""
+    built = st.get('build_from') or {}
+    ex = st.get('exported') or {}
+    if 'built' not in st or not built.get('hpd_sha256') or ex.get('hpd_sha256') != built['hpd_sha256']             or ex.get('sha256') != soldier or not nj.check_passed(st):
+        return (f'{lv}: the soldier world changed while the vehicle world was built (built, checked or exported again): '
+                f'it is not stamped; build it again (navexport_vehicles1943.py {lv})')
+    return None
+
+
+def record(lv, kind, value, cls=None, soldier_path=None):
+    """Stamps a finished step; nothing when navkit.json now holds another preparation (prepared meanwhile). A world
+    (a value with 'soldier') built on the default soldier world (soldier_path None or that file, as soldier_world
+    tells it) is refused with StaleError, and not stamped, when that file is no longer the export of the current
+    build: 2026-10-30 second review, a world finished after the soldier was built again was stamped, and the vehicle
+    check took it as current while the old export was still on disk."""
     import time
     value = dict(value, time=time.strftime('%Y-%m-%d %H:%M'))
+    refused = []
+    default_soldier = soldier_path is None or nj.same_file(soldier_path, os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv'))
 
     def change(st):
         if st.get('preparation') != value['preparation']:
             return
+        if 'soldier' in value and default_soldier:
+            why = soldier_changed(st, lv, value['soldier'])
+            if why:
+                refused.append(why)
+                return
         v = st.setdefault('vehicles', {})
         if cls is None:
             v[kind] = value
         else:
             v.setdefault(kind, {})[cls] = value
-    return nj.update(lv, change)
+    st = nj.update(lv, change)
+    if refused:
+        raise StaleError(refused[0])
+    return st
 
 
 def drop(lv, kind, cls=None):

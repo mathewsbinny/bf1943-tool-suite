@@ -47,7 +47,12 @@ The partition itself is compared too (unless `--type` is given), as `(partition)
 `primaryInstance`, ...) and its children other than instances. Lists of
 references (like a level's `Objects`) are compared as sets: `-` for entries only in A, `+` for entries only
 in B. A list with the same entries in another order is reported as such (each list on its own: a reorder is shown
-even when another list of the instance gained or lost entries).
+even when another list of the instance gained or lost entries). Each entry in both files (the n-th entry of a
+reference in A with the n-th in B) is also compared exactly - its reference as written, its other attributes, its
+value and anything below it - and a difference is shown as `List[<index in A>] -> <reference>` (`[i->j]` when it
+moved); the list element's own attributes and byte are shown as `List: (list)`. Until 2026-10-31 only the references
+were compared, so an entry's other attribute or value, or the list's own attribute, changed unseen ("changed: 0",
+exit 0). Each shipped level's partition against itself still reports `changed: 0` (2026-10-31).
 
 Example: Wake Island's level partition before and after an edit (extracted into `C:\dbx`, edited into
 `C:\dbx-edited`):

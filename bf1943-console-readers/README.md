@@ -32,7 +32,12 @@ it prints the cause, what to do and the log's path (exit code 1). A damaged pack
 than its declared size (a package cut short), or a fragmented file whose block chain comes back to a block it
 already read, or a name longer than its 40-byte field, or a parent index that is no folder entry - never a hang, a
 short file, repeated content or a file moved to the root. A package whose volume descriptor says its hash tables'
-second copies are current (block separation bit 1) is refused unread: the reader follows only the first copies. `extract` reads and checks each file before writing
+second copies are current (block separation bit 1) is refused unread: the reader follows only the first copies.
+So is a package with two copies of each hash table (bit 0 clear) and more than 0xAA allocated blocks: there each
+level-1 entry chooses its level-0 table's current copy, which the reader does not follow (BF1943's own package is
+read-only, bit 0 set, so it is read). A header or file table cut short is a damaged package. A file without a
+LIVE, PIRS or CON signature, a 0x24-byte volume descriptor, a plausible header size and a file table of at least
+one block is refused as no STFS package. `extract` reads and checks each file before writing
 it, through a temporary file beside it, so a damaged file leaves a copy extracted earlier as it was. Tests: `tests\test_console_readers.py`
 (the STFS reader on packages it builds, including names that try to leave the output folder, parent loops and
 files cut short, block chains that loop and a damaged file over an earlier copy; quick tier); your own BF1943 package is read by the Xenia kit's full

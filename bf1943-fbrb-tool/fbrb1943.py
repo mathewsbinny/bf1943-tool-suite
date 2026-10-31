@@ -23,11 +23,18 @@ Command line:
                                                            is resolved and checked before it is written)
   python fbrb1943.py replace <bundle.fbrb> <out.fbrb> <entry name>=<file> [...]
                                                            a copy with entries replaced (names as listed);
-                                                           never written into the game folder or over the input
+                                                           never written into the game folder or over the input;
+                                                           refused when a name to replace is held by two entries
+                                                           (equal, or equal but for case), as extract refuses them
 
-The game folder (core game1943.find_game) is only read: a changed bundle goes elsewhere, for the Xenia kit or a
-mod folder to use. Every file is written beside its destination and moved into place (write_file), so a hard link
-already at a destination is replaced, never written through.
+The game folders are only read: find_game's copy, and the copy the input bundle lies in (own_game_root: the nearest
+folder above it holding config.zz, levels\\levels-common-00.fbrb and a build_overlay-00.fbrb in the game's own
+layout, which no bundle this tool writes has). A changed bundle goes elsewhere, for the Xenia kit or a mod folder to
+use. Whether a path lies in a game folder is decided by file identity (volume and file index) along its folders, so
+another spelling of the same folder (\\\\localhost\\C$\\..., \\\\?\\C:\\..., a junction) is the same folder. Every file is
+written beside its destination and moved into place (write_file), so a hard link already at a destination is replaced,
+never written through. Bundle.build refuses a gzip template whose flag byte is not 0 (its header would announce a
+name or extra field that is not copied).
 """
 import gzip
 import hashlib
@@ -95,6 +102,12 @@ class Bundle:
         missing = set(replace) - {e['name'] for e in self.entries}
         if missing:
             raise KeyError(f'not in the bundle: {sorted(missing)}')
+        for what, header in (('directory', self.dir_header), ('payload', self.payload_header)):
+            # 2026-10-30 second review: the 10 bytes are reused as the new member's header; with FNAME, FEXTRA or
+            # FCOMMENT set it announces a field that is not copied, and the rebuilt bundle does not read back
+            if header is not None and (len(header) < 10 or header[:3] != b'\x1f\x8b\x08' or header[3] != 0):
+                raise ValueError(f'the {what}\'s gzip header ({header.hex()}) is not the plain one this tool rebuilds '
+                                 f'(flag byte {header[3] if len(header) > 3 else "-"}, not 0); not rebuilt')
         d = bytearray(self.directory)
         payload, pos = bytearray(), 0
         for k, e in enumerate(self.entries):
@@ -121,13 +134,46 @@ def canonical(path):
     return os.path.normcase(os.path.realpath(path))
 
 
+def identity(path):
+    """(volume serial, file index) of an existing file or folder (os.stat follows links and junctions), or None."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino) if st.st_ino else None
+
+
 def contains(folder, path):
-    """True when path is folder or lies in it; False on another drive (where os.path.commonpath raises)."""
+    """True when path is folder or lies in it. By name (links followed, case folded), and by file identity: folder's
+    identity is looked for along path's existing folders, so another spelling of the same folder (\\\\localhost\\C$\\...,
+    \\\\127.0.0.1\\C$\\..., \\\\?\\C:\\...; 2026-10-30 second review: realpath keeps those apart) is the same folder. False on
+    another drive or volume."""
     f, p = canonical(folder), canonical(path)
     try:
-        return os.path.commonpath([f, p]) == f
+        if os.path.commonpath([f, p]) == f:
+            return True
     except ValueError:
+        pass
+    want = identity(folder)
+    if want is None:
         return False
+    cur = p                     # the resolved path: a junction inside folder leading out of it must not count as in it
+    while True:
+        if identity(cur) == want:
+            return True
+        up = os.path.dirname(cur)
+        if up == cur:
+            return False
+        cur = up
+
+
+def same_file(a, b):
+    """True when a and b name one file: by name (links followed, case folded) or by identity (another spelling, a
+    hard link)."""
+    if canonical(a) == canonical(b):
+        return True
+    ia = identity(a)
+    return ia is not None and ia == identity(b)
 
 
 def game_folder():
@@ -146,22 +192,52 @@ def inside_game(path):
     return game is not None and contains(game, path)
 
 
+def foreign_layout(path):
+    """True when path is an FbRB bundle whose directory lists its entries out of the contiguous order every bundle
+    this tool writes has (the game's build_overlay-00.fbrb is one: the reader refuses it); False otherwise. Reads
+    the gzip directory only."""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(8)
+            if len(head) < 8 or head[:4] != b'FbRB':
+                return False
+            cut = struct.unpack_from('>I', head, 4)[0]
+            if cut > 1 << 26:
+                return False
+            d = gzip.decompress(f.read(cut))
+        if struct.unpack_from('>I', d, 0)[0] != 2:
+            return False
+        strlen = struct.unpack_from('>I', d, 4)[0]
+        count = struct.unpack_from('>I', d, 8 + strlen)[0]
+        pos = 0
+        for k in range(count):
+            _, _, off, size, size2, _ = struct.unpack_from('>6I', d, 12 + strlen + 24 * k)
+            if off != pos or size != size2:
+                return True
+            pos += size
+        return False
+    except (OSError, ValueError, EOFError, struct.error, zlib.error):
+        return False
+
+
+def is_game_copy(folder):
+    """True when folder is the root of a BF1943 game copy (dist\\xenon as the Xenia kit extracts it): it holds
+    config.zz, levels\\levels-common-00.fbrb, and a build_overlay-00.fbrb in the game's own layout (foreign_layout) -
+    the last is what a folder of bundles this tool wrote (a mod folder) cannot have."""
+    return (os.path.isfile(os.path.join(folder, 'config.zz'))
+            and os.path.isfile(os.path.join(folder, 'levels', 'levels-common-00.fbrb'))
+            and foreign_layout(os.path.join(folder, 'build_overlay-00.fbrb')))
+
+
 def own_game_root(bundle):
-    """The game copy the input bundle belongs to, or None: the nearest folder above it that has a levels folder
-    holding bundles (levels/*.fbrb or levels/<level>/*.fbrb), as a game copy does (2026-10-30: only find_game's
-    copy was protected, so a bundle of another copy could be extracted, or replaced, into that copy)."""
+    """The game copy the input bundle belongs to, or None: the nearest folder above it that is a game copy
+    (is_game_copy). 2026-10-30: only find_game's copy was protected, so a bundle of another copy could be written into
+    that copy; 2026-10-30 second review: any folder with levels\\*.fbrb counted, so a mod folder laid out as the game
+    (a replaced bundle in levels\\<level>\\) refused every output inside it."""
     d = os.path.dirname(canonical(bundle))
     while True:
-        levels = os.path.join(d, 'levels')
-        if os.path.isdir(levels):
-            try:
-                names = os.listdir(levels)
-                if any(n.lower().endswith('.fbrb') for n in names) or any(
-                        f.lower().endswith('.fbrb') for n in names if os.path.isdir(os.path.join(levels, n))
-                        for f in os.listdir(os.path.join(levels, n))):
-                    return d
-            except OSError:
-                pass
+        if is_game_copy(d):
+            return d
         up = os.path.dirname(d)
         if up == d:
             return None
@@ -306,7 +382,7 @@ def main(argv):
             print(__doc__)
             return 1
         out = argv[3]
-        if canonical(out) == canonical(path):
+        if same_file(out, path):
             raise ValueError('the output would overwrite the input bundle; write a copy elsewhere')
         if in_protected(protected(path), out):
             raise ValueError(f'{out} is in the game folder {in_protected(protected(path), out)}, which the tools only '
@@ -317,6 +393,13 @@ def main(argv):
             if not file:
                 raise ValueError(f'expected <entry name>=<file>, got {spec!r}')
             rep[name] = open(file, 'rb').read()
+        for name in rep:
+            # 2026-10-30 second review: build() replaced every entry of the name, while extract refuses two entries that
+            # would be one file (equal names, or equal but for case); refused here too
+            same = [e['name'] for e in b.entries if e['name'].lower() == name.lower()]
+            if len(same) > 1:
+                raise ValueError(f'{name!r} names {len(same)} entries of the bundle ({", ".join(map(repr, same))}); '
+                                 f'which one to replace is not clear, so nothing was written')
         raw, _, _ = b.build(rep)
         write_file(out, raw)                                # never written through a hard link at out
         print(f'wrote {out}: {len(rep)} entries replaced')

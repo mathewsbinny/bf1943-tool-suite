@@ -176,7 +176,20 @@ def write(path, sections: Dict[str, object], header: dict, big_endian=False):
         out += t.encode('ascii') + struct.pack(e + 'III', o, count, stride)
     out += bytes(off - len(out))
     out += body
-    open(path, 'wb').write(bytes(out))
+    # written beside the file and moved into place (2026-10-30 second review): a failed write never leaves a cut
+    # file, and a hard link at path is replaced, not written through
+    import os
+    import tempfile
+    folder = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix='.rsnv-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(bytes(out))
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
     return size
 
 
@@ -529,11 +542,18 @@ class World:
     def validate(self):
         """Problems with the file's contents ([] when none): every index and range the readers follow, the checks of
         rsnav's rsn_load (rsnav_load.c) and with its messages, so a file this accepts the runtime accepts and the other
-        way round (2026-10-26: an ANOD node id past the nodes passed and crashed nearest_node)."""
+        way round (2026-10-26: an ANOD node id past the nodes passed and crashed nearest_node). Notes that are no
+        problem (rsnav reads such a file) go to self.notes: edge kinds this reader does not name (edge_cost gives them
+        no kind extra, and a kind past 31 closes the edge, as rsnav's rsn_edge_cost does)."""
         out = []
         n = len(self.node_pos)
         n_edge, n_area, n_sect = len(self.edge_target), len(self.areas), len(self.sectors)
+        unknown = sorted({int(k) for k in np.unique(self.edge_kind)} - set(range(len(EDGE_NAMES)))) if n_edge else []
+        self.notes = [f'EDGE kinds this reader does not name: {unknown} (no kind extra; kinds past 31 never used)'] \
+            if unknown else []
         coord = lambda v: -1e6 < v < 1e6                    # rsnav's coordinate(): finite, inside +-1e6 m
+        if self.h_scale_q > 1 << 24:                        # 2026-10-31: rsn_load refuses it; above 1 the search is
+            out.append('the heuristic scale is over 1 (header word 48 above 1 << 24)')     # not admissible
         if n >= 1 << 24:
             out.append('more nodes than an edge can address')
         if len(self.node_area) != n:
@@ -698,6 +718,8 @@ def load(src):
             w.meta = json.loads(raw[o:o + c].decode('utf-8'))
         except ValueError:                          # provenance only: the runtime does not read META
             w.meta = {'unreadable META': True}
+        if not isinstance(w.meta, dict):            # 2026-10-30 second review: JSON null left meta None, and readers
+            w.meta = {'unreadable META': True}      # calling meta.get() failed; rsnav ignores META, so no refusal
     problems = w.validate()
     if problems:
         raise ValueError('RSNV: ' + problems[0])
@@ -711,7 +733,11 @@ def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=Non
     """The filter's cost of edge k from node n (rsnav's rsn_edge_cost), or None when it is closed: floor(cost x
     water_scale[class] / 256) + kind_extra[kind] + tight_extra (a tight edge) + penalty, class the deeper end's (0 dry,
     1 shallow, 2 wading); a
-    conditional edge is closed unless all its objects are in `destroyed`."""
+    conditional edge is closed unless all its objects are in `destroyed`. As rsnav (2026-10-30 second review): an edge
+    kind past 31 is closed, and kind_extra applies only to the kinds EDGE_NAMES names (an IndexError before)."""
+    kind = int(w.edge_kind[k])
+    if kind > 31:
+        return None
     if int(w.edge_flags[k]) & EDGEF_COND and not (destroyed is not None and all(o in destroyed for o in w.cond.get(k, [None]))):
         return None
 
@@ -719,13 +745,53 @@ def edge_cost(w, n, k, water_scale=(256, 256, 256), kind_extra=None, penalty=Non
         f = int(w.node_flags[m])
         return 2 if f & NAUX_WADE else 1 if f & NAUX_SHALLOW else 0
     c = int(w.edge_cost[k]) * water_scale[max(cls(n), cls(int(w.edge_target[k])))] >> 8
-    if kind_extra:
-        c += kind_extra[int(w.edge_kind[k])]
+    if kind_extra and kind < len(EDGE_NAMES):
+        c += kind_extra[kind]
     if tight_extra and int(w.edge_flags[k]) & EDGEF_TIGHT:
         c += tight_extra
     if penalty:
         c += penalty.get(k, 0)
     return c
+
+
+def filter_scale(w, water_scale=(256, 256, 256), kind_extra=None, penalty=None, tight_extra=0):
+    """The heuristic's scale for a search with this filter: the file's h_scale, unless the filter can make an edge
+    cheaper than stored (a water_scale under 256, a negative kind_extra, tight_extra or penalty). Then the least
+    filtered cost per 1/16 m of length over the file's edges (0 when one costs nothing), at most h_scale, so the
+    heuristic stays admissible (2026-10-30 second review: with water_scale (256, 256, 64) the search returned a path of
+    100 where one of 81 existed). rsnav's rsnav_search.c heuristic() uses h_scale whatever the filter: reported."""
+    base = getattr(w, 'h_scale', H_SCALE_LEGACY)
+    extras = list(kind_extra or []) + [tight_extra or 0] + list((penalty or {}).values())
+    if min(water_scale) >= 256 and min(extras, default=0) >= 0:
+        return base
+    n, n_edge = len(w.node_pos), len(w.edge_target)
+    if not n_edge:
+        return base
+    src = np.repeat(np.arange(n), np.diff(np.asarray(w.node_first_edge)))
+    tgt = np.asarray(w.edge_target)
+    flags = np.asarray(w.node_flags)
+    cls = np.where(flags & NAUX_WADE, 2, np.where(flags & NAUX_SHALLOW, 1, 0))
+    ws = np.asarray(water_scale, np.int64)[np.maximum(cls[src], cls[tgt])]
+    c = (np.asarray(w.edge_cost, np.int64) * ws) >> 8
+    kind = np.asarray(w.edge_kind)
+    if kind_extra:
+        ke = np.asarray(list(kind_extra)[:len(EDGE_NAMES)] + [0] * (len(EDGE_NAMES) - len(kind_extra[:len(EDGE_NAMES)])),
+                        np.int64)
+        c = c + np.where(kind < len(EDGE_NAMES), ke[np.minimum(kind, len(EDGE_NAMES) - 1)], 0)
+    if tight_extra:
+        c = c + np.where(np.asarray(w.edge_flags) & EDGEF_TIGHT, tight_extra, 0)
+    if penalty:
+        c = c.astype(np.float64)
+        for k, v in penalty.items():
+            c[k] += v
+    p = np.asarray(w.node_pos, np.float32).astype(np.float64)
+    d = p[tgt] - p[src]
+    ln = np.sqrt((d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1]) + d[:, 2] * d[:, 2])
+    m = (ln > 0) & (kind <= 31)
+    if not m.any():
+        return base
+    s = float((np.asarray(c, np.float64)[m] / (16.0 * ln[m])).min())
+    return max(0.0, min(base, s * (1.0 - 1e-9)))
 
 
 def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(256, 256, 256), kind_extra=None,
@@ -743,7 +809,7 @@ def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(
     fe, tgt, cost, kind = w.node_first_edge, w.edge_target, w.edge_cost, w.edge_kind
     gx, gy, gz = (float(v) for v in pos[goal])
 
-    scale = getattr(w, 'h_scale', H_SCALE_LEGACY)
+    scale = filter_scale(w, water_scale, kind_extra, penalty, tight_extra)
 
     def h(n):
         dx, dy, dz = float(pos[n][0]) - gx, float(pos[n][1]) - gy, float(pos[n][2]) - gz
@@ -776,7 +842,7 @@ def search(w, start, goal, max_expansions=1 << 30, kind_mask=None, water_scale=(
         if best is None or (hv[n], g[n], n) < best:
             best = (hv[n], g[n], n)
         for k in range(fe[n], fe[n + 1]):
-            if kind_mask is not None and not (kind_mask >> int(kind[k]) & 1):
+            if int(kind[k]) > 31 or kind_mask is not None and not (kind_mask >> int(kind[k]) & 1):
                 continue
             m = int(tgt[k])
             if m in closed:

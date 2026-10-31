@@ -25,6 +25,8 @@
 Options: --box minX,minZ,maxX,maxZ and --y bottom,top (prepare / sample: override the sampling box),
          --pitch 0.8 / 0.2 (sample: that pass only; 0.2 = a detailed-zone run over the level's detailed sectors;
          writes <level>_navkit_p02.bin / _hi_p02.bin, the level's settings and its 0.8 m samples untouched),
+         --budget <ms> (sample / all: milliseconds of sampling per frame for every run, e.g. 800 when a run reports
+         that the level ended first; default: opfor.ini's for 0.8 m runs, 400 for 0.2 m runs),
          --opfor <Project OPFOR folder> (default: OPFOR_ROOT, else "Project OPFOR" next to the toolkit).
 
 NavKit works on Project OPFOR's game copy and uses its in-game sampler. FbrbTool / DbxEdit come from the
@@ -40,6 +42,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -51,6 +54,7 @@ sys.path.insert(0, os.path.join(HERE, 'tools'))
 DETAILED_BUDGET_MS = 400   # pitch-0.2 runs: ms of sampling per frame - 10x the columns of a normal run, so it must finish
                            # in less game time than a round or a campaign level allows an idle player (150: ONS_MP_002 at
                            # 95 %, SP_006 and SP_007 back at the menu after ~11 min; 400: all 15 levels, 2026-10-22)
+PITCHES = (0.8, 0.2)       # the sampling pitches a build reads: the normal runs and the detailed zones
 AGENTS = [('normal', '0.4,0.28,1.9', ''), ('high capsule', '0.4,0.6,1.9', '_hi')]   # radius,stepMax,height
 SAMPLE_DONE = re.compile(r'navsample: (done|no physics|cannot create|empty box|needs \[debug\])')
 BACKUP_SUFFIX = '.opfor-orig'
@@ -186,12 +190,11 @@ class Project:
         return os.path.join(self.work, 'navsample', f'{lv}_navkit{suffix}.bin')
 
     def samples08(self, lv):
-        """The level's 0.8 m samples: <lv>_navkit.bin (navkit.py sample) or <lv>_full.bin (older campaign runs)."""
-        for name in (f'{lv}_navkit', f'{lv}_full'):
-            q = os.path.join(self.work, 'navsample', name + '.bin')
-            if os.path.isfile(q):
-                return q
-        return None
+        """The level's 0.8 m samples: <lv>_navkit.bin (navkit.py sample) or <lv>_full.bin (older campaign runs) - the
+        first with its _hi run, as navregress.inputs (build, apply) takes them; else the first there is."""
+        found = [q for q in (os.path.join(self.work, 'navsample', n + '.bin') for n in (f'{lv}_navkit', f'{lv}_full'))
+                 if os.path.isfile(q)]
+        return next((q for q in found if os.path.isfile(q[:-4] + '_hi.bin')), found[0] if found else None)
 
     def run(self, args, log):
         r = subprocess.run(args, capture_output=True, text=True, errors='replace', creationflags=NO_WINDOW)
@@ -269,9 +272,7 @@ def prepare(pr, lv, log=print, box=None, y=None):
     xoff = zoff = None
     so = glob.glob(os.path.join(L, 'dist', 'levels', lv, 'Precomputed', 'Infantry', 'SectorOffsets.xml'))
     if so:
-        t = open(so[0], encoding='utf-8').read()
-        xoff = int(re.search(r'name="XOffset">(-?\d+)<', t).group(1))
-        zoff = int(re.search(r'name="ZOffset">(-?\d+)<', t).group(1))
+        xoff, zoff = sector_offsets(so[0])
     auto_box, auto_y, source = sampling_box(pr, lv, L)
     s = {'level': LV, 'box': box or auto_box, 'y': y or auto_y, 'box_source': 'given' if box else source}
     if xoff is None:
@@ -291,6 +292,15 @@ def prepare(pr, lv, log=print, box=None, y=None):
     log(f'  box {fmt(s["box"])} ({s["box_source"]}), y {fmt(s["y"])}, sector offsets {s["xoff"]}, {s["zoff"]} '
         f'({s["offsets_source"]}); {cols / 1e6:.1f} M columns per sampling run')
     log(f'  settings: {os.path.relpath(pr.settings_path(lv), pr.root)}')
+
+
+def sector_offsets(path):
+    """(XOffset, ZOffset) of a SectorOffsets.xml; a NavKitError naming the file when it does not hold them."""
+    import navregress
+    try:
+        return navregress.sector_offsets(path)
+    except ValueError as e:
+        raise NavKitError(str(e))
 
 
 def level_partition_name(L, lv):
@@ -341,7 +351,14 @@ def game_running():
 
 
 def ini_set(text, section, key, value):
-    """Sets key=value in [section] of an ini text (adds the key if missing)."""
+    """Sets key=value in [section] of an ini text (adds the key if missing). A leading byte-order mark is kept, and
+    not taken for part of the first section's header (that made a second [dev] section)."""
+    if text.startswith('﻿'):
+        return '﻿' + _ini_set(text[1:], section, key, value)
+    return _ini_set(text, section, key, value)
+
+
+def _ini_set(text, section, key, value):
     lines = text.split('\n')
     sec, start, end = None, None, len(lines)
     for i, l in enumerate(lines):
@@ -388,14 +405,13 @@ def ensure_settings(pr, lv):
     so = glob.glob(os.path.join(L, 'dist', 'levels', '*', 'Precomputed', 'Infantry', 'SectorOffsets.xml'))
     if not sp or not so:
         raise NavKitError(f'{lv}: not prepared yet (navkit.py prepare {lv.upper()})')
-    t = open(so[0], encoding='utf-8').read()
+    xoff, zoff = sector_offsets(so[0])
     s, _ = navsample.load(sp)
     name = level_partition_name(L, lv)
     st = {'level': name, 'box': [round(s.min_x, 3), round(s.min_z, 3), round(s.min_x + (s.nx - 1) * s.pitch, 3),
                                  round(s.min_z + (s.nz - 1) * s.pitch, 3)],
           'y': [round(s.y_bottom, 3), round(s.y_top, 3)], 'box_source': 'its 0.8 m samples',
-          'offsets_source': 'its SectorOffsets', 'xoff': int(re.search(r'name="XOffset">(-?\d+)<', t).group(1)),
-          'zoff': int(re.search(r'name="ZOffset">(-?\d+)<', t).group(1))}
+          'offsets_source': 'its SectorOffsets', 'xoff': xoff, 'zoff': zoff}
     write_json(pr.settings_path(lv), st, indent=1)
     return st
 
@@ -411,7 +427,8 @@ def detailed_sectors(pr, lv):
     objects = os.path.join(pr.level_work(lv), 'objects.json')
     # the choice depends on the samples, the placed objects and the sector offsets (its ids are relative to them)
     key = (f'{os.path.basename(sp) if sp else None}|{os.path.getmtime(sp) if sp else 0}|{detailed.MARGIN}|{detailed.STACKED_MIN}'
-           f'|offsets {s["xoff"]},{s["zoff"]}|objects {os.path.getmtime(objects) if os.path.isfile(objects) else 0}')
+           f'|offsets {s["xoff"]},{s["zoff"]}|objects {os.path.getmtime(objects) if os.path.isfile(objects) else 0}'
+           f'|flag NeedsDetailedPathfinding|sectors in whole cm')    # the rule's version: a choice by the old one is redone
     if os.path.isfile(cache):
         try:
             c = read_json(cache)
@@ -420,7 +437,10 @@ def detailed_sectors(pr, lv):
         if c.get('key') == key:
             return [tuple(x) for x in c['sectors']]
     common = [os.path.join(pr.work, 'navkit', 'common', c) for c in ('mp_common', 'sp_common')]
-    chosen, why = detailed.choose(pr.level_work(lv), common, sp, s['xoff'], s['zoff'])
+    try:
+        chosen, why = detailed.choose(pr.level_work(lv), common, sp, s['xoff'], s['zoff'])
+    except ValueError as e:                      # e.g. objects.json from before NeedsDetailedPathfinding was extracted
+        raise NavKitError(f'{lv}: {e}')
     write_json(cache, {'key': key, 'sectors': chosen, 'why': why})
     return chosen
 
@@ -483,9 +503,9 @@ def sample(pr, lv, log=print, confirm=None, box=None, y=None, timeout=3600, pitc
     detailed_run = abs(pitch - 0.8) > 1e-6
     if detailed_run:
         import detailed
-        record = detailed.sampled_record_path(pr.samples(lv, ps))
-        if os.path.isfile(record):
-            os.remove(record)                    # written again only when both runs finish
+        # until both runs finish the record says "pending": a run that fails part-way leaves its samples, and without
+        # a record those would pass for samples from before the record existed (detailed.sampled_problem)
+        detailed.write_sampled_record(pr.samples(lv, ps), [], s['xoff'], s['zoff'], pending=True)
     for label, agent, suffix in AGENTS:
         log(f'  run {label} ({agent}) ...')
         out = pr.samples(lv, suffix + ps)
@@ -509,23 +529,23 @@ def sectors_in_box(pr, lv, box):
             and box[1] <= (j + s['zoff']) * 100 and (j + s['zoff']) * 100 + 100 <= box[3]]
 
 
-def sample_level(pr, lv, log=print, confirm=None, box=None, y=None):
+def sample_level(pr, lv, log=print, confirm=None, box=None, y=None, budget_ms=None):
     """The level's sampling: the normal and high-capsule runs at 0.8 m, then - when the level has detailed sectors
     (detailed.py: flagged objects, stacked floors in the 0.8 m samples) - the same two at 0.2 m over those sectors.
-    One confirmation for all game launches."""
+    One confirmation for all game launches. budget_ms (--budget): the sampling time per frame of every run."""
     if confirm and not confirm(f'NavKit will start the game up to four times to sample {lv.upper()} (two 0.8 m runs, then '
                                'two 0.2 m runs over its detailed zones; about 1-15 minutes each; the screen may stay '
                                'black). Continue?'):
         log('  cancelled')
         return False
-    if not sample(pr, lv, log=log, box=box, y=y):
+    if not sample(pr, lv, log=log, box=box, y=y, budget_ms=budget_ms):
         return False
     ids = detailed_sectors(pr, lv)
     if not ids:
         log(f'  {lv}: no detailed sectors - no 0.2 m runs')
         return True
     log(f'  {lv}: {len(ids)} detailed sectors - 0.2 m runs')
-    return sample(pr, lv, log=log, pitch=0.2)
+    return sample(pr, lv, log=log, pitch=0.2, budget_ms=budget_ms)
 
 
 def sample_run(pr, s, agent, name, log, timeout, pitch=0.8, budget_ms=None):
@@ -570,7 +590,9 @@ def sample_run(pr, s, agent, name, log, timeout, pitch=0.8, budget_ms=None):
             # back at the main menu after sampling began: the level ended (a round over, a campaign level failed)
             first = next((i for i, l in enumerate(new) if 'navsample: sampling' in l), None)   # not 'armed': before the menu
             if first is not None and any('UI cmd [main menu]' in l for l in new[first:]):
-                result = 'the level ended (back at the main menu) - retry with a larger --budget'
+                used = budget_ms or (DETAILED_BUDGET_MS if abs(pitch - 0.8) > 1e-6 else "opfor.ini's")
+                result = (f'the level ended (back at the main menu) - retry with a larger --budget <ms of sampling '
+                          f'per frame> (this run: {used})')
                 break
         else:
             result = 'timed out'
@@ -633,14 +655,17 @@ def build(pr, lv, log=print):
     out = os.path.join(pr.out_dir(lv), 'pathdata.hpd')
     log(f'== build {lv} -> {os.path.relpath(out, pr.root)}')
     t0 = time.time()
-    navbuild.build(s08, os.path.join(L, 'forbid_tris.npy'), s['xoff'], s['zoff'], out,
-                   detailed=detailed_pass(pr, lv, s08, s['xoff'], s['zoff'], log),
-                   dynamic_path=os.path.join(L, 'dynamic_tris.npy'), high_path=s08[:-4] + '_hi.bin',
-                   stairs_path=os.path.join(L, 'stair_tris.npy'),
-                   seeds=read_json(os.path.join(L, 'soldier_spawns.json')),
-                   water=navregress.level_water(pr.root, lv), bounds=navregress.reference_bounds(pr.root, lv),
-                   order_points=navregress.order_points_of(pr.root, lv), ladders=navregress.ladders_of(pr.root, lv),
-                   log=lambda *a: log('  ' + ' '.join(str(x) for x in a)))
+    try:
+        navbuild.build(s08, os.path.join(L, 'forbid_tris.npy'), s['xoff'], s['zoff'], out,
+                       detailed=detailed_pass(pr, lv, s08, s['xoff'], s['zoff'], log),
+                       dynamic_path=os.path.join(L, 'dynamic_tris.npy'), high_path=s08[:-4] + '_hi.bin',
+                       stairs_path=os.path.join(L, 'stair_tris.npy'),
+                       seeds=read_json(os.path.join(L, 'soldier_spawns.json')),
+                       water=navregress.level_water(pr.root, lv), bounds=navregress.reference_bounds(pr.root, lv),
+                       order_points=navregress.order_points_of(pr.root, lv), ladders=navregress.ladders_of(pr.root, lv),
+                       log=lambda *a: log('  ' + ' '.join(str(x) for x in a)))
+    except navbuild.BuildError as e:
+        raise NavKitError(f'{lv}: {e}')          # a clear error (exit code 1), not an unexpected one
     log(f'  built in {time.time() - t0:.0f} s ({os.path.getsize(out) / 1e6:.1f} MB)')
 
 
@@ -713,6 +738,7 @@ def install(pr, lv, log=print, src=None):
     dest = pr.pathdata(lv)
     if os.path.isfile(dest) and same_file(ours, dest):
         raise NavKitError(f'{lv}: {ours} is the installed file itself')
+    data = read_back(ours)                       # never put a file the game cannot read into it
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.isfile(dest + BACKUP_SUFFIX) or os.path.isfile(dest + NONE_SUFFIX):
         pass                                     # already installed: the original (or its absence) is recorded
@@ -723,7 +749,14 @@ def install(pr, lv, log=print, src=None):
         # no original: a marker says so, so restore removes NavKit's file and it is never taken for DICE's
         write_text(dest + NONE_SUFFIX, 'NavKit path data installed where the level had none; restore removes it\n')
         log(f'  the level had no path data ({os.path.basename(dest)}{NONE_SUFFIX} records that)')
-    shutil.copyfile(ours, dest)
+    tmp = dest + '.tmp'                          # in place whole: an interrupted copy never leaves half a file
+    try:
+        with open(tmp, 'wb') as f:
+            f.write(data)
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
     log(f'== installed {os.path.relpath(ours, pr.root)} as {os.path.relpath(dest, pr.root)}')
     trav, trav_dest = traversal_path(os.path.dirname(ours), lv), traversal_path(os.path.dirname(dest), lv)
     if os.path.isfile(trav):
@@ -754,6 +787,31 @@ def restore(pr, lv, log=print):
         f'== removed NavKit\'s {os.path.relpath(dest, pr.root)} (the level had no path data)')
 
 
+def read_back(path):
+    """A path-data file's bytes, when it is one that hpdtool reads back exactly; a NavKitError otherwise."""
+    import hpdtool
+    with open(path, 'rb') as f:
+        data = f.read()
+    try:
+        ok = hpdtool.write(hpdtool.parse(data)) == data
+    except (ValueError, struct.error, IndexError) as e:
+        raise NavKitError(f'{path} is not a usable path-data file ({e})')
+    if not ok:
+        raise NavKitError(f'{path} does not read back exactly - not a usable path-data file')
+    return data
+
+
+def game_path_data(pr, lv, path):
+    """Whether path names the game's own path data: the installed file or the kept original of this level, or any
+    file in the game's AI folder (Output\\win32\\ai) - an output there would replace the game's data unbacked."""
+    p = pr.pathdata(lv)
+    for g in (p, p + BACKUP_SUFFIX):
+        if os.path.isfile(path) and os.path.isfile(g) and same_file(path, g):
+            return True
+    ai = os.path.normcase(os.path.realpath(os.path.join(pr.game, 'Output', 'win32', 'ai')))
+    return os.path.normcase(os.path.realpath(path)).startswith(ai + os.sep)
+
+
 def same_file(a, b):
     # whether two paths name one file (case, short names, junctions and other spellings included)
     try:
@@ -769,15 +827,19 @@ def apply(pr, lv, navtune_path=None, out=None, log=print, install_after=False):
     <level>.traversal.json next to it (navtraversal.py). The result is read back to check it, the whole log is
     kept as <output>.report.txt, and with install_after the result is installed. Returns the output path."""
     lines = []
+    if out and game_path_data(pr, lv, out):
+        # checked first, for both bases: the build would replace the game's file (DICE's original unbacked)
+        raise NavKitError(f'{lv}: --out {out} is the game\'s own path data; write the result elsewhere (and install it)')
+    where = {'out': out}
 
     def say(msg):
         lines.append(msg)
         log(msg)
     try:
-        out = _apply(pr, lv, navtune_path, out, say)
-    except NavKitError as e:
-        if out:
-            write_text(out + '.report.txt', '\n'.join(lines + [f'error: {e}']) + '\n')
+        out = _apply(pr, lv, navtune_path, out, say, where)
+    except Exception as e:                       # noqa: BLE001 - any failure: the report says so, never an old success
+        if where['out']:
+            write_text(where['out'] + '.report.txt', '\n'.join(lines + [f'error: {e}']) + '\n')
         raise
     write_text(out + '.report.txt', '\n'.join(lines) + '\n')
     if install_after:
@@ -785,7 +847,8 @@ def apply(pr, lv, navtune_path=None, out=None, log=print, install_after=False):
     return out
 
 
-def _apply(pr, lv, navtune_path, out, log):
+def _apply(pr, lv, navtune_path, out, log, where=None):
+    where = {} if where is None else where       # where['out']: the output, once known (for the report)
     sys.path.insert(0, os.path.join(HERE, '..', 'core'))
     from bfbc2core import navtune
     import navbuild
@@ -804,7 +867,7 @@ def _apply(pr, lv, navtune_path, out, log):
     later = [o for o in tune.operations if o['op'] == 'traversal']
     t0 = time.time()
     if tune.kind == 'navkit':
-        out = out or os.path.join(pr.out_dir(lv), 'pathdata.hpd')
+        out = where['out'] = out or os.path.join(pr.out_dir(lv), 'pathdata.hpd')
         try:
             samples, xoff, zoff, f = navregress.inputs(pr.root, lv)
         except RuntimeError as e:
@@ -812,13 +875,17 @@ def _apply(pr, lv, navtune_path, out, log):
         log(f'== apply {lv}: {len(tune.operations)} edit(s) from {os.path.relpath(navtune_path, pr.root)} '
             f'-> {os.path.relpath(out, pr.root)}')
         # the same inputs as build (detailed zones and ladders included): without edits the result is the build's
-        navbuild.build(samples, f['forbid_tris.npy'], xoff, zoff, out, dynamic_path=f['dynamic_tris.npy'],
-                       high_path=samples[:-4] + '_hi.bin', stairs_path=f['stair_tris.npy'],
-                       seeds=read_json(f['soldier_spawns.json']), edits=walk,
-                       water=navregress.level_water(pr.root, lv), bounds=navregress.reference_bounds(pr.root, lv),
-                       order_points=navregress.order_points_of(pr.root, lv),
-                       detailed=detailed_pass(pr, lv, samples, xoff, zoff, log), ladders=navregress.ladders_of(pr.root, lv),
-                       log=lambda *a: log('  ' + ' '.join(str(x) for x in a)))
+        try:
+            navbuild.build(samples, f['forbid_tris.npy'], xoff, zoff, out, dynamic_path=f['dynamic_tris.npy'],
+                           high_path=samples[:-4] + '_hi.bin', stairs_path=f['stair_tris.npy'],
+                           seeds=read_json(f['soldier_spawns.json']), edits=walk,
+                           water=navregress.level_water(pr.root, lv), bounds=navregress.reference_bounds(pr.root, lv),
+                           order_points=navregress.order_points_of(pr.root, lv),
+                           detailed=detailed_pass(pr, lv, samples, xoff, zoff, log),
+                           ladders=navregress.ladders_of(pr.root, lv),
+                           log=lambda *a: log('  ' + ' '.join(str(x) for x in a)))
+        except navbuild.BuildError as e:
+            raise NavKitError(f'{lv}: {e}')
         log(f'  built in {time.time() - t0:.0f} s; {len(walk)} walkability edit(s) applied')
     else:
         # a DICE base: no rebuild - the graph edits go into a copy of DICE's file, for this PC only (never
@@ -829,8 +896,9 @@ def _apply(pr, lv, navtune_path, out, log):
         if not src:
             raise NavKitError(f'{lv}: the side file\'s base is DICE\'s data, but the level has none')
         out = out or os.path.join(pr.out_dir(lv), 'pathdata_dice_edited.hpd')
-        if os.path.isfile(out) and (same_file(out, src) or same_file(out, pr.pathdata(lv))):
+        if (os.path.isfile(out) and same_file(out, src)) or game_path_data(pr, lv, out):
             raise NavKitError(f'{lv}: --out {out} is the game\'s own path data; write the edited copy elsewhere')
+        where['out'] = out
         log(f'== apply {lv}: {len(tune.operations)} edit(s) on a copy of DICE\'s file -> {os.path.relpath(out, pr.root)} '
             f'(for this PC only)')
         if tune.base_changed(src):
@@ -894,6 +962,10 @@ def numbers(opts, key, count, what):
         raise ValueError(f'--box {opts[key]!r}: min X and min Z must be below max X and max Z')
     if key == '--y' and not v[0] < v[1]:
         raise ValueError(f'--y {opts[key]!r}: the bottom must be below the top')
+    if key == '--pitch' and not any(abs(v[0] - p) < 1e-6 for p in PITCHES):
+        raise ValueError(f'--pitch {opts[key]!r}: give 0.8 (the normal runs) or 0.2 (the detailed zones)')
+    if key == '--budget' and not (v[0] == int(v[0]) and 1 <= v[0] <= 10000):
+        raise ValueError(f'--budget {opts[key]!r}: give whole milliseconds of sampling per frame (1 - 10000)')
     return v
 
 
@@ -905,7 +977,7 @@ def main(argv):
     args = [a for a in argv[1:]]
     opts = {}
     for k in ('--box', '--y', '--opfor', '--root', '--reference', '--candidate', '--navtune', '--out', '--from',
-              '--pitch'):   # --root: older name of --opfor
+              '--pitch', '--budget'):   # --root: older name of --opfor
         if k in args:
             i = args.index(k)
             if i + 1 >= len(args) or args[i + 1].startswith('--'):
@@ -923,6 +995,8 @@ def main(argv):
         box = numbers(opts, '--box', 4, 'minX,minZ,maxX,maxZ')
         y = numbers(opts, '--y', 2, 'bottom,top')
         pitch = numbers(opts, '--pitch', 1, '0.8 or 0.2')
+        budget = numbers(opts, '--budget', 1, 'milliseconds of sampling per frame')
+        budget = int(budget[0]) if budget else None
     except ValueError as e:
         print('error:', e)
         return 2
@@ -939,8 +1013,8 @@ def main(argv):
         if cmd == 'prepare':
             prepare(pr, lv, box=box, y=y)
         elif cmd == 'sample':
-            done = (sample(pr, lv, confirm=confirm, box=box, y=y, pitch=pitch[0]) if pitch else
-                    sample_level(pr, lv, confirm=confirm, box=box, y=y))
+            done = (sample(pr, lv, confirm=confirm, box=box, y=y, pitch=pitch[0], budget_ms=budget) if pitch else
+                    sample_level(pr, lv, confirm=confirm, box=box, y=y, budget_ms=budget))
             if not done:
                 raise NavKitError('cancelled - nothing was sampled')
         elif cmd == 'build':
@@ -959,7 +1033,7 @@ def main(argv):
             status(pr, lv)
         elif cmd == 'all':
             prepare(pr, lv, box=box, y=y)
-            if not sample_level(pr, lv, confirm=confirm):
+            if not sample_level(pr, lv, confirm=confirm, budget_ms=budget):
                 raise NavKitError('cancelled - prepared, but not sampled, built or checked')
             build(pr, lv)
             check(pr, lv)

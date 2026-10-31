@@ -25,9 +25,10 @@ every objects file and their digest ('preparation'), and drops every later stamp
 digest, the game and an id of its own ('samples': '0.8', '0.2' with its sectors; 'id': the pass's identity, which
 the minute in 'time' is not) and drops the stamps after it (a new 0.8 m pass also
 the 0.2 m one, whose sectors it chooses); build needs the 0.8 m pass of the current preparation (and uses the 0.2 m
-samples only when theirs too) and records both (their ids) and the SHA-256 of the .hpd it wrote ('build_from', 'hpd_sha256': the
-build's identity; 'built' keeps only the minute); check needs that build, that file. A step run with another --game
-than the preparation's (another folder, not another spelling of it) is refused. After them: navexport1943.py exports
+samples only when theirs too) and records both (their ids), the SHA-256 of the .hpd it wrote ('build_from',
+'hpd_sha256': the build's identity; 'built' keeps only the minute) and of its jump_links.json ('jump_links_sha256':
+the export and the audit refuse the build when that file changed); check needs that build, that file. A step run
+with another --game than the preparation's (another folder, not another spelling of it) is refused. After them: navexport1943.py exports
 only a build of the current preparation that was checked, and stamps the export at <level>.rsnv ('exported', with the
 build's hpd_sha256); the vehicle steps stamp theirs under 'vehicles' (vehicleclasses1943.py: collision, samples per
 class, worlds per class). A new preparation drops every stamp; a new sampling or build drops the export's and the
@@ -346,8 +347,12 @@ def build(game, lv, log=print):
     # on the samples this build uses: the 0.2 m ones only when it builds the detailed sectors from them (2026-10-30
     # review: level_links read samples_02.bin whenever it was on disk, a pass the build had refused as not current)
     jumps = jumplinks1943.level_links(lv, blog, game=game, detailed=detailed is not None)
-    with open(os.path.join(p['navkit'], 'jump_links.json'), 'w', encoding='utf-8', newline='\n') as f:
+    jp = os.path.join(p['navkit'], 'jump_links.json')
+    with open(jp, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(jumps, f, indent=1)
+    # the export and the audit read jump_links.json beside the build: it is stamped with it ('jump_links_sha256';
+    # 2026-10-30 second review: jumplinks1943.py run alone, with another --game, replaced the build's links unseen)
+    jump_sha256 = nj.sha256(jp)
     with open(os.path.join(o, 'ladders.json'), encoding='utf-8') as f:
         ladders = json.load(f) + jumps
     with open(os.path.join(o, 'soldier_spawns.json'), encoding='utf-8') as f:
@@ -375,7 +380,8 @@ def build(game, lv, log=print):
         st['built'] = time.strftime('%Y-%m-%d %H:%M')
         st['build_from'] = dict(preparation=prep, game=st['game'], samples_08=s8['time'], samples_08_id=s8.get('id'),
                                 samples_02=s2['time'] if detailed else None,
-                                samples_02_id=s2.get('id') if detailed else None, hpd_sha256=hpd_sha256)
+                                samples_02_id=s2.get('id') if detailed else None, hpd_sha256=hpd_sha256,
+                                jump_links_sha256=jump_sha256)
     stamp(lv, prep, 'build', done)
     log(f'{lv}: built {p["hpd"]} in {(time.time() - t0) / 60:.0f} min')
 

@@ -6,7 +6,10 @@ Needs the checked image (the recorder checks its hash): BF1943_RESEARCH, else op
 only the image is copied from there, into a temporary folder, and nothing is written to the workspace. Every other
 input is made up: the results are stamped with the scratch inputs' fingerprint as run_vmx.ps1 stamps them. Checked:
 a whole run is recorded with its `environment` (every language-module file's hash, Ghidra, Java, the tested program);
-a module file changed after the run is refused; caller probes whose program memory is not the image are refused.
+Ghidra and Java are run_vmx.ps1's pinned installs even with BF1943_GHIDRA / BF1943_JAVA set (run_vmx.ps1 ignores them);
+a module file that differs from the last record is refused even when its mtime is older than the run (a copy keeping
+its mtime), and accepted with --module-changed; a module file changed after the run is refused; caller probes whose
+program memory is not the image are refused.
 """
 import hashlib
 import json
@@ -69,9 +72,13 @@ def main():
                 write(root, f'work/vmx128/{name}', f'decoded=1 unknown_words=0 vor128=0 decompile_completed=true diagnostic=\n'
                                                    f'image_sha256={program_image}\nINPUTS {stamp}\n')
 
-        def record():
-            return subprocess.run([sys.executable, '-B', os.path.join(TOOLS, 'record_vmx_validation.py')], cwd=root,
-                                  env=dict(os.environ, BF1943_RESEARCH=root), capture_output=True, text=True)
+        def record(*args):
+            # BF1943_GHIDRA / BF1943_JAVA name other installs (map_project.ps1's stand-ins): run_vmx.ps1 ignores them,
+            # and so must the record
+            return subprocess.run([sys.executable, '-B', os.path.join(TOOLS, 'record_vmx_validation.py'), *args], cwd=root,
+                                  env=dict(os.environ, BF1943_RESEARCH=root, BF1943_GHIDRA=os.path.join(root, 'other ghidra'),
+                                           BF1943_JAVA=os.path.join(root, 'other java.exe')),
+                                  capture_output=True, text=True)
         evidence = os.path.join(root, 'research', 'evidence', 'vmx128-decode-validation.json')
         results()
         r = record()
@@ -84,6 +91,25 @@ def main():
                   and 'data/languages/ppc_64_32.cspec' in env['module_files'] and 'ghidra' in env and 'java' in env
                   and IMAGE_SHA256 in env['program'],
                   'the environment names every module file (the pspec and cspec too), Ghidra, Java and the tested program')
+            check(env['ghidra']['path'] == 'C:/Tools/ghidra_12.1.4_PUBLIC'
+                  and env['java']['path'] == 'C:/Program Files/Java/jdk-26.0.2/bin/java.exe',
+                  f'Ghidra and Java are run_vmx.ps1\'s pinned installs, not BF1943_GHIDRA / BF1943_JAVA '
+                  f'({env["ghidra"]["path"]}, {env["java"]["path"]})')
+            # a module file swapped after the run by a copy that keeps an older mtime: the mtime check passes it, the
+            # last record's hashes do not
+            pspec_path = os.path.join(root, module, 'ppc_64.pspec')
+            before = os.stat(pspec_path).st_mtime
+            write(root, module + 'ppc_64.pspec', 'swapped, old mtime\n')
+            os.utime(pspec_path, (before - 3600, before - 3600))
+            r = record()
+            check(r.returncode != 0 and 'differs from the last record' in r.stderr
+                  and json.load(open(evidence, encoding='utf-8'))['environment'] == env,
+                  'a module file that differs from the last record is refused, though older than the run (mtime kept)'
+                  + ('' if r.returncode else ': it was recorded'))
+            r = record('--module-changed')
+            env2 = json.load(open(evidence, encoding='utf-8'))['environment'] if r.returncode == 0 else {}
+            check(r.returncode == 0 and 'accepted with --module-changed' in env2.get('module_compared', ''),
+                  '--module-changed records a module change made on purpose, and says so')
         os.remove(evidence)
         time.sleep(0.05)
         write(root, module + 'ppc_64.pspec', 'changed after the run\n')

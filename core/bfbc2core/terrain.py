@@ -68,16 +68,25 @@ class Heightfield:
 
 def read(path):
     data = open(path, 'rb').read() if isinstance(path, str) else bytes(path)
+    if len(data) < HEADER.size:
+        raise ValueError(f'{path if isinstance(path, str) else "data"}: {len(data)} bytes, shorter than a '
+                         f'TerrainHeightfield header')
     # the byte order whose samples-per-side is a power of two and whose heights fit in the file (the other order
     # reads a size hundreds of times larger)
     def fits(e):
         n = struct.unpack_from(e + 'I', data, 0x18)[0]
-        return 0 < n <= 0x8000 and not n & (n - 1) and HEADER.size + 2 * n * n <= len(data)
+        return 2 <= n <= 0x8000 and not n & (n - 1) and HEADER.size + 2 * n * n <= len(data)
     little = fits('<') or not fits('>')
     f = (HEADER if little else HEADER_BE).unpack_from(data, 0)
     lo, hi, size = np.array(f[0:3]), np.array(f[3:6]), f[6]
-    if size <= 0 or size & (size - 1) or HEADER.size + 2 * size * size > len(data):
+    # at least 2 x 2 samples (2026-10-30 second review: a size of 1 read, and height() then indexed outside it)
+    if size < 2 or size & (size - 1) or HEADER.size + 2 * size * size > len(data):
         raise ValueError(f'{path if isinstance(path, str) else "data"}: not a TerrainHeightfield (size {size})')
+    # finite bounds, a positive horizontal extent and max y >= min y (2026-10-30 second review: a zero extent or a NaN
+    # bound was read, and height() then gave NaN)
+    if not (np.isfinite(lo).all() and np.isfinite(hi).all() and hi[0] > lo[0] and hi[2] > lo[2] and hi[1] >= lo[1]):
+        raise ValueError(f'{path if isinstance(path, str) else "data"}: not a TerrainHeightfield (bounds {lo.tolist()} '
+                         f'.. {hi.tolist()})')
     raw = np.frombuffer(data, '<u2' if little else '>u2', size * size, HEADER.size).reshape(size, size)
     heights = (lo[1] + raw * ((hi[1] - lo[1]) / 65535.0)).astype(np.float32)
     return Heightfield(lo, hi, size, raw, heights)

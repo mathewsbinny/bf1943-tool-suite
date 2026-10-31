@@ -58,7 +58,14 @@ def main():
     check(not U.server_bound(), 'once the server is gone the port reads as unbound')
 
 
+def clock():
+    """The probe's log times are 12-hour with AM/PM (the project's time format; 24-hour before 2026-10-31)."""
+    t = time.strptime('2026-10-31 14:05:09', '%Y-%m-%d %H:%M:%S')
+    check(U.stamp(t) == '02:05:09 PM', f'log times are 12-hour with AM/PM ({U.stamp(t)})')
+
+
 if __name__ == '__main__':
+    clock()
     main()
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

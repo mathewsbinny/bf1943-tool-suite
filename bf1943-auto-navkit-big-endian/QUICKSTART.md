@@ -111,8 +111,10 @@ python tools\navexport1943.py wake_island_s --big-endian   wake_island_s.be.rsnv
 
 `--check` reads the file back and compares it with the build. Export again after every build (under a minute on Wake Island).
 The exporter takes only the checked build of the level's current preparation: after `prepare` or `sample` again, the
-old `<level>.hpd` stays on disk but is refused until you build and check again (a failed check is exported, with a
-warning). When it writes `<level>.rsnv` (by default, or `--out` naming that file) it stamps `navkit.json` with what it
+old `<level>.hpd` stays on disk but is refused until you build and check again; so is a build whose
+`jump_links.json` was written again since (by `tools\jumplinks1943.py` run on its own). A build whose check failed is
+exported for inspection to `<level>.failed.rsnv` (unless `--out` says where), with a warning and exit code 1:
+`<level>.rsnv` stays as it was. When it writes `<level>.rsnv` (by default, or `--out` naming that file) it stamps `navkit.json` with what it
 exported (`exported`: the file's SHA-256 and the build's, the `.hpd`'s SHA-256), which the vehicle worlds check.
 
 To look inside an export (read-only):
@@ -161,6 +163,8 @@ All of these are in the suite's work folder (`<suite>\work`; the environment var
 | `work\levels\<level>\navkit\jump_links.json` | the jump links Build made (ships' AA gun platforms and carrier ledges) |
 | `work\levels\<level>\navkit\<level>.cells.npz` | the build's area cells and ground heights, read by the exporter |
 | `work\levels\<level>\navkit\<level>.rsnv` | the export for the navigation runtime (`.be.rsnv`: big-endian) |
+| `work\levels\<level>\navkit\<level>.failed.rsnv` | the export of a build whose check failed, to look at only |
+| `work\levels\<level>\navkit\navkit.json.lock` | the lock the steps take while they write `navkit.json` (it stays; leave it) |
 | `work\levels\<level>\navkit\<level>.jeep.rsnv`, `.tank.rsnv`, `.lcvp.rsnv`, `.plane.rsnv` | the vehicle worlds |
 | `work\levels\<level>\navkit\<level>.transfers.json`, `<level>.vehicles.json` | the vehicle worlds' transfers and checks |
 | `work\levels\<level>\vehicles\` | the ground vehicles' collision, samples and logs |

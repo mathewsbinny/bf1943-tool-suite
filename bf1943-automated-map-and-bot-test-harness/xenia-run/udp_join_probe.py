@@ -42,6 +42,11 @@ def udp_endpoints():
     raise OSError('GetExtendedUdpTable: the table kept growing')
 
 
+def stamp(when=None):
+    """A clock time for the log, 12-hour with AM/PM (the project's time format; 24-hour before 2026-10-31)."""
+    return time.strftime('%I:%M:%S %p', time.localtime() if when is None else when)
+
+
 def server_bound():
     """Whether another process has a UDP socket on the server's port at its address or the wildcard address."""
     return any(port == SERVER[1] and addr in (SERVER[0], '0.0.0.0') and pid != os.getpid()
@@ -57,7 +62,7 @@ def main():
     log = out.open('a', encoding='utf-8', newline='\n')
 
     def note(msg):
-        line = f'{time.strftime("%H:%M:%S")} {msg}'
+        line = f'{stamp()} {msg}'
         print(line, flush=True)
         log.write(line + '\n')
         log.flush()

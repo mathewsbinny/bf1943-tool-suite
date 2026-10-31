@@ -8,12 +8,16 @@ Usage: python stfs.py info <package>
        an earlier extracted copy of that file as it was. Two files that would be one file here (names equal but
        for case) or a file where a folder goes also stop extract before anything is written.
        An unknown command or a missing argument prints this and exits 1. Refused as damaged: a name longer than
-       its 40-byte field, a parent that is no folder entry. Refused unread: a package whose block separation
-       has bit 1 set (its second hash-table copies are current; this reader reads the first copies only).
+       its 40-byte field, a parent that is no folder entry, a header or file table cut short. Refused as no STFS
+       package: no LIVE / PIRS / CON signature, a volume descriptor size other than 0x24, a header size outside
+       0x39D-0x100000, a file table of no blocks. Refused unread: a
+       package whose block separation has bit 1 set (its second hash-table copies are current; this reader reads
+       the first copies only), and a package with two copies of each hash table and more than 0xAA allocated
+       blocks (there each level-1 entry chooses its level-0 table's current copy, which this reader does not follow).
 
 Format (public STFS documentation, Free60): header with display name (UTF-16BE at 0x411), header size
 (u32 BE at 0x340) and the volume descriptor at 0x379 (block separation u8 at 0x37B, file-table block
-count u16 LE at 0x37C, file-table first block u24 LE at 0x37E). Data blocks are 0x1000 bytes from the
+count u16 LE at 0x37C, file-table first block u24 LE at 0x37E, allocated block count u32 BE at 0x395). Data blocks are 0x1000 bytes from the
 first 4 KiB boundary after the header, with a hash table interleaved before every 0xAA data blocks (and
 a level-1 table every 0x70E4); hash entries (0x18 bytes: SHA-1, status, next block u24 BE) chain the
 blocks of fragmented files. File table entries are 0x40 bytes: name (0x28), flags (low 6 bits = name
@@ -26,22 +30,44 @@ import sys
 import tempfile
 
 BLOCK = 0x1000
+HEADER_MIN = 0x39D          # through the volume descriptor's allocated and unallocated block counts
 
 
 class Package:
     def __init__(self, path):
         self.f = open(path, 'rb')
         h = self.f.read(0x1000)
+        if len(h) < HEADER_MIN:                     # 2026-10-30 review: an IndexError before
+            self.f.close()
+            raise ValueError(f'damaged package: {len(h)} bytes, shorter than an STFS header ({HEADER_MIN:#x} bytes); '
+                             f'nothing was read')
         self.magic = h[:4]
         self.name = h[0x411:0x411 + 0x80].decode('utf-16-be', 'ignore').split('\0')[0]
         self.header_size = struct.unpack_from('>I', h, 0x340)[0]
         self.separation = h[0x37B]
         self.ft_blocks = struct.unpack_from('<H', h, 0x37C)[0]
         self.ft_start = int.from_bytes(h[0x37E:0x381], 'little')
+        self.allocated = struct.unpack_from('>I', h, 0x395)[0]
         self.base = (self.header_size + 0xFFF) & ~0xFFF
         # read-only packages (separation bit 0 set) keep one hash table per level; others keep two
         self.shift = 0 if (self.separation & 1) else 1
+        # an STFS package: its signature, a volume descriptor of 0x24 bytes, a header that ends past the descriptor,
+        # and a file table of at least one block (2026-10-30 second review: 4,096 zero bytes read as an empty package)
+        why = ('no LIVE, PIRS or CON signature' if self.magic not in (b'LIVE', b'PIRS', b'CON ') else
+               f'volume descriptor size {h[0x379]:#x}, not 0x24' if h[0x379] != 0x24 else
+               f'header size {self.header_size:#x}' if not HEADER_MIN <= self.header_size <= 0x100000 else
+               'a file table of no blocks' if not self.ft_blocks else None)
+        if why:
+            self.f.close()
+            raise ValueError(f'not an STFS package ({why}); nothing was read')
         try:
+            if self.shift == 1 and self.allocated > 0xAA:
+                # two copies of each table and more than one level: each level-1 entry's status bit 0x40 says which
+                # copy of its level-0 table is current (Velocity, GetHashAddressOfBlock). This reader reads the first
+                # copies only, so it could follow stale block chains (2026-10-30 review: refused, not read wrong)
+                raise ValueError(f'package not read: it keeps two copies of each hash table and has {self.allocated} '
+                                 f'blocks (over 0xAA, so level-1 entries choose each level-0 copy), which this reader '
+                                 f'does not follow')
             if self.separation & 2:
                 # bit 1: the package was last written to the second copy of its hash tables. This reader follows
                 # block chains through the first copy only, which may then be stale (2026-10-30: refused rather
@@ -99,7 +125,11 @@ class Package:
         raw = b''
         for b in self._blocks(self.ft_start, self.ft_blocks, False):
             self.f.seek(self._addr(b))
-            raw += self.f.read(BLOCK)
+            chunk = self.f.read(BLOCK)
+            if len(chunk) < BLOCK:                  # 2026-10-30 review: a cut table was read past its end
+                raise ValueError(f'damaged package: the file table\'s block {b} holds {len(chunk)} of {BLOCK} bytes '
+                                 f'(the package is cut short); nothing was read')
+            raw += chunk
         entries = []
         for i in range(0, len(raw), 0x40):
             e = raw[i:i + 0x40]

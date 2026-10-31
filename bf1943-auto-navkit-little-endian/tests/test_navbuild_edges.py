@@ -6,7 +6,9 @@ nothing is written but a temp folder's files):
     a detailed sector next to it (the pass is made again without it, so that seam's nodes are carried);
   - a short ladder whose foot and top find one surface adds no self edge;
   - a clearance run on another grid than the main run is an error, not a silent column mismatch;
-  - roof pruning sees the lowest surface of the last sampled column (empty columns after it: an interrupted run).
+  - roof pruning sees the lowest surface of the last sampled column (empty columns after it: an interrupted run);
+  - the detailed pass made again keeps no order id of the discarded attempt (its node ids are reused);
+  - a column on a sector line belongs to one sector, the same in navbuild and detailed.py (whole centimetres).
 
   python -B test_navbuild_edges.py
 """
@@ -205,7 +207,65 @@ def roof_last_column():
     check(not keep[roof], 'a lone roof in the last sampled column is dropped (its ground below it counts)')
 
 
+def order_ids_retry():
+    # the detailed_fallback level with AI order points in the 0.2 m ground: the first detailed attempt (sectors (1,0)
+    # and (2,0)) adds order nodes, the retry without (1,0) reuses its node ids - no id of the discarded attempt may
+    # stay an order id (prune_order_nodes would take an ordinary node holding it for an order node)
+    s08 = flat(0.8, 0.0, 0.0, 375, 125)
+    s02 = flat(0.2, 100.0, 0.0, 1001, 501, ground=lambda x, z: (199.9 <= x <= 210.0 and 40.0 <= z <= 60.0)
+               or (260.0 <= x <= 266.0 and 80.0 <= z <= 86.0))
+    orders = [[x * 0.5, 0.0, z * 0.5] for x in range(400, 421, 3) for z in range(80, 121, 3)]
+    attempts = []
+    stage = navbuild.stage
+
+    def recording(*a, **k):
+        before = set(navbuild.ORDER_IDS)
+        r = stage(*a, **k)
+        if k.get('sector_filter') is not None:
+            attempts.append(set(navbuild.ORDER_IDS) - before)
+        return r
+    navbuild.stage = recording
+    try:
+        with Runs({'a.bin': s08, 'b.bin': s02}):
+            navbuild.build('a.bin', None, 0, 0, 'unused', log=QUIET, order_points=orders,
+                           detailed={'samples': 'b.bin', 'high': None, 'sectors': {(1, 0), (2, 0)}})
+    finally:
+        navbuild.stage = stage
+    stale = set().union(*attempts[:-1]) - attempts[-1] if len(attempts) > 1 else set()
+    check(len(attempts) == 2 and bool(set().union(*attempts[:-1])),
+          f'(the made-up level makes a detailed retry whose first attempt has order nodes: {len(attempts)} attempts)')
+    check(not (stale & navbuild.ORDER_IDS), f'no order id of a discarded detailed attempt is kept '
+                                            f'({sorted(stale & navbuild.ORDER_IDS)})')
+
+
+def sector_line():
+    # a run whose minimum is not a float32-exact number (-1598.4): the column at x = 0 is on the line between sectors
+    # -1 and 0 and belongs to sector 0. Ground in x 0 .. 3.2 only: the build's sectors are (0, 0) alone, and
+    # detailed.py counts that column's stacked floors in the same sector
+    min_x = float(np.float32(-1598.4))
+    nx, nz = 2004, 10
+    s = flat(0.8, min_x, 0.0, nx, nz, ground=lambda x, z: x > -0.5)
+    with Runs({'s.bin': s}) as r:
+        navbuild.build('s.bin', None, 0, 0, 'unused', log=QUIET)
+    sids = sorted(g[0] for g in (r.graphs or ()))
+    check(sids == [0x0000], f'a column on a sector line belongs to the sector it starts ({[f"{x:04x}" for x in sids]})')
+    # two floors 3 m apart in the same columns: stacked floors, counted in sector (0, 0) too
+    counts = np.where(np.arange(nx * nz) % nx >= 1998, 2, 0)
+    start = np.zeros(nx * nz + 1, np.int64)
+    np.cumsum(counts, out=start[1:])
+    n = int(start[-1])
+    two = navsample.Samples(0.8, min_x, 0.0, nx, nz, 50.0, -50.0, 0.4, 0.6, 1.8, 0.0, start,
+                            np.tile(np.array([3.0, 0.0], np.float32), n // 2), np.tile(np.array([0, 1, 0], np.float32), (n, 1)),
+                            np.zeros(n, np.uint8), None)
+    import detailed
+    with Runs({'two.bin': two}):
+        c = detailed.stacked_columns('two.bin', 0, 0)
+    check(set(c) == {(0, 0)}, f'detailed.py counts the line column in the same sector ({dict(c)})')
+
+
 if __name__ == '__main__':
+    order_ids_retry()
+    sector_line()
     no_ground()
     written_whole()
     detailed_fallback()

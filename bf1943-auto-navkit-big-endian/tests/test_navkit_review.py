@@ -4,8 +4,8 @@ the builder and the checks are stood in for as in test_navkit_stages.py, in a te
   1. the build's jump links read samples_02.bin only when the build uses that 0.2 m pass (a new 0.8 m pass left the
      old one on disk, and level_links read it);
   2. navkit.json: two processes updating it at once lose nothing and never leave it unreadable (lock file, atomic
-     replace); a damaged or missing file is a NavKitError in words; a held lock fails in words after its wait, a
-     lock left by a stopped step is removed; a step whose navkit.json went while it ran (prepare) refuses in words;
+     replace); a damaged or missing file is a NavKitError in words; a held lock fails in words after its wait (the
+     lock itself: test_navkit_review2.py); a step whose navkit.json went while it ran (prepare) refuses in words;
   3. prepare empties objects\\ (a water_mesh.res of an earlier preparation was hashed into this one and read by the
      build of a level without water);
   4. the audit takes only the checked build of the current preparation, and makes again a mask of other samples or
@@ -99,9 +99,11 @@ def concurrency(work):
         got = {w: len(st.get(w, [])) for w in ('a', 'b')}
     except ValueError as e:
         got = f'unreadable: {e}'
-    left = [n_ for n_ in os.listdir(os.path.join(env['BF1943_WORK'], 'levels', 'lv', 'navkit')) if n_ != 'navkit.json']
+    # navkit.json.lock stays in place (an OS lock on it: second review); no temporary file is left
+    left = [n_ for n_ in os.listdir(os.path.join(env['BF1943_WORK'], 'levels', 'lv', 'navkit'))
+            if n_ not in ('navkit.json', 'navkit.json.lock')]
     check(all(o.endswith('done') for o in outs) and got == {'a': n, 'b': n} and not left,
-          f'two processes updating navkit.json {n} times each at once: every update kept, no error, no lock or '
+          f'two processes updating navkit.json {n} times each at once: every update kept, no error, no '
           f'temporary file left ({got}; {[o[-120:] for o in outs]}; left {left})')
 
 
@@ -141,8 +143,8 @@ if __name__ == '__main__':
         check(why is not None and 'not prepared' in why, f'a missing navkit.json is refused in words ({why})')
         steps(game)
         lock = settings + '.lock'
-        with open(lock, 'w', encoding='utf-8', newline='\n') as f:
-            f.write('pid 1 since now\n')
+        held = nj._Lock(LV)                                      # held through another handle (test_navkit_review2.py:
+        held.__enter__()                                         # by another process, a killed one, an old file)
         saved_wait = nj.LOCK_WAIT
         nj.LOCK_WAIT = 0.3
         t0 = time.time()
@@ -150,12 +152,11 @@ if __name__ == '__main__':
             why = refused(nj.update, LV, lambda st: st.update(x=1))
         finally:
             nj.LOCK_WAIT = saved_wait
+            held.__exit__(None, None, None)
         check(why is not None and 'locked' in why and time.time() - t0 < 5 and 'x' not in nj.read(LV),
               f'a held lock: the update waits, then fails in words, writing nothing ({why})')
-        old = time.time() - nj.LOCK_STALE - 10
-        os.utime(lock, (old, old))
         nj.update(LV, lambda st: st.update(x=1))
-        check(nj.read(LV).get('x') == 1 and not os.path.exists(lock), 'a lock left by a stopped step is removed')
+        check(nj.read(LV).get('x') == 1 and os.path.isfile(lock), 'once released, the lock is taken again; its file stays')
         st = nj.read(LV)
         nj.remove(LV)                                            # prepare has started meanwhile
         why = refused(navkit.stamp, LV, st['preparation'], 'build', lambda s: None)

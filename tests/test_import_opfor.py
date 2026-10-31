@@ -118,6 +118,123 @@ def partial_runs(tmp, src):
           f'an update stopped part-way records the file it wrote, marked incomplete ({last.get("incomplete")!r})')
 
 
+def second_review(tmp):
+    """2026-10-30 second review, on a copy of the tool in its own made-up suite and a made-up source: a write that
+    fails part-way (a full disk, made up by failing the write of one file's bytes, whichever way the tool opens it)
+    leaves no cut file; a failure on the first file still records the import (its folder exists), and --update then
+    finishes it with no conflict; a plan naming a folder and a folder inside it writes nothing; an update whose write
+    fails leaves the old file whole."""
+    import builtins
+    import importlib.util
+    import json
+    src = os.path.join(tmp, 'sr-source')
+    os.makedirs(os.path.join(src, 'tool'))
+    git(src, 'init', '-q')
+    data = {'a.py': b'a' * 300, 'b.py': b'b' * 300}
+    for n, d in data.items():
+        write(os.path.join(src, 'tool', n), d)
+    git(src, 'add', '-A')
+    git(src, 'commit', '-q', '-m', 'one')
+    env = {**os.environ, 'BFBC2_TOOL_SUITE': src}
+
+    def suite_copy(name):
+        suite = os.path.join(tmp, name)
+        os.makedirs(os.path.join(suite, 'tools'))
+        os.makedirs(os.path.join(suite, 'provenance'))
+        tool = os.path.join(suite, 'tools', 'import_opfor.py')
+        shutil.copy(os.path.join(SUITE, 'tools', 'import_opfor.py'), tool)
+        with open(os.path.join(suite, 'provenance', 'opfor-imports.json'), 'w', encoding='utf-8', newline='\n') as f:
+            json.dump({'imports': []}, f)
+        return suite, tool
+
+    def imports(suite):
+        with open(os.path.join(suite, 'provenance', 'opfor-imports.json'), encoding='utf-8') as f:
+            return json.load(f)['imports']
+
+    def cli(tool, *args):
+        r = subprocess.run([sys.executable, '-B', tool, *args], capture_output=True, text=True, env=env)
+        return r.returncode, (r.stdout + r.stderr).strip()
+
+    def in_process(tool, argv, fail_bytes):
+        """main() with the write of fail_bytes failing after 10 bytes (through open or os.fdopen alike)."""
+        spec = importlib.util.spec_from_file_location('import_opfor_sr', tool)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.SOURCE_SUITE = src
+        real_open, real_fdopen = builtins.open, os.fdopen
+
+        def wrap(f):
+            class Failing:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *e):
+                    f.close()
+                    return False
+
+                def write(self, b):
+                    if bytes(b) == fail_bytes:
+                        f.write(b[:10])
+                        raise OSError(28, 'made-up full disk')
+                    return f.write(b)
+
+                def __getattr__(self, k):
+                    return getattr(f, k)
+            return Failing()
+
+        def fake_open(file, mode='r', *a, **k):
+            f = real_open(file, mode, *a, **k)
+            return wrap(f) if ('w' in mode or 'x' in mode) and 'b' in mode else f
+
+        def fake_fdopen(fd, mode='r', *a, **k):
+            f = real_fdopen(fd, mode, *a, **k)
+            return wrap(f) if 'w' in mode and 'b' in mode else f
+        mod.open = fake_open
+        saved_argv, sys.argv = sys.argv, ['import_opfor.py', *argv]
+        os.fdopen = fake_fdopen
+        try:
+            mod.main()
+            return None
+        except BaseException as e:
+            return e
+        finally:
+            os.fdopen = real_fdopen
+            sys.argv = saved_argv
+
+    for which in ('a.py', 'b.py'):
+        suite, tool = suite_copy(f'sr-suite-{which[0]}')
+        err = in_process(tool, ['tool', 'copied'], data[which])
+        dst = os.path.join(suite, 'copied')
+        cut = [n for n in (os.listdir(dst) if os.path.isdir(dst) else []) if open(os.path.join(dst, n), 'rb').read()
+               != data.get(n)]
+        rec = imports(suite)
+        check(err is not None and not cut and rec and rec[-1].get('incomplete'),
+              f'an import whose {which} write fails leaves no cut file and is recorded as incomplete '
+              f'(cut: {cut}, entries: {len(rec)})')
+        code, out = cli(tool, '--update', 'copied')
+        got = {n: open(os.path.join(dst, n), 'rb').read() for n in os.listdir(dst)} if os.path.isdir(dst) else {}
+        check(code == 0 and got == data and 'conflict' not in out,
+              f'--update then finishes the import whose {which} write failed, no conflict (exit {code}: {out[-80:]})')
+
+    suite, tool = suite_copy('sr-suite-nested')
+    plan = os.path.join(tmp, 'sr-plan.json')
+    with open(plan, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump([{'source': 'tool', 'destination': 'x'}, {'source': 'tool', 'destination': 'x/inner'}], f)
+    code, out = cli(tool, '--plan', plan)
+    check(code != 0 and not os.path.exists(os.path.join(suite, 'x')) and imports(suite) == [],
+          f'a plan naming a folder and one inside it writes nothing (exit {code}: {out[-80:]})')
+
+    suite, tool = suite_copy('sr-suite-update')
+    code, out = cli(tool, 'tool', 'copied')
+    write(os.path.join(src, 'tool', 'a.py'), b'A' * 400)
+    git(src, 'commit', '-q', '-am', 'two')
+    err = in_process(tool, ['--update', 'copied'], b'A' * 400)
+    kept = open(os.path.join(suite, 'copied', 'a.py'), 'rb').read()
+    left = [n for n in os.listdir(os.path.join(suite, 'copied')) if n.endswith('.tmp')]
+    check(code == 0 and err is not None and kept == data['a.py'] and not left,
+          f'an update whose write fails leaves the old file whole, no temporary file ({len(kept)} bytes, {left})')
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix='import_opfor_')
     saved = import_opfor.SOURCE_SUITE, import_opfor.SUITE, import_opfor.MANIFEST
@@ -165,6 +282,7 @@ def main():
               f'update of a folder import: the file changed only there is replaced, the one changed here too is a conflict')
         check(sorted(os.listdir(dst)) == ['New Suite.pyw', 'run_tests.py', 'tool'], f'nothing else written ({sorted(os.listdir(dst))})')
         partial_runs(tmp, src)
+        second_review(tmp)
     finally:
         import_opfor.SOURCE_SUITE, import_opfor.SUITE, import_opfor.MANIFEST = saved
         shutil.rmtree(tmp, ignore_errors=True)

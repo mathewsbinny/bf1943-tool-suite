@@ -233,11 +233,14 @@ static class LevelDiff
 
     // What an element is exactly: its kind, for numbers their count and width, its value bytes (a text's string),
     // and its attributes other than name.
-    static string Raw(DbxFile f, Element e)
+    static string Raw(DbxFile f, Element e) { return Raw(f, e, "name", true); }
+
+    // skip: the attribute left out; count: whether a container's child count is part of it
+    static string Raw(DbxFile f, Element e, string skip, bool count)
     {
-        string attrs = string.Join(" ", e.Attributes.Where(x => f.Table[x.Name] != "name").Select(x => f.Table[x.Name] + "=" + f.Table[x.Value]));
+        string attrs = string.Join(" ", e.Attributes.Where(x => f.Table[x.Name] != skip).Select(x => f.Table[x.Name] + "=" + f.Table[x.Value]));
         string v;
-        if (e.IsContainer) v = "container of " + e.Children.Count + ", byte " + e.ContainerByte;
+        if (e.IsContainer) v = (count ? "container of " + e.Children.Count + ", byte " : "container, byte ") + e.ContainerByte;
         else if (e.Kind == Element.Text) v = "text '" + XmlExport.ValueText(f, e) + "'";
         else if (e.Kind == Element.Numbers)
         {
@@ -256,9 +259,19 @@ static class LevelDiff
         return new Value { Text = text, Raw = Raw(f, e) };
     }
 
-    // Fields of one instance as path -> value; lists of references as sets of entries. skipInstances: leave out
-    // instance children (the partition's own fields).
-    static void Flatten(DbxFile f, Element e, string path, Options o, Dictionary<string, Value> values, Dictionary<string, List<string>> lists, bool skipInstances)
+    // A list item exactly, but for its reference (compared as the list's membership and order): its tag, kind and
+    // value bytes, its other attributes, and everything below it.
+    static string ItemShape(DbxFile f, Element e)
+    {
+        string s = f.TagOf(e) + " " + Raw(f, e, "ref", true);
+        if (!e.IsContainer || e.Children.Count == 0) return s;
+        return s + " {" + string.Join("; ", e.Children.Select(c => f.TagOf(c) + " " + Raw(f, c, null, true) + (c.IsContainer ? " " + ItemShape(f, c) : ""))) + "}";
+    }
+
+    // Fields of one instance as path -> value; lists of references as entries (reference, the item's shape), the
+    // list element itself (its attributes and container byte) as a value. skipInstances: leave out instance children
+    // (the partition's own fields).
+    static void Flatten(DbxFile f, Element e, string path, Options o, Dictionary<string, Value> values, Dictionary<string, List<KeyValuePair<string, string>>> lists, bool skipInstances)
     {
         var seen = new Dictionary<string, int>();
         foreach (var c in e.Children)
@@ -277,9 +290,11 @@ static class LevelDiff
                 bool refList = c.Children.Count > 0 && c.Children.All(x => f.TagOf(x) == "item" && f.Get(x, "ref") != null);
                 if (refList)
                 {
-                    List<string> l;
-                    if (!lists.TryGetValue(p, out l)) lists[p] = l = new List<string>();
-                    l.AddRange(c.Children.Select(x => f.Get(x, "ref")));
+                    List<KeyValuePair<string, string>> l;
+                    if (!lists.TryGetValue(p, out l)) lists[p] = l = new List<KeyValuePair<string, string>>();
+                    l.AddRange(c.Children.Select(x => new KeyValuePair<string, string>(f.Get(x, "ref"), ItemShape(f, x))));
+                    // the list element's own tag, attributes and byte (its entries are compared as a list)
+                    values[p] = new Value { Text = "(list)", Raw = f.TagOf(c) + " " + Raw(f, c, "name", false) };
                 }
                 else
                 {
@@ -347,8 +362,8 @@ static class LevelDiff
     {
         var va = new Dictionary<string, Value>();
         var vb = new Dictionary<string, Value>();
-        var la = new Dictionary<string, List<string>>();
-        var lb = new Dictionary<string, List<string>>();
+        var la = new Dictionary<string, List<KeyValuePair<string, string>>>();
+        var lb = new Dictionary<string, List<KeyValuePair<string, string>>>();
         Flatten(a, ia, "", o, va, la, skipInstances);
         Flatten(b, ib, "", o, vb, lb, skipInstances);
         foreach (var k in va.Keys.Union(vb.Keys))
@@ -363,9 +378,29 @@ static class LevelDiff
         }
         foreach (var k in la.Keys.Union(lb.Keys))
         {
-            List<string> x, y;
-            if (!la.TryGetValue(k, out x)) x = new List<string>();
-            if (!lb.TryGetValue(k, out y)) y = new List<string>();
+            List<KeyValuePair<string, string>> ex, ey;
+            if (!la.TryGetValue(k, out ex)) ex = new List<KeyValuePair<string, string>>();
+            if (!lb.TryGetValue(k, out ey)) ey = new List<KeyValuePair<string, string>>();
+            var x = ex.Select(e => e.Key).ToList();
+            var y = ey.Select(e => e.Key).ToList();
+            // the items in both (the n-th entry of a reference in A with the n-th in B): the same item exactly - its
+            // reference as written, its other attributes, value and anything below it
+            var nth = new Dictionary<string, Queue<int>>(StringComparer.OrdinalIgnoreCase);
+            for (int j = 0; j < ey.Count; j++)
+            {
+                Queue<int> q;
+                if (!nth.TryGetValue(ey[j].Key, out q)) nth[ey[j].Key] = q = new Queue<int>();
+                q.Enqueue(j);
+            }
+            for (int i = 0; i < ex.Count; i++)
+            {
+                Queue<int> q;
+                if (!nth.TryGetValue(ex[i].Key, out q) || q.Count == 0) continue;
+                int j = q.Dequeue();
+                if (ex[i].Key == ey[j].Key && ex[i].Value == ey[j].Value) continue;
+                d.Changes.Add(new Change { Path = k + "[" + i + (i != j ? "->" + j : "") + "] -> " + ex[i].Key,
+                                           A = "ref=" + ex[i].Key + ", " + ex[i].Value, B = "ref=" + ey[j].Key + ", " + ey[j].Value });
+            }
             var cx = Counts(x);
             var cy = Counts(y);
             int entries = d.Removed.Count + d.Added.Count;          // this list's own changes, not the earlier lists'

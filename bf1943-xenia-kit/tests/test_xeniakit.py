@@ -185,6 +185,43 @@ def build_bots_patch():
                   f'{"a bots" if mode else "a normal"} build refuses a foreign file under the kit\'s name, changing nothing')
 
 
+def launcher():
+    """launch.cmd as cmd.exe reads it (Windows): in folders whose names hold an accented letter and a '%', its cd line
+    reaches the Xenia folder and its start line names the paths whole (run with the start line turned into an echo:
+    nothing is launched); a path the batch file's code page cannot hold is refused before any work. Before 2026-10-30
+    the file was UTF-8 and '%' was not doubled: cd failed on "Xenia José", and "%" paths were cut."""
+    import xeniakit
+    if os.name != 'nt':
+        print('skip launch.cmd under cmd.exe: Windows only')
+        return
+    enc = xeniakit.LAUNCHER_ENCODING
+    with tempfile.TemporaryDirectory() as tmp:
+        xenia, out = os.path.join(tmp, 'Xenia José 50%off'), os.path.join(tmp, 'out 100% été')
+        os.makedirs(xenia)
+        os.makedirs(out)
+        m = dict(netfix=os.path.join(xenia, netfix.FIXED), title=os.path.join(out, 'title'))
+        xeniakit.write_launcher(out, m, 'vulkan')
+        text = open(os.path.join(out, 'launch.cmd'), 'rb').read()
+        head, start = text.split(b'start ""')
+        probe = os.path.join(tmp, 'probe.cmd')          # cmd /c itself expands % in the file's own path
+        open(probe, 'wb').write(head + b'echo CD=%CD%\r\necho ARGS=' + start)
+        r = subprocess.run(['cmd', '/d', '/c', probe], capture_output=True, cwd=tmp)
+        lines = r.stdout.decode(enc, 'replace').splitlines()
+        cd = [l[3:] for l in lines if l.startswith('CD=')]
+        args = [l[5:].strip() for l in lines if l.startswith('ARGS=')]
+        check(r.returncode == 0 and cd == [xenia] and not r.stderr.strip(),
+              f'launch.cmd: cmd.exe changes to a Xenia folder named with an accent and a % ({ascii(cd)}, {r.stderr[:80]!r})')
+        want = f'"{m["netfix"]}" --gpu=vulkan --license_mask=1 "{os.path.join(out, "title", "default.xex")}"'
+        check(args == [want], f'launch.cmd: the start line names the fixed Xenia and the title whole ({ascii(args)})')
+        for bad in ('Xenia Ж', 'Xenia 中'):            # letters the OEM code page (437, 850...) cannot hold
+            try:
+                xeniakit.launcher_text(dict(netfix=os.path.join(tmp, bad, netfix.FIXED), title=m['title']), 'vulkan')
+                ok = bad.encode(enc, 'strict').decode(enc) == bad      # only when this code page does hold them
+            except (ValueError, UnicodeError):
+                ok = True
+            check(ok, f'launch.cmd: a folder its code page cannot hold ({ascii(bad)}) is refused')
+
+
 def full_build():
     research = os.path.join(os.path.dirname(os.path.dirname(KIT)), 'operation-rising-sun')
     package = os.environ.get('BF1943_PACKAGE', os.path.join(research, 'Battlefield 1943 (XBLA)', '5841097E', '000D0000',
@@ -238,6 +275,7 @@ if __name__ == '__main__':
     xenia_fix()
     verify_bot_mode()
     build_bots_patch()
+    launcher()
     if '--game' in sys.argv:
         full_build()
     print('all passed' if not failures else f'{len(failures)} failed')

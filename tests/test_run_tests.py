@@ -49,5 +49,13 @@ if __name__ == '__main__':
             code, out = f'{type(e).__name__}', ''
         check(code == 2 and 'usage' in out.lower() and 'passed' not in out, f'{" ".join(args)}: a usage error, exit {code}'
               + ('' if code == 2 else '\n       ' + out.strip().replace('\n', '\n       ')[:400]))
+    # 2026-10-30 second review: a test's output reaches the runner in UTF-8 (it is decoded so), whatever the ANSI code
+    # page: a test printing a Cyrillic path passed only when started from the hub
+    for k in ('PYTHONIOENCODING', 'PYTHONUTF8'):
+        os.environ.pop(k, None)
+    text = 'made-up path C:/Users/\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c caf\u00e9'
+    run_tests.tests = lambda: [('prints outside the code page', 'quick', [PY, '-c', f'print({text!r})'])]
+    code, out = run('quick')
+    check(code == 0 and text in out, f'a test printing outside the ANSI code page passes and its line reads back (exit {code})')
     print('all passed' if not failures else f'{len(failures)} failed')
     sys.exit(1 if failures else 0)

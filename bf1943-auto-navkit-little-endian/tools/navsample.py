@@ -99,6 +99,17 @@ def load(path):
                    np.array(hits, dtype=np.uint32).reshape(-1, 3) if version == 2 else None), c   # version 1: no hit details
 
 
+def column_sectors(s, cols):
+    """(X, Z) arrays: the 100 m grid squares (floor(x / 100), floor(z / 100), before the sector offsets) of columns,
+    from whole centimetres - min + i * pitch in floats puts a column on a sector line on either side of it, by the
+    float32 rounding of the header's minimum and pitch (navbuild.stage and detailed.py then disagreed)."""
+    cols = np.asarray(cols, dtype=np.int64)
+    step = int(round(float(s.pitch) * 100))
+    x = int(round(float(s.min_x) * 100)) + (cols % s.nx) * step
+    z = int(round(float(s.min_z) * 100)) + (cols // s.nx) * step
+    return x // 10000, z // 10000
+
+
 def walkable(s, slope_max_deg=40.0):
     """Per surface: the soldier fits (no capsule overlap) and the ground is not too steep."""
     min_ny = math.cos(math.radians(slope_max_deg)) - 0.01

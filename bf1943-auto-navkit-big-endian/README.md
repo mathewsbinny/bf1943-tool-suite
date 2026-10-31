@@ -129,8 +129,8 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   writes `navkit.json` by a fresh read-modify-write of its own keys (`tools\navkitjson1943.py`), so the long soldier
   steps keep the vehicle stamps written while they ran; jump links and the audit take `soldier1943.sea_level` too.
   Second review (2026-10-30): `navkit.json` is written by replacing it whole (a temporary file) under
-  `navkit.json.lock` (30 s wait, then an error in words; a lock older than 120 s is removed as left behind), and a
-  missing or damaged file is an error in words; *prepare* empties `objects\` first; each sampling pass has an `id`
+  a lock on `navkit.json.lock` (30 s wait, then an error in words), and a missing or damaged file is an error in
+  words; *prepare* empties `objects\` first; each sampling pass has an `id`
   and the build records the ids it used (`build_from` `samples_08_id`, `samples_02_id`), so a 0.2 m pass made while
   the build ran leaves it unstamped; the build's jump links read `samples_02.bin` only when the build uses that pass;
   the audit (`navaudit1943.py masks` and `audit`) takes only the checked build of the current preparation and makes
@@ -138,6 +138,29 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
   look at) but does not stamp it as the soldier world and exits 1, and the vehicle builders refuse such a build;
   `navkit.py` and `routecheck1943.py` parse their arguments with argparse (`--pitch=0.2`, options anywhere, unknown
   arguments refused). Tests: `tests\test_vehicle_stages.py`, `tests\test_navkit_stages.py`, `tests\test_navkit_review.py`.
+  Second review, second pass (2026-10-30): the lock is an OS lock (`msvcrt.locking`; `fcntl.flock` elsewhere) on
+  `navkit.json.lock`, a file that stays in place: the system releases it when its process ends, so a killed step
+  leaves nothing behind and no lock is ever removed by its age (the age rule let two steps hold it at once, and a
+  left-over lock file it could not delete made every step spin forever); every wait ends after 30 s with an error
+  naming the file; a level without its `navkit\` folder is "not prepared". A vehicle world is stamped only while its
+  soldier world is still the export of the current, passed build (`vehicleclasses1943.record` refuses one finished
+  after the soldier was built again), and `navexport_vehicles1943.py`'s check reports a `<level>.rsnv` that is not
+  the current export. The build stamps its `jump_links.json` (`build_from` `jump_links_sha256`): the export and the
+  audit refuse the build when that file was written again since (a build stamped before this has none: build and
+  check again), and `jumplinks1943.py` with another `--game` than the prepared copy refuses to write it (`--json`
+  elsewhere is allowed). An export of a build whose check failed goes to `<level>.failed.rsnv` (`.be.failed.rsnv`)
+  unless `--out` names a file, so `<level>.rsnv` stays as it was. Test: `tests\test_navkit_review2.py`.
+  The user's review (2026-10-30): a vehicle world's stamp (`vehicles` `worlds` per class) also holds the world file's
+  own SHA-256 (`sha256`), and META the class parameters' digest (`params`); the vehicle check refuses a file that is
+  not the one its builder wrote and a world whose header and META name another level (level id, META level), class
+  (META class, layer) or parameters (header radius, META params) - a valid world of another level with radius 99 in
+  the jeep world's place had passed (a world stamped before this has no `sha256`: build it again). The soldier export,
+  the audit and the jump links take the height field the level was prepared with (`objects\heightfield.res`, checked
+  against `objects_sha256`), and refuse a game copy whose height field changed since (they reread the game's).
+  `rsnvtool.py pockets`: the pieces are weakly connected components (an edge joins its ends whichever way it runs),
+  disjoint; they followed outgoing edges only and could overlap on one-way edges. It also prints the share of the
+  largest piece outside its strongly connected core (one-way edges). Every soldier export of 2026-10-25 to 10-30 in
+  `work` has no one-way kept edge, so the pocket shares recorded then are unchanged. Test: `tests\test_navkit_review3.py`.
 
 - **Classes** (`tools\vehicleclasses1943.py`, which reads and prints the blueprints and collision): sizes [O] from each
   vehicle's `*_havok.res` box; slope from `WheelConfigData SlopeGripMaxAngle` (jeeps 25 deg [O]; tanks 25..52 [O],
@@ -208,7 +231,7 @@ all; it only reads `<level>.rsnv`. Labels: [O] from the data, [E] estimate, [H] 
 | `locate <level> X Y Z` | the walkable cell and nearest node under a point |
 | `los <level> X,Y,Z X,Y,Z` | line of sight by the runtime's rule |
 | `route <level> FROM TO [--soldier] [--png]` | a search between nodes or points, as rsnav finds it |
-| `pockets <level>` | the main network's pieces without tight edges, the largest pockets with positions |
+| `pockets <level>` | the main network's pieces without tight edges (weakly connected, disjoint), the largest pockets with positions, and the share outside the largest piece's strongly connected core |
 | `tight <level> [--samples] [--json F]` | every tight walk edge (new 2026-10-29): its ends' areas (sector, pitch, layer, cell, ground), the first failing line-of-sight sample each way with the rule that refuses it (`rsnv.World.los`'s trace) and by how much, the other areas with ground there, and a cause (`hole`, `step`, `lean`, `cell`, `climb`, `end`); `--samples` adds the build's own samples and kept surfaces at that sample (the audit's base masks) |
 | `cells <level> --at X,Z --y Y [--radius R] [--samples] [--line A B]` | text maps around a point (new 2026-10-29), 0.2 m a character: each area's walkable cells, the build's samples on both grids (kept / not kept), a line drawn over them |
 | `walk <level> A B [--reach R]` | the build's own kept samples along a line (new 2026-10-29, round 5; A, B nodes or points), on both grids: the surface followed column by column, the largest step and where, the gaps, how far the end lies off B - what a straight walk over the kept surfaces meets, to set against line of sight |

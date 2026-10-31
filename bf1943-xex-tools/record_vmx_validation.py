@@ -1,6 +1,11 @@
 """Record the completed VMX128 regression run; refuses to write evidence unless every suite passed, and every result
 was stamped by run_vmx.ps1 with the fingerprint of the current inputs (vmx_inputs.py): a result left over from an
-earlier run, or a partial run (-Only), cannot be recorded against today's sources."""
+earlier run, or a partial run (-Only), cannot be recorded against today's sources.
+
+  python -B record_vmx_validation.py [--module-changed]
+
+The language module's other files must also equal the ones the last record names; --module-changed accepts a module
+that differs from it (a change made on purpose, then run with run_vmx.ps1)."""
 from pathlib import Path
 import hashlib,json
 import sys as _sys
@@ -42,15 +47,38 @@ module_files={p.relative_to(MODULE).as_posix():p for p in sorted(MODULE.rglob('*
 newer=[rel for rel,p in module_files.items() if p.stat().st_mtime>run_written]
 if newer:
     _sys.exit(f'refused: the language module changed after the run ({", ".join(newer)}); run run_vmx.ps1 again, then record')
-# - Ghidra and Java (the pinned installs run_vmx.ps1 uses; BF1943_GHIDRA / BF1943_JAVA name others)
-import os as _os
-GHIDRA=Path(_os.environ.get('BF1943_GHIDRA') or 'C:/Tools/ghidra_12.1.4_PUBLIC')
-JAVA=Path(_os.environ.get('BF1943_JAVA') or 'C:/Program Files/Java/jdk-26.0.2/bin/java.exe')
+module_hashes={rel:hashlib.sha256(p.read_bytes()).hexdigest() for rel,p in module_files.items()}
+#   The mtime check misses a file replaced by a copy that keeps an older mtime (Copy-Item, shutil.copy2, unzip), and
+#   run_vmx.ps1 cannot hash the module at run time (it is a fingerprint input). So the module must also equal the one
+#   the evidence's last record names (2026-10-31): a module that differs is refused unless --module-changed says the
+#   change is meant (and the run came after it: the mtime check above). The first record with module hashes has
+#   nothing to compare with, and says so.
+EVIDENCE=ROOT/'research/evidence/vmx128-decode-validation.json'
+previous=(json.loads(EVIDENCE.read_text(encoding='utf-8')).get('environment') or {}).get('module_files') if EVIDENCE.is_file() else None
+if previous is not None and previous!=module_hashes and '--module-changed' not in _sys.argv[1:]:
+    changed=sorted(rel for rel in set(previous)|set(module_hashes) if previous.get(rel)!=module_hashes.get(rel))
+    _sys.exit(f'refused: the language module differs from the last record ({", ".join(changed)}); if that change is meant, '
+              'run run_vmx.ps1 after it and record with --module-changed')
+module_compared=('none: the last record named no module files' if previous is None else
+                 'the last record\'s module files: the same' if previous==module_hashes else
+                 'the last record\'s module files: changed, accepted with --module-changed')
+# - Ghidra and Java: the installs run_vmx.ps1 runs, read from run_vmx.ps1 itself (a fingerprint input, so what ran).
+#   Before 2026-10-31 the recorder took BF1943_GHIDRA / BF1943_JAVA, which run_vmx.ps1 ignores (only map_project.ps1
+#   reads them): with either set, the evidence named an install the run did not use.
+import re as _re
+run_vmx=(Path(__file__).resolve().parent/'run_vmx.ps1').read_text(encoding='utf-8')
+java_pins=set(_re.findall(r"& '([^']+?java\.exe)'",run_vmx))
+ghidra_pins=set(_re.findall(r"'([^']+?)/Ghidra/Framework/Utility/lib/Utility\.jar'",run_vmx))
+if len(java_pins)!=1 or len(ghidra_pins)!=1:
+    _sys.exit(f'refused: run_vmx.ps1 does not name one Java and one Ghidra (Java {sorted(java_pins)}, Ghidra {sorted(ghidra_pins)})')
+GHIDRA=Path(ghidra_pins.pop())
+JAVA=Path(java_pins.pop())
 properties=GHIDRA/'Ghidra/application.properties'
 environment=dict(
-    note='Not in the INPUTS fingerprint; module files are checked to be no newer than the results, Ghidra and Java are as installed when recorded',
+    note='Not in the INPUTS fingerprint; module files are checked to be no newer than the results and compared with the last record; Ghidra and Java are the installs run_vmx.ps1 names, as installed when recorded',
     program=f'the caller probes hashed the tested program\'s memory: {image}',
-    module_files={rel:hashlib.sha256(p.read_bytes()).hexdigest() for rel,p in module_files.items()},
+    module_files=module_hashes,
+    module_compared=module_compared,
     ghidra=dict(path=GHIDRA.as_posix(),
                 application_properties=[l for l in properties.read_text(encoding='utf-8',errors='replace').splitlines()
                                         if l.startswith(('application.version=','application.release.name='))] if properties.is_file() else None,

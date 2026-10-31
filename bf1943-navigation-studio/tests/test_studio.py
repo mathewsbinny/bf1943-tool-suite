@@ -49,6 +49,23 @@ def options():
         except ValueError:
             check(True, f'--path {bad!r} is refused')
     check(studio.main(['studio.py', 'wake_island_s', '--path', '1,2,3']) == 2, 'a bad --path ends with exit code 2 at once')
+    if not hasattr(studio, 'check_options'):              # an older studio would load the level and open a window
+        check(False, 'the other options are checked before the level loads (no check_options)')
+        return
+    good = studio.check_options({'--island': '2', '--frames': '5', '--focus': '1,2,3', '--color': 'small-islands',
+                                 '--yaw': '0.5', '--pitch': '1.2', '--distance': '30'})
+    check(good['island'] == 2 and good['frames'] == 5 and good['focus'] == [1, 2, 3] and good['color'] == 'small islands'
+          and good['yaw'] == 0.5 and good['pitch'] == 1.2 and good['distance'] == 30, f'good options are read ({good})')
+    for key, bad in (('--island', 'x'), ('--island', '-1'), ('--frames', '0'), ('--frames', 'many'), ('--focus', '1,2'),
+                     ('--yaw', 'left'), ('--pitch', 'nan'), ('--distance', 'far'), ('--color', 'rainbow'),
+                     ('--path', 'nan,0,0;1,2,3')):
+        try:
+            studio.check_options({key: bad})
+            check(False, f'{key} {bad!r} is refused')
+        except ValueError:
+            check(True, f'{key} {bad!r} is refused')
+    for args in (['--island', 'x'], ['--frames', '0'], ['--screenshot']):
+        check(studio.main(['studio.py', 'wake_island_s'] + args) == 2, f'{" ".join(args)}: exit code 2 before the level loads')
 
 
 def screenshot():

@@ -10,7 +10,7 @@ summary says nothing was skipped. --strict fails the run when anything was skipp
 Every test is about BF1943 or the tools that work on it; tests for BFBC2 data and for the copied tools not yet
 adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests are grouped by the data they need:
   quick   no game data, one to two minutes: repository rules, error handling and every command-line tool's errors,
-          the DBX and water mesh readers on damaged files, the suite window on a made-up game, the RSNV file (both byte orders, search, locate, damaged files), the STFS
+          the DBX, water mesh, material map and height field readers on damaged files, the suite window on a made-up game, the RSNV file (both byte orders, search, locate, damaged files), the STFS
           reader on packages it builds, the Xenia kit's patch file, assembler and bot code, NavKit's builder rules
           (both variants; the little-endian one's edge cases, damaged files, navkit.py steps and window Cancel too),
           the spawn map's --navflags, the Navigation Studio's colours and options, the 3D tools' screenshot exit
@@ -57,6 +57,7 @@ def tests():
         ('vehicle entry points: cached per game copy, never by id (made-up blueprints)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_vehicles1943.py')]),
         ('DBX reader: truncated and damaged files refused (parse and XML)', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_dbx_malformed.py')]),
         ('water mesh reader: triangles past their vertices refused', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_water_mesh.py')]),
+        ('core readers: damaged material maps and height fields refused; path test finds the cheapest route; sys.path kept', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_readers_malformed.py')]),
         ('RSNV navigation file: both byte orders, search, locate, damaged files', 'quick', [PY, os.path.join(SUITE, 'core', 'tests', 'test_rsnv.py')]),
         ('every command-line tool reports errors', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_cli_errors.py')]),
         ('the test runner: unknown tiers and options refused', 'quick', [PY, os.path.join(SUITE, 'tests', 'test_run_tests.py')]),
@@ -97,6 +98,8 @@ def tests():
         ('NavKit big-endian: steps keep to one preparation (stamps, pitches, game copy)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_stages.py')]),
         ('NavKit big-endian: vehicle steps keep to one preparation (stamps, game copy, absent worlds, no water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_vehicle_stages.py')]),
         ('NavKit big-endian: review fixes (navkit.json lock, stale samples and masks, arguments, failed checks)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_review.py')]),
+        ('NavKit big-endian: second review fixes (OS lock, world stamps, jump links stamp, failed exports aside)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_review2.py')]),
+        ('NavKit big-endian: user review fixes (vehicle world identity, prepared terrain, disjoint pockets)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_navkit_review3.py')]),
         ('NavKit big-endian: route check passes only when something was checked', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-big-endian', 'tests', 'test_routecheck1943.py')]),
         ('NavKit little-endian: water rule (ground too deep under water)', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_water_rule.py')]),
         ('NavKit little-endian: walkability edits', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navedits.py')]),
@@ -112,6 +115,7 @@ def tests():
         ('NavKit little-endian: builder edge cases', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navbuild_edges.py')]),
         ('NavKit little-endian: damaged files', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_formats.py')]),
         ('NavKit little-endian: navkit.py steps', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navkit_driver.py')]),
+        ('NavKit little-endian: apply, install and sampling guards', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_driver_guards.py')]),
         ('NavKit little-endian: window Cancel', 'quick', [PY, os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tests', 'test_navkit_gui.py')]),
         ('Spawn map: --navflags on made-up maps', 'quick', [PY, os.path.join(SUITE, 'bf1943-spawn-map', 'tests', 'test_spawnmap.py'), '--made-up']),
         ('Navigation Studio: colours and options', 'quick', [PY, os.path.join(SUITE, 'bf1943-navigation-studio', 'tests', 'test_studio.py')]),
@@ -173,7 +177,9 @@ def main(argv):
     for name, t, args in chosen:
         t0 = time.time()
         r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=SUITE,
-                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))   # no __pycache__, their children too
+                           # no __pycache__, their children too; output in UTF-8, as it is read (2026-10-30 second
+                           # review: a test printing a path outside the ANSI code page died in the pipe)
+                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8'))
         out = (r.stdout + r.stderr).strip()
         main_out = r.stdout.strip() or out            # the summary line is the test's own last line, not a warning it printed
         lines = main_out.splitlines()

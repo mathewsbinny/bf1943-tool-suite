@@ -79,9 +79,10 @@ HANDLE = SLOTS + 4 * MAX_BOTS + 4
 #     with button bit 40), the button u64 at frame + 0x78 as high and low words; then a sequence word, C_SEQ). The
 #     sequence is a lock: the host makes it odd, writes the stamp and fields, then makes it even and new
 #     ((seq + 1) | 1, then that + 1). The guest reads the sequence, the record, the sequence again, and takes the
-#     record only when both are the same even value (else it tries again, TRIES times in all); with no whole record,
-#     or one whose stamp is more than STALE ticks old (or ahead, or none: 0), the frame is neutral, so the bots stand
-#     if the host stops. (Before 2026-10-30 the stamp was written last and nothing else guarded the fields: a read
+#     record only when both are the same even value (else it tries again, TRIES times in all), keeping it as the bot's
+#     last whole command (a guest-only copy, G_*, after the block); with no whole read this tick the last whole command
+#     is used. When that one's stamp is more than STALE ticks old (or ahead, or none: 0), the frame is neutral, so the
+#     bots stand if the host stops. (Before 2026-10-30 the stamp was written last and nothing else guarded the fields: a read
 #     during a write could mix the new throttle with the old facing. The word was spare, so zero is an even
 #     sequence: a host that does not lock is read as before.)
 #   per capture point f (FLAG0 + FLAG_SIZE * f, up to MAX_FLAGS, in the game's own iteration order): the tick, the
@@ -106,8 +107,14 @@ MAILBOX_END = MBOX + 4
 # when the bots are made. The bots are forgotten when either differs, when the manager is gone or the player list is
 # empty: before 2026-10-30 only the manager was compared, and a new match whose manager reused the old one's address
 # would have taken the old match's freed bot players as its own. Not part of the mailbox (navhost does not read it).
+# Each tick, while bots exist, every slot's player must also still be in the manager's list (2026-10-30): a slot whose
+# player is not is cleared (a bot the game removed); when none is left and some were made, it is a new match at the old
+# addresses, and the bots are forgotten. When the host is gone but the bots are still in the list (the host left), the
+# bots are forgotten and HOLD is set: no bots are made again until the list empties or the manager changes (before
+# 2026-10-30 the next tick made a new set, with a bot as its host). Not part of the mailbox either.
 HOST_PLAYER = MAILBOX_END
-DATA_USED = HOST_PLAYER + 4
+HOLD = HOST_PLAYER + 4
+DATA_USED = HOLD + 4
 MAGIC = 0x52534D32           # 'RSM2', in the data area and the block's header
 VERSION = 2
 STALE = 10                   # ticks: an older command gives a neutral frame; a stamp of 0 (never answered) gives one too
@@ -124,6 +131,14 @@ FLAG_SIZE = 0x30
 F_SEQ, F_ENTITY, F_OWNER, F_CONTROL, F_ENABLED, F_RADIUS, F_X, F_Y, F_Z = (4 * k for k in range(9))
 F_SEQ_END = 0x2C
 BLOCK_SIZE = FLAG0 + FLAG_SIZE * MAX_FLAGS
+# Guest-only, after the host-visible block (2026-10-30; readers see no change, so the version stays 2): per bot slot k
+# at BLOCK_SIZE + BOT_SIZE * k, the bot's last whole command, laid out as its command record (G_x = G0 + C_x from the
+# slot's record). When a read finds the host writing (TRIES times), this copy is used while its stamp is fresh, instead
+# of a neutral frame, which released held buttons for that tick (a spurious edge for toggles such as ChangePose).
+G0 = BLOCK_SIZE - BOT0
+G_STAMP, G_THROTTLE, G_STRAFE, G_YAW, G_PITCH, G_BUTTONS_HI, G_BUTTONS_LO = (
+    G0 + o for o in (C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO))
+ALLOC_SIZE = BLOCK_SIZE + BOT_SIZE * MAX_BOTS
 CP_TYPE = 0x82D57850         # ServerCapturePointEntity's type (research/evidence/bot-interfaces.json)
 # the mailbox's names, for the assembler and for readers that check their own copy of the layout (navhost's rsmbox.h)
 MAILBOX_NAMES = ('MBOX_MAGIC', 'MBOX', 'MAGIC', 'VERSION', 'STALE', 'MAX_FLAGS', 'H_MAGIC', 'H_VERSION', 'H_BOTS',
@@ -175,23 +190,61 @@ hook:
     lwz r3, STATE(r31)
     cmpwi r3, 0
     beq make
-    lwz r6, 0(r4)            # bots made: still their match only while its first player is the host they were made
-    lwz r7, HOST_PLAYER(r31) # with (a new match can reuse the manager's address; the manager and its first player
-    cmplw r6, r7             # both, far less likely)
-    beq respawn
-    b forget
+    li r9, 0                 # bots made: each slot's player must still be in the manager's list (r9: found there),
+    li r10, 0                # else its slot is cleared (r10: gone) and it is never touched again (a freed player)
+    la r28, SLOTS_ADDR
+    li r29, MAX_BOTS
+check_slot:
+    lwz r6, 0(r28)
+    cmpwi r6, 0
+    beq check_next
+    mr r7, r4
+check_find:
+    cmplw r7, r5
+    beq check_gone
+    lwz r8, 0(r7)
+    addi r7, r7, 4
+    cmplw r8, r6
+    bne check_find
+    addi r9, r9, 1
+    b check_next
+check_gone:
+    li r8, 0
+    stw r8, 0(r28)
+    addi r10, r10, 1
+check_next:
+    addi r28, r28, 4
+    addi r29, r29, -1
+    cmpwi r29, 0
+    bne check_slot
+    lwz r6, 0(r4)            # the match's first player must still be the host the bots were made with
+    lwz r7, HOST_PLAYER(r31)
+    cmplw r6, r7
+    bne host_changed
+    cmpwi r9, 0
+    bne respawn              # the same match (bots the game removed are dropped above)
+    cmpwi r10, 0
+    beq respawn              # no bot was made (the server was full): nothing to check
+    b forget                 # none of the bots is in the list: a new match at the old manager's and host's addresses
+host_changed:
+    cmpwi r9, 0
+    beq forget               # another match (the manager's address reused by it)
+    b forget_held            # the host left and the bots are still in the match: no new bots until it ends
 make:
+    lwz r3, HOLD(r31)        # held (the host left this match): no bots until the list empties or the manager changes
+    cmpwi r3, 0
+    bne out
     lwz r4, 0(r4)            # the first player (the host's own) has a soldier: the match is running
     lwz r5, 0x120(r4)
     cmpwi r5, 0
     beq out
-    li r3, BLOCK_SIZE        # the host mailbox, one block per match (82627d10 as for the input states); no bots
-    bl 0x82627d10            # without it: the next tick tries again
+    li r3, ALLOC_SIZE        # the host mailbox, one block per match (82627d10 as for the input states), and after it
+    bl 0x82627d10            # the bots' guest-only command copies; no bots without it: the next tick tries again
     cmpwi r3, 0
     beq out
     mr r29, r3
     li r4, 0
-    li r5, BLOCK_SIZE
+    li r5, ALLOC_SIZE
 clear_mailbox:               # the allocator need not clear it
     addi r5, r5, -4
     add r6, r29, r5
@@ -367,14 +420,29 @@ command_again:
     addi r7, r7, -1
     cmpwi r7, 0
     bne command
-    b push                   # no whole command: a neutral frame this tick
-command_whole:
+    b command_last           # no whole read this tick (the host was writing): the last whole command, while fresh
+command_whole:               # kept as the bot's last whole command (a guest-only copy after the block's host layout)
+    stw r6, G_STAMP(r22)
+    stw r9, G_THROTTLE(r22)
+    stw r10, G_STRAFE(r22)
+    stw r11, G_YAW(r22)
+    stw r12, G_PITCH(r22)
+    stw r0, G_BUTTONS_HI(r22)
+    stw r3, G_BUTTONS_LO(r22)
+command_last:                # (before 2026-10-30 a read that found the host writing gave a neutral frame: held
+    lwz r6, G_STAMP(r22)     # buttons were released for that tick, a spurious edge for toggles such as ChangePose)
     cmpwi r6, 0              # a stamp of 0 answered nothing (a new or zeroed record): neutral, even while the tick,
     beq push                 # which counts from 1 and is never reset, is still at most STALE
     lwz r5, TICK(r31)        # used if it answered a tick at most STALE ticks ago (tick - stamp, unsigned: a stamp
     subf r5, r6, r5          # ahead is as old)
     cmplwi r5, STALE
     bgt push                 # else a neutral frame: the bot stands
+    lwz r9, G_THROTTLE(r22)
+    lwz r10, G_STRAFE(r22)
+    lwz r11, G_YAW(r22)
+    lwz r12, G_PITCH(r22)
+    lwz r0, G_BUTTONS_HI(r22)
+    lwz r3, G_BUTTONS_LO(r22)
     stw r9, BUF_THROTTLE(r1)     # EIAThrottle (action 0, an analog float at frame + 8)
     stw r10, BUF_STRAFE(r1)      # EIAStrafe (action 1, frame + 0x0c)
     stw r0, BUF_BUTTONS_HI(r1)   # the button bits (actions 8-39; bit 40: the absolute facing is valid), a u64
@@ -538,8 +606,14 @@ flags_done:
     lwz r5, TICK(r31)
     stw r5, H_TICK(r3)
     b out
-forget:                      # no bots this match yet: clear the state, mailbox, key and slots, remember this manager
-    li r3, 0                 # (0 when there is none)
+forget_held:                 # the host left, its bots still in the match: forget them and hold (make nothing more)
+    li r3, 1                 # until the list empties or the manager changes (before 2026-10-30 the next tick made a
+    b forget_hold            # new set with a bot as the host, beside the orphaned old one)
+forget:                      # no bots this match yet: clear the state, mailbox, key, hold and slots, remember this
+    li r3, 0                 # manager (0 when there is none)
+forget_hold:
+    stw r3, HOLD(r31)
+    li r3, 0
     stw r3, MBOX_MAGIC(r31)
     stw r3, MBOX(r31)
     stw r3, STATE(r31)
@@ -597,22 +671,29 @@ def assembler_symbols(table=0):
                'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
                'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'BUF_STRAFE': BUF + 0x0C,
                'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table,
-               'TRIES': TRIES, 'LWSYNC': LWSYNC, 'HOST_PLAYER': HOST_PLAYER}
+               'TRIES': TRIES, 'LWSYNC': LWSYNC, 'HOST_PLAYER': HOST_PLAYER, 'HOLD': HOLD, 'ALLOC_SIZE': ALLOC_SIZE,
+               'G_STAMP': G_STAMP, 'G_THROTTLE': G_THROTTLE, 'G_STRAFE': G_STRAFE, 'G_YAW': G_YAW, 'G_PITCH': G_PITCH,
+               'G_BUTTONS_HI': G_BUTTONS_HI, 'G_BUTTONS_LO': G_BUTTONS_LO}
     symbols.update({name: globals()[name] for name in MAILBOX_NAMES})
     return symbols
 
 
-def guest_command(word, tick):
+def guest_command(word, tick, last=None):
     """The bot code's command read, in Python, for the hosts' tests (tests/test_bots.py checks it against the code):
-    word(offset) gives a word of the bot's record (C_SEQ, C_STAMP, ...). (stamp, throttle, strafe, yaw, pitch,
-    buttons hi, buttons lo) as words, or None: a neutral frame."""
+    word(offset) gives a word of the bot's record (C_SEQ, C_STAMP, ...). last is the bot's guest-only copy of its last
+    whole command (a list of 7 words, updated in place; None: none yet, all zero, as in a new block): a whole read
+    replaces it, and the copy is what is used. (stamp, throttle, strafe, yaw, pitch, buttons hi, buttons lo) as words,
+    or None: a neutral frame (no fresh command)."""
     fields = (C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO)
+    copy = last if last is not None else [0] * len(fields)
     for _ in range(TRIES):
         seq = word(C_SEQ)
         record = tuple(word(o) for o in fields)
         if word(C_SEQ) == seq and not seq & 1:
-            return record if record[0] and (tick - record[0]) & 0xFFFFFFFF <= STALE else None
-    return None
+            copy[:] = record
+            break
+    record = tuple(copy)
+    return record if record[0] and (tick - record[0]) & 0xFFFFFFFF <= STALE else None
 
 
 def guest_record(first, last, tick, fields):

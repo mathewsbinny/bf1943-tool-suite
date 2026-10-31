@@ -7,6 +7,7 @@ navexport_vehicles1943.py), ask it questions, draw it, and compare two of them.
   rsnvtool.py los <file|level> X,Y,Z X,Y,Z                      line of sight between two points (the runtime's rule)
   rsnvtool.py route <file|level> FROM TO [--soldier] [--png F]  a search between nodes or points (X,Y,Z), as rsnav finds it
   rsnvtool.py pockets <file|level> [--top N]                    the main network's pieces when tight edges are left out
+                                                                (weakly connected, disjoint), and the one-way share
   rsnvtool.py tight <file|level> [--samples] [--json F]         every tight walk edge: its ends' areas, the first
                                                                 failing line-of-sight sample each way, the rule that
                                                                 refuses it and by how much, a cause; --samples adds
@@ -91,23 +92,78 @@ def edge_source(w):
     return src
 
 
+def _kept_edges(w, nodes):
+    """(a, b) of every edge between two of `nodes` that is not tight."""
+    inside = set(nodes)
+    for a in inside:
+        for k in range(int(w.node_first_edge[a]), int(w.node_first_edge[a + 1])):
+            b = int(w.edge_target[k])
+            if b in inside and not int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT:
+                yield a, b
+
+
 def pieces(w, nodes):
-    """Pieces of `nodes` when tight edges are left out, largest first."""
-    left, out = set(nodes), []
-    while left:
-        s = left.pop()
-        seen, q = {s}, [s]
-        while q:
-            m = q.pop()
-            for k in range(int(w.node_first_edge[m]), int(w.node_first_edge[m + 1])):
-                t = int(w.edge_target[k])
-                if t not in seen and not int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT:
+    """The pieces of `nodes` when tight edges are left out: weakly connected components (an edge joins its ends
+    whichever way it runs), disjoint, largest first, each sorted. 2026-10-30 second review: the pieces followed
+    outgoing edges only and could take nodes of an earlier piece again (1 -> 0 alone gave [[0, 1], [0]]), so pieces
+    overlapped and the share outside the largest could be counted twice."""
+    parent = {n: n for n in nodes}
+
+    def root(n):
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+    for a, b in _kept_edges(w, nodes):
+        ra, rb = root(a), root(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+    groups = collections.defaultdict(list)
+    for n in parent:
+        groups[root(n)].append(n)
+    return sorted((sorted(g) for g in groups.values()), key=lambda g: (-len(g), g[0]))
+
+
+def strong_core(w, nodes):
+    """The largest strongly connected component of `nodes` without tight edges (every node of it reaches every other
+    one and back), sorted: the nodes of a piece outside it can be left but not reached again, or reached but not left
+    (one-way edges: a drop, a one-way link)."""
+    out_e, in_e = collections.defaultdict(list), collections.defaultdict(list)
+    for a, b in _kept_edges(w, nodes):
+        out_e[a].append(b)
+        in_e[b].append(a)
+    order, seen = [], set()
+    for s in nodes:                                  # Kosaraju, iteratively: finishing order on the edges ...
+        if s in seen:
+            continue
+        seen.add(s)
+        stack = [(s, iter(out_e[s]))]
+        while stack:
+            n, it = stack[-1]
+            for t in it:
+                if t not in seen:
                     seen.add(t)
+                    stack.append((t, iter(out_e[t])))
+                    break
+            else:
+                stack.pop()
+                order.append(n)
+    best, done = [], set()
+    for s in reversed(order):                        # ... then the components on the reversed edges
+        if s in done:
+            continue
+        comp, q = [s], [s]
+        done.add(s)
+        while q:
+            n = q.pop()
+            for t in in_e[n]:
+                if t not in done:
+                    done.add(t)
+                    comp.append(t)
                     q.append(t)
-        seen &= set(nodes)
-        left -= seen
-        out.append(sorted(seen))
-    return sorted(out, key=len, reverse=True)
+        if len(comp) > len(best) or (len(comp) == len(best) and min(comp) < min(best)):
+            best = comp
+    return sorted(best)
 
 
 def cmd_info(w, path):
@@ -190,10 +246,14 @@ def cmd_pockets(w, a):
     isl = collections.Counter(int(i) for i in w.node_island)
     main_id = isl.most_common(1)[0][0]
     main = [n for n in range(len(w.node_pos)) if int(w.node_island[n]) == main_id]
-    ps = pieces(w, main)
+    ps = pieces(w, main)                             # disjoint: the shares below add up to the main network
     out = sum(len(p) for p in ps[1:])
     print(f'main network (island {main_id}): {len(main)} nodes; without tight edges {len(ps)} pieces, the largest '
           f'{len(ps[0])}; {out} nodes ({100 * out / len(main):.2f} %) outside it')
+    core = strong_core(w, ps[0])
+    one_way = len(ps[0]) - len(core)
+    print(f'  of the largest piece, {one_way} nodes ({100 * one_way / len(main):.2f} %) are outside its strongly '
+          f'connected core (reached but not left, or left but not reached again, by one-way edges)')
     for p in ps[1:1 + a.top]:
         c = [sum(float(w.node_pos[n][i]) for n in p) / len(p) for i in range(3)]
         print(f'  {len(p):5d} nodes around ({c[0]:.1f}, {c[1]:.1f}, {c[2]:.1f})')

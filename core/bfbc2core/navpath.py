@@ -5,7 +5,8 @@
 
 The points are joined to the graph at the nearest route node within 15 m horizontally and 4 m in height (as
 the studio's spawn check does); the route is the cheapest over the file's own directed edges and their
-stored costs (A*, straight-line distance as the estimate). Without a route, the result says which island
+stored costs (A*, straight-line distance times the graph's least cost per metre as the estimate, so the cheapest
+route is found although the stored costs are rounded down). Without a route, the result says which island
 each point is on and where the two islands come closest. This plans over the graph only: the game also
 smooths the route through the areas, which this does not do (DESIGN.md section 7, question 4).
 """
@@ -64,6 +65,25 @@ def _adjacency(nav):
     return cache
 
 
+def cost_scale(nav):
+    """The least stored cost per metre of length over the graph's edges, at most 1 (0 when an edge of some length
+    costs nothing): the straight-line estimate times this never exceeds a route's cost. 2026-10-30 second review: the
+    stored costs are rounded down to 1/16 m, so the plain distance overestimated and a dearer route came back (5.1875
+    where one of 5.125 existed)."""
+    cache = getattr(nav, '_cost_scale', None)
+    if cache is not None:
+        return cache
+    s = 1.0
+    if len(nav.edges):
+        d = nav.node_pos[nav.edges[:, 1]] - nav.node_pos[nav.edges[:, 0]]
+        ln = np.linalg.norm(d, axis=1)
+        m = ln > 0
+        if m.any():
+            s = max(0.0, min(1.0, float((np.asarray(nav.edge_cost, float)[m] / ln[m]).min()) * (1.0 - 1e-9)))
+    nav._cost_scale = s
+    return s
+
+
 def closest_between(nav, ia, ib):
     """The closest pair of nodes of two islands (horizontal metres)."""
     a = np.nonzero(nav.node_island == ia)[0]
@@ -93,9 +113,10 @@ def route(nav, start, end):
     start_idx, nbr, cost = _adjacency(nav)
     pos = nav.node_pos
     goal = r.end_node
+    scale = cost_scale(nav)                                     # an estimate that never exceeds the stored costs
     best = {r.start_node: 0.0}
     came = {}
-    heap = [(float(np.linalg.norm(pos[r.start_node] - pos[goal])), 0.0, r.start_node)]
+    heap = [(scale * float(np.linalg.norm(pos[r.start_node] - pos[goal])), 0.0, r.start_node)]
     done = set()
     while heap:
         _, g, n = heapq.heappop(heap)
@@ -110,7 +131,7 @@ def route(nav, start, end):
             if ng < best.get(m, np.inf):
                 best[m] = ng
                 came[m] = n
-                heapq.heappush(heap, (ng + float(np.linalg.norm(pos[m] - pos[goal])), ng, m))
+                heapq.heappush(heap, (ng + scale * float(np.linalg.norm(pos[m] - pos[goal])), ng, m))
     r.expanded = len(done)
     if goal not in done:
         if r.start_island != r.end_island:

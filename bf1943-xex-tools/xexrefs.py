@@ -67,9 +67,12 @@ def code_references():
             w=word(at);op=w>>26;rd=(w>>21)&31;ra=(w>>16)&31;imm=w&0xffff;simm=imm-0x10000 if imm&0x8000 else imm;scanned+=1
             target=None
             if op==15 and ra==0:high[rd]=(imm<<16)&0xffffffff;continue
-            if op in(14,12,13) and ra in high:target=(high[ra]+simm)&0xffffffff
+            # addi and the D/DS-form loads and stores read a base field of 0 as the literal 0, not r0 (li r3, 0x10 after
+            # lis r0 is no reference; 2026-10-31); addic and addic. read r0 itself, and ori's rS is a register
+            if op==14 and ra and ra in high:target=(high[ra]+simm)&0xffffffff
+            elif op in(12,13) and ra in high:target=(high[ra]+simm)&0xffffffff
             elif op==24 and rd in high:target=high[rd]|imm               # ori rA, rS, imm: rS is the rd field
-            elif op in dform and ra in high:target=(high[ra]+(simm&~3 if op in(58,62) else simm))&0xffffffff
+            elif op in dform and ra and ra in high:target=(high[ra]+(simm&~3 if op in(58,62) else simm))&0xffffffff
             if target is not None and BASE<=target<END:refs[target].append((at,start))
             for r in gpr_writes(w):high.pop(r,None)
             if op in(16,17,18,19):high.clear()

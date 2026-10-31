@@ -440,7 +440,7 @@ def build(lv, soldier_path=None, game=None, log=print):
               'water_depth': draft, 'sha256': meta['sources']['soldier rsnv']['sha256']}
     stats = rsnvgrid1943.write_world(lv, 'lcvp', sets, node_list, edge_list, offm, p['rsnv'], st['sector_offsets'],
                                      header, meta, node_flags=nflags, log=log)
-    vc.record(lv, 'worlds', want, 'lcvp')
+    vc.record(lv, 'worlds', dict(want, sha256=nj.sha256(p['rsnv'])), 'lcvp', soldier_path=soldier_path)
     stats.update({'lanes': len(lanes), 'landing zones': len(zones), 'boarding': len(board),
                   'seconds': round(time.time() - t0, 1)})
     log(f'{lv}: LCVP world {p["rsnv"]}: {stats["nodes"]} nodes, {len(lanes)} lanes, {len(zones)} landing zones, '

@@ -790,8 +790,9 @@ def score(s, keep, hpd, tol=0.6):
                    if 0 <= i + a < s.nx and 0 <= j + b < s.nz for lo, hi, _ in ref.get((j + b) * s.nx + i + a, [])):
             far += 1
     within = 100 - ((full - found - near) + far) / max(full + far, 1) * 100
-    return {'reference': full, 'found': found / full * 100, 'found_near': (found + near) / full * 100,
-            'extra': extra / full * 100, 'extra_far': far / full * 100, 'within_one_cell': within}
+    per = 100.0 / max(full, 1)                   # no reference cell inside the samples' box: shares of nothing are 0
+    return {'reference': full, 'found': found * per, 'found_near': (found + near) * per,
+            'extra': extra * per, 'extra_far': far * per, 'within_one_cell': within}
 
 
 def main(argv):

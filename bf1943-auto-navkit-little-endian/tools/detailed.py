@@ -5,11 +5,15 @@ A sector is detailed when
     sector's square (the level's own trigger - the field DICE's generator reads), or
   - at least STACKED_MIN columns of NavKit's 0.8 m samples in the sector hold two standable surfaces at least 2 m apart
     (stacked floors: what the 0.8 m grid cannot separate well).
-Scored against DICE's choice on the 14 levels that have both (2026-10-21): it finds 445 of DICE's 481 detailed
-sectors (93 %; the flag alone 84 %) and adds 243 of about 2,500 that DICE builds at 0.8 m. The misses have neither a
-flagged object nor stacked floors and stay at 0.8 m; the additions cost sampling and build time, not quality.
+Scored against DICE's choice on the 14 levels that have both (2026-10-21, with ForbidPathfinding, flags[0], which this
+tested until 2026-10-31): it found 445 of DICE's 481 detailed sectors (93 %; the flag alone 84 %) and added 243 of about
+2,500 that DICE builds at 0.8 m. The flag DICE's zones follow is NeedsDetailedPathfinding (flags[5]): on the 13 BFBC2
+campaign levels the object rule alone finds 396 of DICE's 458 detailed sectors with 29 extra, against 387 with 157 extra
+for ForbidPathfinding (README, "Second review"). The misses have neither a flagged object nor stacked floors and stay
+at 0.8 m; the additions cost sampling and build time, not quality.
 
-Usage: detailed.py <level> [--samples <0.8 m samples.bin>] [--offsets X,Z] [--score]   (--score: against DICE's file)
+Usage: detailed.py <level> [--samples <0.8 m samples.bin>] [--offsets X,Z] [--score]   (--score: against DICE's file;
+--offsets: by default the level's navkit.json)
 """
 import json
 import math
@@ -31,12 +35,19 @@ SLOPE_MAX = 40.0
 
 
 def flagged_sectors(level_dir, common, xoff, zoff, margin=MARGIN):
-    """Sectors (X, Z) within margin of a NeedsDetailedPathfinding object's collision box (objects.json)."""
+    """Sectors (X, Z) within margin of a NeedsDetailedPathfinding object's collision box (objects.json). ValueError on
+    an objects.json from before that flag was extracted (2026-10-31): prepare the level again."""
     bases = [b for b in [os.path.join(level_dir, 'pkg'), os.path.join(level_dir, 'dist')] + list(common) if os.path.isdir(b)]
     hv = levelobjects.havok_index(bases)
     out, cache = set(), {}
-    for o in json.load(open(os.path.join(level_dir, 'objects.json'))):
-        if not (o.get('flags') and o['flags'][0]):
+    k = levelobjects.FLAG_DETAILED
+    with open(os.path.join(level_dir, 'objects.json'), encoding='utf-8') as f:
+        objects = json.load(f)
+    if any(o.get('flags') and len(o['flags']) <= k for o in objects):
+        raise ValueError(f'{os.path.join(level_dir, "objects.json")} is from before NeedsDetailedPathfinding was '
+                         f'extracted: run navkit.py prepare on the level again')
+    for o in objects:
+        if not (o.get('flags') and o['flags'][k]):
             continue
         bp = o['bp'].lower()
         if bp not in cache:
@@ -65,9 +76,8 @@ def stacked_columns(samples_path, xoff, zoff):
     np.minimum.at(lo, col[sel], y[sel])
     np.maximum.at(hi, col[sel], y[sel])
     stacked = np.nonzero(hi - lo >= STACK_GAP)[0]
-    x = s.min_x + (stacked % s.nx) * s.pitch
-    z = s.min_z + (stacked // s.nx) * s.pitch
-    return Counter(zip((np.floor(x / 100).astype(int) - xoff).tolist(), (np.floor(z / 100).astype(int) - zoff).tolist()))
+    X, Z = navsample.column_sectors(s, stacked)     # in whole centimetres: the same sectors navbuild.stage gives
+    return Counter(zip((X - xoff).tolist(), (Z - zoff).tolist()))
 
 
 def choose(level_dir, common, samples_path, xoff, zoff, margin=MARGIN, stacked_min=STACKED_MIN):
@@ -82,21 +92,32 @@ def sampled_record_path(p02):
     return p02[:-4] + '.sectors.json'
 
 
-def write_sampled_record(p02, sectors, xoff, zoff):
+def write_sampled_record(p02, sectors, xoff, zoff, pending=False):
+    """pending: written as a 0.2 m run starts, replaced by the covered sectors when both its runs finish - so the
+    samples of a run that failed part-way are never taken for good ones."""
     tmp = sampled_record_path(p02) + '.tmp'
+    rec = {'xoff': xoff, 'zoff': zoff, 'sectors': sorted([int(i), int(j)] for i, j in sectors)}
+    if pending:
+        rec['pending'] = True
     with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump({'xoff': xoff, 'zoff': zoff, 'sectors': sorted([int(i), int(j)] for i, j in sectors)}, f)
+        json.dump(rec, f)
     os.replace(tmp, sampled_record_path(p02))
 
 
 def sampled_problem(p02, samples08, sectors, xoff, zoff):
     """Why the pitch-0.2 samples p02 do not fit the detailed sectors chosen now (None: they fit). With the run's record:
-    the same sector offsets, and every chosen sector among those it covered. Without one (a run from before the
-    record): the 0.8 m samples the choice came from must not be newer than the 0.2 m ones."""
+    a finished run (not "pending": one that failed part-way leaves that), the same sector offsets, and every chosen
+    sector among those it covered. Without one (a run from before the record): the 0.8 m samples the choice came
+    from must not be newer than the 0.2 m ones."""
     rec = sampled_record_path(p02)
     if os.path.isfile(rec):
-        with open(rec, encoding='utf-8') as f:
-            r = json.load(f)
+        try:
+            with open(rec, encoding='utf-8') as f:
+                r = json.load(f)
+        except ValueError:
+            return f'its record {os.path.basename(rec)} is damaged'
+        if r.get('pending'):
+            return 'the last 0.2 m sampling run did not finish'
         if (r.get('xoff'), r.get('zoff')) != (xoff, zoff):
             return f'sampled with sector offsets {r.get("xoff")},{r.get("zoff")}, the level now has {xoff},{zoff}'
         missing = sorted({(int(i), int(j)) for i, j in sectors} - {(int(i), int(j)) for i, j in r.get('sectors', ())})
@@ -119,6 +140,22 @@ def score(chosen, dice_pathdata):
     return len(det & c), len(det), len(norm & c)
 
 
+def offsets_of(root, lv, given=None):
+    """(xoff, zoff): --offsets X,Z when given, else the level's navkit.json (navkit.py prepare); ValueError if neither."""
+    if given:
+        try:
+            x, z = (int(v) for v in given.split(','))
+            return x, z
+        except ValueError:
+            raise ValueError(f'--offsets {given!r}: give X,Z (two whole numbers)')
+    p = os.path.join(root, 'work', 'navkit', lv, 'navkit.json')
+    if not os.path.isfile(p):
+        raise ValueError(f'{lv}: no --offsets X,Z and no {p} (run navkit.py prepare {lv})')
+    with open(p, encoding='utf-8') as f:
+        s = json.load(f)
+    return int(s['xoff']), int(s['zoff'])
+
+
 def main(argv):
     if any(a in ('-h', '--help') for a in argv[1:]):
         print(__doc__)
@@ -131,13 +168,19 @@ def main(argv):
     root = os.environ.get('OPFOR_ROOT') or r'C:\Games\Project OPFOR'
     L = os.path.join(root, 'work', 'levels', lv)
     common = [os.path.join(root, 'work', 'navkit', 'common', c) for c in ('mp_common', 'sp_common')]
-    xoff, zoff = (int(v) for v in opts['--offsets'].split(','))
+    try:
+        xoff, zoff = offsets_of(root, lv, opts.get('--offsets'))
+    except ValueError as e:
+        print('error:', e)
+        return 2
     chosen, why = choose(L, common, opts.get('--samples'), xoff, zoff)
     print(f'{lv}: {len(chosen)} detailed sectors ({why})')
     if '--score' in argv:
-        p = os.path.join(root, 'game', 'Output', 'win32', 'ai', 'levels', lv, 'infantry', 'pathdata.hpd')
-        if os.path.isfile(p + '.opfor-orig'):
-            p += '.opfor-orig'
+        import navparity
+        p = navparity.reference_of(root, lv)     # DICE's file: never NavKit's own installed one (.opfor-none)
+        if not os.path.isfile(p):
+            print(f'error: {lv} has no original path data to score against')
+            return 1
         f, d, x = score(chosen, p)
         print(f'  against DICE: {f} of its {d} detailed sectors, {x} more')
     return 0

@@ -55,6 +55,8 @@ def local_entries(game, partition):
                 vals = {(c.attr('name') or c.tag): c for c in inst.children or ()}
                 try:
                     m = [float(t) for t in dbx.value(vals['Transform']).split('/')]
+                    if len(m) != 16:                # 2026-10-30 second review: a short one failed later, in entry_points
+                        continue
                     radius = float(dbx.value(vals['EntryRadius']))
                     order = int(dbx.value(vals['EntryOrderNumber'])) if 'EntryOrderNumber' in vals else 0
                 except (KeyError, ValueError, TypeError):

@@ -49,20 +49,25 @@ def order_points(level_xml):
 
 def blueprint_flags(bases):
     """lower-case blueprint path -> (ForbidPathfinding, ExcludeFromPathfinding, AllowPathdataSeeds, dynamic,
-    DisablePathfinding value - e.g. PdtNever / PdtWhenAlive)."""
+    DisablePathfinding value - e.g. PdtNever / PdtWhenAlive, NeedsDetailedPathfinding). The last (FLAG_DETAILED) is
+    what DICE's detailed zones follow (detailed.py; added 2026-10-31 - objects.json from before has five)."""
     flags = {}
     for base in bases:
         for f in glob.glob(os.path.join(base, '**', '*.xml'), recursive=True):
             t = open(f, encoding='utf-8', errors='replace').read()
             dynamic = 'type="GameSharedResources.DynamicModelEntityData"' in t
-            if 'ForbidPathfinding' not in t and not dynamic:
+            if 'ForbidPathfinding' not in t and 'NeedsDetailedPathfinding' not in t and not dynamic:
                 continue
             rel = os.path.relpath(f, base).replace(SEP, '/').lower()[:-4]
             dis = re.search(r'<field name="DisablePathfinding">([A-Za-z]*)<', t)
             flags.setdefault(rel, ('<field name="ForbidPathfinding">true' in t,
                                    '<field name="ExcludeFromPathfinding">true' in t,
-                                   '<field name="AllowPathdataSeeds">true' in t, dynamic, dis.group(1) if dis else ''))
+                                   '<field name="AllowPathdataSeeds">true' in t, dynamic, dis.group(1) if dis else '',
+                                   '<field name="NeedsDetailedPathfinding">true' in t))
     return flags
+
+
+FLAG_DETAILED = 5            # index of NeedsDetailedPathfinding in an object's flags (blueprint_flags)
 
 
 def mesh_aliases(bases):

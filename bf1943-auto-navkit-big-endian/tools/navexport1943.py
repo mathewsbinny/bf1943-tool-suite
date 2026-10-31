@@ -5,8 +5,9 @@ r"""NavKit (big-endian): a BF1943 navigation build exported to RSNV, the navigat
 
 Reads the checked build (<level>.hpd), its jump links (jump_links.json), the level's ladders (ladders.json), sea level
 (navkit.json) and vehicle spawns (the level's own data), and writes work\levels\<level>\navkit\<level>.rsnv
-(little-endian; --big-endian for an in-guest build). --check reads it back and validates it (rsnv.World.validate) and
-compares its graph with the build's (navdata).
+(little-endian; --big-endian for an in-guest build: <level>.be.rsnv). A build whose check failed is exported for
+inspection to <level>.failed.rsnv (unless --out says where), never over the soldier world, and the exit code is 1.
+--check reads it back and validates it (rsnv.World.validate) and compares its graph with the build's (navdata).
 
 What it holds:
   - the route graph: nodes (ground heights), edges with integer costs (1/16 m, as stored) and kinds - walk, ladder
@@ -156,11 +157,23 @@ build_refusal = nj.build_refusal    # why the build on disk may not be exported 
 
 def prepared_terrain(lv, st):
     """(game folder, game1943.Game, height field name, terrain) of the copy the level was prepared from (navkit.json's
-    'game'; 2026-10-30: the export and test_navexport1943 read the default copy's)."""
+    'game'; 2026-10-30: the export and test_navexport1943 read the default copy's). The terrain is the one saved by
+    the preparation (objects\\heightfield.res, checked against its stamp), and a game copy whose height field changed
+    since is refused (navkitjson1943.prepared_heightfield; second review: the game's was reread, unchecked)."""
     game = game1943.find_game(st.get('game'))
     g = game1943.Game(game, lv)
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
-    return game, g, hf_name, terrain.read(g.data(hf_name))
+    return game, g, hf_name, terrain.read(nj.prepared_heightfield(st, lv, g.data(hf_name)))
+
+
+def output_path(lv, st, out=None, big_endian=False):
+    """Where the export goes: out when given; else work\\levels\\<level>\\navkit\\<level>.rsnv (.be.rsnv with
+    big_endian), or <level>.failed.rsnv (.be.failed.rsnv) when the build's check failed - the soldier world the runtime
+    and the vehicle builders read stays as it was (2026-10-30 second review: an export for inspection replaced it)."""
+    if out:
+        return out
+    failed = '' if nj.check_passed(st) else '.failed'
+    return os.path.join(game1943.level_work(lv), 'navkit', f'{lv}{".be" if big_endian else ""}{failed}.rsnv')
 
 
 def export(lv, out=None, big_endian=False, log=print, compare=False):
@@ -173,11 +186,13 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
     why = build_refusal(st, lv, hpd)
     if why:
         raise NotCurrent(why)
+    out = output_path(lv, st, out, big_endian)
     if not nj.check_passed(st):
         # exported, so the failed build can be looked at, but never stamped as the soldier world: the vehicle builders
-        # refuse it, and navexport1943.py exits with code 1 (2026-10-30 review: it was stamped, exit code 0)
-        log(f'{lv}: the build\'s check failed ({st["checked"]}; navkit\\check.txt): exported for inspection only, '
-            f'not stamped as the soldier world')
+        # refuse it, and navexport1943.py exits with code 1 (2026-10-30 review: it was stamped, exit code 0); without
+        # --out it goes to <level>.failed.rsnv, beside the soldier world, not over it (second review)
+        log(f'{lv}: the build\'s check failed ({st["checked"]}; navkit\\check.txt): exported for inspection only to '
+            f'{out}, not stamped as the soldier world')
     xoff, zoff = st['sector_offsets']
     game, g, hf_name, hf = prepared_terrain(lv, st)
     sea = soldier1943.sea_level(st, hf)               # a level without water: under all its terrain
@@ -481,7 +496,6 @@ def export(lv, out=None, big_endian=False, log=print, compare=False):
                 'AREA': [tuple(r) for r in area_rows], 'PORT': port, 'BMAP': bytes(bmap), 'HGHT': [(v,) for v in hght],
                 'GBKT': gbkt, 'GLST': [(v,) for v in glst], 'ANOD': [(v,) for v in anod], 'LADR': ladr, 'OFFM': offm,
                 'ISLD': island_rows, 'META': json.dumps(meta, indent=1).encode('utf-8')}
-    out = out or os.path.join(W, 'navkit', f'{lv}{".be" if big_endian else ""}.rsnv')
     # the search heuristic's scale (rsnv.heuristic_scale, header): admissible for this graph's edge costs
     h_q = rsnv.heuristic_scale(gpos, E[:, 0], E[:, 1], np.minimum(cost, 0xFFFF))
     meta['heuristic scale'] = h_q / rsnv.H_SCALE_ONE
@@ -581,7 +595,8 @@ def main(argv):
     st = nj.read(a.level)
     if not nj.check_passed(st):
         print(f'error: {a.level}: the build\'s check failed ({st.get("checked")}): {path} was written for inspection only '
-              f'and is not the soldier world (fix the build, navkit.py check {a.level}, export again)')
+              f'and is not the soldier world, which stays as it was (fix the build, navkit.py check {a.level}, export '
+              f'again)')
         return 1
     return failed
 
