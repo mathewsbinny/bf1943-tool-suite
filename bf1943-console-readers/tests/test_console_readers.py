@@ -14,9 +14,12 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True                        # run_tests.py starts tests without -B
-HERE =os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(HERE, '..'))
-sys.path.insert(0, os.path.join(ROOT, 'stfs'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 import stfs  # noqa: E402
 
 

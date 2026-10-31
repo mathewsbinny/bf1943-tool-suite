@@ -12,11 +12,7 @@ that depend on them, with the rules BF1943's levels needed. The BF1943 tools pas
 (Until 2026-10-31 configure() wrote these into navbuild's, navwalk's and detailed's module constants, and a build
 was BF1943's only when it had run first.)
 """
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import navbuild  # noqa: E402  (this kit's: core's navdata puts the little-endian tools first on sys.path)
+import navbuild  # this kit's: the script lists suitepath.NAVKIT_BE first
 
 RADIUS = 0.35                   # PhysicalRadius
 STEP_HEIGHT = 0.3               # StepHeight

@@ -31,9 +31,12 @@ import time
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.dirname(os.path.dirname(HERE))
-sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 import rsnvgrid1943  # noqa: E402
 import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402

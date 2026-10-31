@@ -23,10 +23,14 @@ import time
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUITE = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(SUITE, 'core'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 from bfbc2core import csbuild  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import csharp_regressions  # noqa: E402
 
 failures = []

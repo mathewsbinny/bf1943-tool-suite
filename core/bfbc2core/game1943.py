@@ -18,7 +18,6 @@ files, or none).
 import gzip
 import os
 import struct
-import sys
 import zlib
 
 
@@ -71,8 +70,7 @@ class Game:
     """Every entry of a level's bundles and the shared level bundle, by lower-case name (the level's own first)."""
 
     def __init__(self, game, level):
-        sys.path.insert(0, os.path.join(SUITE, 'bf1943-fbrb-tool'))
-        from fbrb1943 import Bundle
+        from fbrb1943 import Bundle             # bf1943-fbrb-tool, a shared folder (suitepath.SHARED)
         from . import dbx
         self._dbx = dbx
         self.game, self.level = find_game(game), level

@@ -49,7 +49,12 @@ import time
 
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)   # no console flashes when run from the GUI
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, 'tools'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
 
 DETAILED_BUDGET_MS = 400   # pitch-0.2 runs: ms of sampling per frame - 10x the columns of a normal run, so it must finish
                            # in less game time than a round or a campaign level allows an idle player (150: ONS_MP_002 at
@@ -849,7 +854,6 @@ def apply(pr, lv, navtune_path=None, out=None, log=print, install_after=False):
 
 def _apply(pr, lv, navtune_path, out, log, where=None):
     where = {} if where is None else where       # where['out']: the output, once known (for the report)
-    sys.path.insert(0, os.path.join(HERE, '..', 'core'))
     from bfbc2core import navtune
     import navbuild
     import navregress
@@ -1048,7 +1052,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(HERE, '..', 'core'))
     from bfbc2core import errors
     errors.setup('navkit', gui=False)          # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

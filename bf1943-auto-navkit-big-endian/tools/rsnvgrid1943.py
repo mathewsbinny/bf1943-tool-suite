@@ -21,13 +21,9 @@ import collections
 import json
 import math
 import os
-import sys
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.dirname(os.path.dirname(HERE))
-sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
 import navkitjson1943 as nj  # noqa: E402
 from bfbc2core import rsnv  # noqa: E402
 

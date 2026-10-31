@@ -8,9 +8,7 @@ else the current folder), looked up when the function is called rather than when
 from pathlib import Path
 import hashlib
 import zipfile
-import sys as _sys
 
-_sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
 ARCHIVE_SHA256 = 'e344f0162cf40983377535774a523206a0a0d42b1e7679884c867f9969d71087'

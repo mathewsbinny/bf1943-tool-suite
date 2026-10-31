@@ -16,8 +16,12 @@ import sys
 
 sys.dont_write_bytecode = True
 SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-fbrb-tool'), os.path.join(SUITE, 'bf1943-apt-tools'),
-                os.path.join(SUITE, 'bf1943-spawn-map')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 GAME = os.environ.get('BF1943_GAME', os.path.join(SUITE, 'bf1943-xenia-kit', 'output', 'title', 'dist', 'xenon'))
 LEVELS = ['wake_island_s', 'guadal_canal', 'iwo_jima_s', 'coral_sea']
 failures = []

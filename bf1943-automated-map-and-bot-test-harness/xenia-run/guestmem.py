@@ -40,14 +40,16 @@ read as research/evidence/bot-interfaces.json gives them (operation-rising-sun).
 import ctypes
 import ctypes.wintypes as wt
 import json
-import os
 import struct
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
-sys.path.insert(0, os.path.join(SUITE, 'bf1943-xenia-kit'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 sys.dont_write_bytecode = True
 import bots  # noqa: E402
 
@@ -438,7 +440,6 @@ def main(argv, guest=None, sleep=time.sleep):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(SUITE, 'core'))
     from bfbc2core import errors
     errors.setup('guestmem', gui=False)
     with errors.guard():

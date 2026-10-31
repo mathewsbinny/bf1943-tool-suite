@@ -16,9 +16,13 @@ import tempfile
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUITE = os.path.dirname(HERE)
 TOOL = os.path.join(HERE, 'fbrb1943.py')
-sys.path[:0] = [HERE, os.path.join(SUITE, 'core')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 import fbrb1943  # noqa: E402
 
 PY = sys.executable

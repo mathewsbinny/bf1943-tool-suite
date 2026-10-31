@@ -16,7 +16,7 @@ The game copy is only read. What the tools make from it goes to the suite's work
 (`BF1943_WORK` sets another).
 
 The suite's shared Python package, `bfbc2core`: the game's data formats, the level loaders and the 3D view
-that the 3D tools are built on. Python 3.10+ with `numpy`; the view also needs `moderngl`, `glfw` and
+that the 3D tools are built on. Python 3.13 (tested; `hashlib.file_digest` needs 3.11 at least) with `numpy`; the view also needs `moderngl`, `glfw` and
 `imgui-bundle`.
 
 | Module | What it does | Checked by |
@@ -41,8 +41,14 @@ that the 3D tools are built on. Python 3.10+ with `numpy`; the view also needs `
 | `pick.py` | the level picker the 3D tools show when started without a level: your BF1943 copy's levels, and whether NavKit has built each one's navigation | the 3D tools when started without a level |
 | `errors.py` | error handling and logs for every tool: a log per tool and day in `%LOCALAPPDATA%\bf1943-tool-suite\logs`, the cause and what to do when something fails, a window for the windowed tools | `tests/test_errors.py` |
 
+`suitepath.py` (beside the package, not in it) is how the suite's scripts find its folders: see its docstring and
+the suite README's "Running the tools". A library module here never changes `sys.path`; `navdata.py` imports the
+little-endian NavKit's tools and `level1943.load` the big-endian one's `levelobjects1943`, which the script puts on
+`sys.path` (`suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)`).
+
 ```python
 import sys; sys.path.insert(0, r'<suite>\core')
+import suitepath; suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 from bfbc2core import game1943, level1943
 game1943.levels()                                 # ['wake_island_s', 'guadal_canal', 'iwo_jima_s', 'coral_sea', 'wake_island_tutorial']
 lvl = level1943.load('wake_island_s')             # from your copy (BF1943_GAME overrides)

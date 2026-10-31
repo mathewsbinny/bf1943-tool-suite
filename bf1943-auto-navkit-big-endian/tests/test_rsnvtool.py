@@ -11,9 +11,13 @@ import tempfile
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.dirname(os.path.dirname(HERE))
 TOOL = os.path.join(os.path.dirname(HERE), 'tools', 'rsnvtool.py')
-sys.path[:0] = [os.path.join(SUITE, 'core'), os.path.join(SUITE, 'core', 'tests')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE, 'core/tests')
 from bfbc2core import rsnv  # noqa: E402
 import test_rsnv  # noqa: E402
 
@@ -84,7 +88,6 @@ if __name__ == '__main__':
     # kept surface at x = 1.2
     import types
     import numpy as np
-    sys.path.insert(0, os.path.dirname(TOOL))
     import rsnvtool
     ys = [0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
     smp = types.SimpleNamespace(pitch=0.2, min_x=0.0, min_z=0.0, nx=10, nz=1, y=np.array(ys, np.float32),

@@ -5,8 +5,6 @@ from pathlib import Path
 import re
 import struct
 
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
 LEAD_TERMS = re.compile(r'kynapse|mapbuilder|pathfind|pathdata|navmesh|bot|AiSystem', re.I)

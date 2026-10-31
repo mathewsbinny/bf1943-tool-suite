@@ -13,13 +13,16 @@ hold stops writing once the match's mailbox is replaced or cleared.
 """
 import contextlib
 import io
-import os
 import struct
 import sys
 
 sys.dont_write_bytecode = True
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 import guestmem as gm  # noqa: E402
 
 bots = gm.bots

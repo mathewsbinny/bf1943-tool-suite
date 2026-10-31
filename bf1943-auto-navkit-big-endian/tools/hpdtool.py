@@ -18,7 +18,12 @@ import sys
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 
 MAGIC = b'Kynogon HPD\0'
 HEADER_WORDS = 36           # u32 words after the magic (0x0C..0x9B)
@@ -311,7 +316,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
     from bfbc2core import errors
     errors.setup('hpdtool', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

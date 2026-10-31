@@ -39,7 +39,6 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
 VERSION = '1.2'   # 1.2 (2026-10-30): float stores, dcbz and VMX128 stores drop the remembered slots they may overwrite

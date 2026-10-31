@@ -10,9 +10,7 @@ import collections
 import csv
 import hashlib
 import struct
-import sys as _sys
 
-_sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
 ROOT = research_root()                  # the research workspace (workspace.py)

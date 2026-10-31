@@ -31,9 +31,12 @@ import tempfile
 import numpy as np
 
 sys.dont_write_bytecode = True
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.dirname(os.path.dirname(HERE))
-sys.path[:0] = [os.path.join(os.path.dirname(HERE), 'tools'), os.path.join(SUITE, 'core')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 import airnav1943 as an  # noqa: E402
 import groundnav1943 as gn  # noqa: E402
 import rsnvgrid1943 as rg  # noqa: E402

@@ -15,13 +15,17 @@ Usage:
                    scores at the 0.8 m sample grid (a 0.2 m run is subsampled)
 """
 import math
-import os
 import sys
 from collections import defaultdict, deque
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 import navsample  # noqa: E402
 
 TERRAIN_SHAPE_VTABLE = 0x1454D14   # shape class of terrain hits (navsample version 2 hit info), build 795745
@@ -876,7 +880,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
     from bfbc2core import errors
     errors.setup('navwalk', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

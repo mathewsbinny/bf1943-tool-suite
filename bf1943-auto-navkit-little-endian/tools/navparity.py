@@ -25,9 +25,12 @@ import sys
 import time
 from collections import Counter, defaultdict
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.dirname(HERE))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
 import navcompare  # noqa: E402
 import navdiff  # noqa: E402
 import ordercheck  # noqa: E402
@@ -68,9 +71,6 @@ def terrain_bounds(root, lv):
     r"""(minX, minZ, maxX, maxZ) of the level's terrain heightfield (work\levels\<lv>\terrain), or None. DICE's console
     path data can reach past it (ONS_MP_002: ground to z -527, the PC terrain ends at -512 - 3,600 m2 and a route
     that do not exist on PC), so the reference is clipped to it: ground and connectivity are measured on PC ground."""
-    core = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'core')
-    if core not in sys.path:
-        sys.path.insert(0, core)
     from bfbc2core import terrain
     folder = os.path.join(root, 'work', 'levels', lv, 'terrain')
     for dirpath, _dirs, files in os.walk(folder):
@@ -127,9 +127,6 @@ def stale_nodes(root, lv, reference, clip=None):
 def ladder_ground(reference, candidate, reference_cells):
     """Ground reached only through ladder links (navdata: ladder edges, ladder areas): its share of the reference's
     ground, and how many of its cells the reference lacks (kept out of 'extra ground')."""
-    core = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'core')
-    if core not in sys.path:
-        sys.path.insert(0, core)
     from bfbc2core import navdata
     import numpy as np
     cand_nav, ref_nav = navdata.load(candidate), navdata.load(reference)
@@ -317,7 +314,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
     from bfbc2core import errors
     errors.setup('navparity', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

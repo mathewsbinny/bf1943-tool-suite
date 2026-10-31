@@ -33,8 +33,12 @@ import time
 
 print = functools.partial(print, flush=True)   # progress shows at once when the output goes to a file
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
 import navbuild  # noqa: E402
 import navparity  # noqa: E402
 import hpdcheck  # noqa: E402
@@ -95,7 +99,6 @@ def inputs(root, lv):
 
 def level_water(root, lv):
     """The level's water mesh (vertices, triangles) for the build, or None (core/bfbc2core/water.py)."""
-    sys.path.insert(0, os.path.join(HERE, '..', '..', 'core'))
     from bfbc2core import level as levelmod
     w = levelmod.water_of(root, lv, log=lambda *a: None)
     return (w.vertices, w.triangles) if w is not None and len(w) else None
@@ -324,7 +327,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
     from bfbc2core import errors
     errors.setup('navregress', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

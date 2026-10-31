@@ -21,18 +21,13 @@ import json
 import math
 import os
 import re
-import sys
 import time
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.dirname(os.path.dirname(HERE))
-sys.path[:0] = [HERE, os.path.join(SUITE, 'core'), os.path.join(SUITE, 'bf1943-spawn-map'), os.path.join(SUITE, 'bf1943-fbrb-tool'),
-                os.path.join(SUITE, 'bf1943-auto-navkit-little-endian', 'tools')]
 import navaudit1943 as A  # noqa: E402
 import navkitjson1943 as nj  # noqa: E402
-import navbuild  # noqa: E402  (this variant's: core navdata puts the little-endian tools first on sys.path)
+import navbuild  # noqa: E402  (this variant's: the script lists suitepath.NAVKIT_BE first)
 import soldier1943  # noqa: E402
 from bfbc2core import game1943, materialmap1943, terrain  # noqa: E402
 

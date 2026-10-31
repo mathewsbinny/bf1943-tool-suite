@@ -32,7 +32,8 @@ A*), not by BFBC2's Kynapse runtime; the evidence is in operation-rising-sun
 Mirrors the BFBC2 suite: one shared core and a folder per tool. `bf1943-converter/` (the native PC conversion) is
 new and not created yet. Besides the tools: `run_tests.py` and `tests/` (the suite's tests), `tools/import_opfor.py`
 (copies from OPFOR), `provenance/` (where every copied file came from, with its hash), `docs/opfor-bfbc2/` (OPFOR's
-own documentation, unchanged) and `work/` (what the tools make; git-ignored).
+own documentation, unchanged), `work/` (what the tools make; git-ignored), `pyproject.toml` (the libraries, the
+package, tool settings) and `.github/workflows/tests.yml` (CI).
 
 Status: **ready** = works on BF1943 data today; **partly** = some parts read BF1943 data, the rest is still BFBC2;
 **not yet** = still the BFBC2 tool, reading BFBC2 / OPFOR data.
@@ -56,16 +57,51 @@ Status: **ready** = works on BF1943 data today; **partly** = some parts read BF1
 | `bf1943-ai-behavior-simulator/`, `bf1943-bot-ai-debugger/`, `bf1943-tactical-map-authoring-tool/` | planned in OPFOR's design; no code | **not yet** (placeholders) | OPFOR placeholders |
 | `bf1943-converter/` | the end-user toolkit: verify the user's copy, convert it to the PC build | not created | new |
 
+## Running the tools
+
+Every tool runs straight from a clone, with no install step: `python -B <folder>\<tool>.py`. They need Python 3.13
+(what the suite and CI run) and the libraries `pyproject.toml` lists: numpy and matplotlib for most tools; moderngl,
+glfw and imgui-bundle for the 3D tools; capstone for the executable tools and the Xenia kit's assembler test; pillow
+for rsnvtool's pictures. `pip install --group ci` (pip 25.1 or later, in the suite folder) installs all of them at the
+versions CI uses.
+
+**How the tools find each other.** The suite's folders are not packages (their names have hyphens, and the two NavKit
+variants have modules of the same names), so a script that imports from another folder starts with the suite's
+bootstrap, the same lines in every one ([core/suitepath.py](core/suitepath.py) has them): under
+`if __name__ == '__main__':` it finds the suite root above the script, puts `core` on `sys.path`, and
+`suitepath.use(...)` adds the shared folders (core, the bundle and APT tools, the spawn map, the STFS reader, the Xenia
+kit, the Xenia run tools, the executable tools) and, first, the NavKit variant(s) the script names, in its order.
+Libraries (core, the tools' importable modules) never change `sys.path`; they import plainly, so what they get is
+decided by the script that was run, never by what happened to be imported first. `tests/test_repo.py` fails on any
+other `sys.path` edit and on a module name shared by two of those folders (the NavKit variants apart).
+
+**Installing (development).** `pip install -e .` puts `core` (`bfbc2core`, `suitepath`) and the shared folders on
+`sys.path` for that environment, so the bootstrap adds nothing for them; a script still chooses its NavKit variant.
+The tools need no install, and CI runs them without one.
+
+**From another project** (operation-rising-sun's investigations): put the suite's `core` on `sys.path`, then
+`import suitepath` and `suitepath.use(...)` with the NavKit variant(s) the script uses, as a tool does.
+
 ## Tests
 
 `python -B run_tests.py <tier>`, grouped by the data a test needs:
 
 | Tier | Needs | Covers |
 |---|---|---|
-| `quick` | nothing (40 tests, one to two minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules in both variants; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
-| `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 19, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace (skipped without one) |
+| `quick` | nothing (69 tests, two to three minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules in both variants; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
+| `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 23, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace, the VMX recorder's checks among them (skipped without one) |
 
 Run `quick` before every commit and `bf1943 --strict` before every push.
+
+**CI** ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the quick tier with `--strict` on every push
+and pull request, on GitHub's `windows-latest` with Python 3.13: it installs the libraries (`pip install --group ci`),
+points `BF1943_GAME` and `BF1943_RESEARCH` at empty folders, builds the C# tools with their `build.bat` (the .NET
+Framework 4 compiler is part of the image) and runs the tools from the checkout, without an install; then it checks
+that the package installs (`pip install -e .`). It has no game copy, no research workspace and no Xenia, and downloads
+nothing but Python libraries: so every quick test runs without them, and a skip fails the run like a failure.
+The tests run in a console with the OEM code page (437), which the Xenia kit's `launch.cmd` assumes: cmd.exe reads a
+batch file in the console's code page, so in a UTF-8 console (65001) a Xenia folder with an accented name fails
+(`tests	est_xeniakit.py` shows it; not fixed yet).
 
 A test whose data is missing is shown as SKIP, and one that skipped some of its checks as `ok*`. The summary counts
 both ("58 of 59 passed, 1 skipped", "..., 1 partly skipped") and lists them under "not fully run" with the reason, so

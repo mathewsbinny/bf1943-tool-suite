@@ -5,15 +5,17 @@ order, and links / route edges / traversals / notes left to navkit apply.
 
   python test_navedits.py
 """
-import os
 import sys
 from types import SimpleNamespace
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'tools'))
-sys.path.insert(0, os.path.join(HERE, '..', '..', 'core'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 import navedits  # noqa: E402
 from bfbc2core import navtune as nt  # noqa: E402
 

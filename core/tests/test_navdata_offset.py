@@ -12,10 +12,14 @@ from types import SimpleNamespace
 import numpy as np
 
 sys.dont_write_bytecode = True
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
 from bfbc2core import navdata  # noqa: E402
-import navdiff  # noqa: E402  (navdata puts its folder on the path)
+import navdiff  # noqa: E402  (the little-endian tools, suitepath.NAVKIT_LE)
 
 failures = []
 

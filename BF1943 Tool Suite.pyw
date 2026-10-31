@@ -18,7 +18,12 @@ from tkinter import filedialog, messagebox, ttk
 
 SUITE = os.path.dirname(os.path.abspath(__file__))
 NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit-big-endian')
-sys.path.insert(0, os.path.join(SUITE, 'core'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 from bfbc2core import csbuild, errors, game1943  # noqa: E402
 
 # library -> what needs it (checked when the window opens)

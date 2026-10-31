@@ -4,10 +4,14 @@ r"""The repository's own rules, checked before anything is pushed (no game data 
 - no co-author or generated-by lines in commit messages (the author is the only author);
 - no build output or caches tracked (.exe, .pyc, __pycache__);
 - a README in every tool folder, a LICENSE at the root;
-- every Python file compiles.
+- every Python file compiles;
+- sys.path is changed only by the suite's bootstrap (core/suitepath.py): no other edit in any Python file, and the
+  bootstrap only where a script runs (under `if __name__ == '__main__':`); the folders it puts on sys.path share no
+  module name, but for the two NavKit variants, which a script chooses between.
 
   python tests\test_repo.py
 """
+import ast
 import os
 import py_compile
 import re
@@ -21,11 +25,63 @@ MAX_BLOB = 1_000_000
 LARGE_ALLOWED = {'bf1943-dbx-tools/tests/fingerprints_795745.txt'}       # SHA-1 hashes only
 ATTRIBUTION = re.compile(r'co-authored-by|generated with \[?claude|noreply@anthropic', re.I)
 TRACKED_NEVER = re.compile(r'(\.exe|\.pyc|\.dll|\.pdb)$|(^|/)__pycache__/', re.I)
+BOOTSTRAP = ("sys.path.insert(0, str(next((p for p in pathlib.Path(__file__).resolve().parents "
+             "if (p / 'core' / 'suitepath.py').is_file())) / 'core'))")
+# files allowed their own sys.path edits: the bootstrap's module, and the VMX language builder, an input of the VMX
+# fingerprint (bf1943-xex-tools/vmx_inputs.py INPUTS), which must stay byte for byte as it is
+PATH_EDITS_ALLOWED = {'core/suitepath.py', 'bf1943-xex-tools/build_vmx_language.py'}
 
 
 def git(*args):
     return subprocess.run(['git', '-C', SUITE, *args], capture_output=True, text=True, encoding='utf-8',
                           errors='replace', check=True).stdout
+
+
+def is_path(node):
+    """sys.path, or sys.path under another name for sys (`import sys as _sys`)."""
+    return (isinstance(node, ast.Attribute) and node.attr == 'path' and isinstance(node.value, ast.Name)
+            and node.value.id in ('sys', '_sys'))
+
+
+def path_edits(tree):
+    """(line, statement) of each change to sys.path that is not the bootstrap where a script runs."""
+    guarded = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'":
+            for stmt in node.body:
+                if isinstance(stmt, ast.Expr) and ast.unparse(stmt) == BOOTSTRAP:
+                    guarded.add(id(stmt.value))
+    found = []
+    for node in ast.walk(tree):
+        changed = None
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and is_path(node.func.value)
+                and node.func.attr in ('insert', 'append', 'extend', 'remove', 'pop', 'clear')):
+            changed = node
+        elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):
+            targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+            if any(is_path(t) or (isinstance(t, ast.Subscript) and is_path(t.value)) for t in targets):
+                changed = node
+        if changed is not None and id(changed) not in guarded:
+            found.append((changed.lineno, ast.unparse(changed)[:100]))
+    return sorted(found)
+
+
+def shared_names():
+    """Module names found in more than one of the bootstrap's folders, the two NavKit variants apart."""
+    import suitepath
+    seen, clashes = {}, []
+    groups = [('shared', [rel]) for rel in suitepath.SHARED] + [('NavKit', suitepath.NAVKIT_BE + suitepath.NAVKIT_LE)]
+    for kind, rels in groups:
+        for rel in rels:
+            folder = suitepath.folder(rel)
+            for n in sorted(os.listdir(folder)):
+                name, ext = os.path.splitext(n)
+                if ext not in ('.py', '.pyw') and not os.path.isfile(os.path.join(folder, n, '__init__.py')):
+                    continue
+                if name in seen and not (kind == 'NavKit' and seen[name][0] == 'NavKit'):
+                    clashes.append(f'{name}: {seen[name][1]} and {rel}')
+                seen.setdefault(name, (kind, rel))
+    return clashes
 
 
 def main(argv):
@@ -75,6 +131,23 @@ def main(argv):
                     broken.append(f'{t}: {str(e).strip().splitlines()[-1]}')
     results.append((f'every Python file compiles ({sum(t.endswith((".py", ".pyw")) for t in tracked)} files)', broken))
 
+    edits = []
+    for t in tracked:
+        if t.endswith(('.py', '.pyw')) and t not in PATH_EDITS_ALLOWED and os.path.isfile(os.path.join(SUITE, t)):
+            try:
+                tree = ast.parse(open(os.path.join(SUITE, t), encoding='utf-8').read())
+            except SyntaxError:
+                continue                                    # reported above
+            edits += [f'{t}:{line}: {what}' for line, what in path_edits(tree)]
+    results.append(('sys.path changed only by the bootstrap (core/suitepath.py), and only where a script runs', edits))
+    results.append(("the bootstrap's folders share no module name (but the two NavKit variants)", shared_names()))
+    import suitepath
+    import tomllib
+    with open(os.path.join(SUITE, 'pyproject.toml'), 'rb') as f:
+        dev_dirs = tomllib.load(f)['tool']['hatch']['build']['targets']['wheel']['dev-mode-dirs']
+    results.append(('an editable install puts the shared folders on sys.path (pyproject dev-mode-dirs = suitepath.SHARED)',
+                    [] if dev_dirs == suitepath.SHARED else [f'pyproject: {dev_dirs}', f'suitepath: {suitepath.SHARED}']))
+
     failed = 0
     for name, problems in results:
         failed += bool(problems)
@@ -86,4 +159,10 @@ def main(argv):
 
 
 if __name__ == '__main__':
+    # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
     sys.exit(main(sys.argv))

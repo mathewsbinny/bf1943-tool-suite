@@ -20,6 +20,13 @@ import sys
 import tempfile
 import time
 
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
+
 sys.dont_write_bytecode = True
 TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.environ.get('BF1943_RESEARCH') or os.path.join(os.path.dirname(os.path.dirname(TOOLS)), 'operation-rising-sun')
@@ -44,8 +51,7 @@ def write(root, rel, text):
 def main():
     if not os.path.isfile(os.path.join(SOURCE, IMAGE)):
         print(f'skip VMX recorder: no checked image at {os.path.join(SOURCE, IMAGE)}')
-        return
-    sys.path.insert(0, TOOLS)
+        sys.exit(0)                                 # the skip line last: the runner shows SKIP
     with tempfile.TemporaryDirectory() as root:
         os.makedirs(os.path.join(root, 'research', 'evidence'))
         os.makedirs(os.path.join(root, 'work', 'xex-analysis'))

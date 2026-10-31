@@ -1,7 +1,8 @@
 r"""Core readers on made-up damaged input (no game data), 2026-10-30 second review: the terrain material map refuses
 a row that ends inside a run and a tile past the end of the file (an IndexError / struct.error before); the height
-field reader refuses a size of 1 (it was read, and height() then indexed outside it); level1943.load puts its tool
-folders on sys.path once, however many levels are loaded (it grew by two per load).
+field reader refuses a size of 1 (it was read, and height() then indexed outside it); level1943.load leaves sys.path
+as it is, however many levels are loaded (it grew by two per load; from 2026-10-31 only the script's bootstrap,
+core/suitepath.py, changes it).
 
   python -B core\tests\test_readers_malformed.py
 """
@@ -11,7 +12,12 @@ import sys
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 from bfbc2core import level1943, materialmap1943, terrain  # noqa: E402
 
 failures = []

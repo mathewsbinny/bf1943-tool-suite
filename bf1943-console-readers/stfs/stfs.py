@@ -262,7 +262,12 @@ def main(argv):
     return 0
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
+    # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
     from bfbc2core import errors
     errors.setup('stfs', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

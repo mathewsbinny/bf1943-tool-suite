@@ -11,8 +11,14 @@ import os
 import sys
 import tempfile
 
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
+
 sys.dont_write_bytecode = True
-TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
 F1, F2 = 0x82100000, 0x82200000
 
@@ -38,7 +44,6 @@ def main():
         os.makedirs(os.path.join(root, 'work'))
         os.makedirs(os.path.join(root, 'research'))
         os.environ['BF1943_RESEARCH'] = root
-        sys.path.insert(0, TOOLS)
         import export_callgraph_strings as E
     cases = [('stfs f1, 0x10(r3)', 52 << 26 | 1 << 21 | 3 << 16 | 0x10, False),
              ('stfd f1, 0x0c(r3) (8 bytes over the slot)', 54 << 26 | 1 << 21 | 3 << 16 | 0x0C, False),

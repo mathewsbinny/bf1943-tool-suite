@@ -5,13 +5,16 @@ gone got that game's entries (asked for radius 99, it got the other copy's 1).
   python -B test_vehicles1943.py
 """
 import gc
-import os
 import sys
 from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 from bfbc2core import vehicles1943  # noqa: E402
 
 failures = []

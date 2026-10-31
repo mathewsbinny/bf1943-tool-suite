@@ -34,18 +34,21 @@ import tempfile
 from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
-HERE = os.path.dirname(os.path.abspath(__file__))
-KIT = os.path.dirname(HERE)
-sys.path[:0] = [KIT, os.path.join(KIT, 'tools')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE)
 import navkit  # noqa: E402
-import navbuild  # noqa: E402  (this variant's, before core navdata puts the little-endian tools first)
+import navbuild  # noqa: E402  (this variant's: suitepath.NAVKIT_BE comes first)
 import detailed1943  # noqa: E402
 import hpdcheck  # noqa: E402
 import jumplinks1943  # noqa: E402
 import levelobjects1943  # noqa: E402
 import navkitjson1943  # noqa: E402
 import navsample  # noqa: E402
-import spawnmap  # noqa: E402  (on the path from jumplinks1943)
+import spawnmap  # noqa: E402
 import routecheck1943  # noqa: E402
 from bfbc2core import game1943  # noqa: E402
 

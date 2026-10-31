@@ -14,7 +14,6 @@ import csv
 import hashlib
 import json
 import struct
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
 FORMAT_SHA256 = 'be26cf69639117985c7c9bd2c7c52d60a6125111039ed1221f1197f3b34eb334'

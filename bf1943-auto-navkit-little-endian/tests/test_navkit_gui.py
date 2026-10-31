@@ -20,6 +20,12 @@ from types import SimpleNamespace
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
 loader = importlib.machinery.SourceFileLoader('navkitGUI', os.path.join(KIT, 'navkitGUI.pyw'))
 spec = importlib.util.spec_from_loader('navkitGUI', loader)
 gui = importlib.util.module_from_spec(spec)

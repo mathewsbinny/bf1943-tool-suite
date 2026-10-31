@@ -12,13 +12,10 @@ operation-rising-sun/research/AGENT_PROGRESS.md, 2026-10-22):
 4. Layout: the list and its selection marker go below the rows, the dev row text moves onto the marker,
    the seven rows are evenly spaced. Same-size PlaceObject patches.
 """
-import os
 import struct
 import sys
 
 sys.dont_write_bytecode = True
-SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.join(SUITE, 'bf1943-apt-tools'), os.path.join(SUITE, 'bf1943-fbrb-tool')]
 from apt import Apt, Rewriter, op
 from fbrb1943 import Bundle
 

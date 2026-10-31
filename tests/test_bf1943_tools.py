@@ -28,7 +28,12 @@ import tempfile
 
 sys.dont_write_bytecode = True
 SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.join(SUITE, 'core')]
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE)
 from bfbc2core import game1943  # noqa: E402
 
 PY = sys.executable
@@ -113,7 +118,6 @@ def fbrb():
         new = os.path.join(d, 'new.bin')
         open(new, 'wb').write(b'replaced')
         r = subprocess.run([PY, '-B', tool, 'replace', b, out, f'{man["entries"][0]["name"]}={new}'], capture_output=True, text=True)
-        sys.path.insert(0, os.path.join(SUITE, 'bf1943-fbrb-tool'))
         from fbrb1943 import Bundle
         check(r.returncode == 0 and Bundle(open(out, 'rb').read()).data(man['entries'][0]['name']) == b'replaced'
               and os.path.isfile(src), 'replace: the copy holds the new entry')

@@ -16,15 +16,12 @@ BF1943's categories: 'base' and 'flag' (capture points: a base cannot change tea
 Level.opfor holds the game folder (the field's name is the BFBC2 loader's). Nothing is unpacked or written.
 """
 import os
-import sys
 
 import numpy as np
 
 from . import dbx, game1943, terrain, water
 from .level import CATEGORIES, Entity, Level, Mesh, assign_teams, blueprint_of, category_of, shapes_of, transform_of
 
-NAVKIT_TOOLS = os.path.join(game1943.SUITE, 'bf1943-auto-navkit-big-endian', 'tools')
-SPAWN_MAP = os.path.join(game1943.SUITE, 'bf1943-spawn-map')
 CATEGORIES_1943 = [
     ('end-of-round spawn', r'\.EndOfRoundSoldierSpawnEntityData$'),
     ('dmz', r'\.DmzEntityData$'),
@@ -42,9 +39,7 @@ def category_1943(t):
 
 
 def load(level, game=None, terrain_stride=2, log=print):
-    # each folder once (2026-10-30 second review: every load put both in front again, so sys.path grew per level)
-    sys.path[:0] = [p for p in (NAVKIT_TOOLS, SPAWN_MAP) if p not in sys.path]
-    import levelobjects1943 as lo
+    import levelobjects1943 as lo           # the big-endian NavKit's: on sys.path from the script (suitepath.NAVKIT_BE)
     game = game1943.find_game(game)
     lv = level.replace('\\', '/').split('/')[-1].lower()
     g = game1943.Game(game, lv)

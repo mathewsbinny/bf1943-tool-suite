@@ -6,10 +6,8 @@ over from an earlier, partial run).
   python -B vmx_inputs.py            prints the fingerprint of the current inputs
 """
 import hashlib
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace import research_root  # noqa: E402
 
 HERE = Path(__file__).resolve().parent

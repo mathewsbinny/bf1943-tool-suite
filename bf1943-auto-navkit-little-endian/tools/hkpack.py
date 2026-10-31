@@ -11,7 +11,6 @@ Usage:
   hkpack.py classes <file>              object counts per class
   hkpack.py dump <file> <class> [n]     decoded fields of the first n objects of a class
 """
-import os
 import struct
 import sys
 from collections import Counter
@@ -230,7 +229,12 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
+    # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
     from bfbc2core import errors
     errors.setup('hkpack', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

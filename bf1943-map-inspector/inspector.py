@@ -10,12 +10,15 @@ pans, the wheel zooms; F switches to fly mode (hold the right button, W A S D, Q
 M switches measuring on and off: clicks then add points (distance, height difference); Esc clears them.
 The selection's links are drawn over the scene: yellow to what it references, cyan from what references it.
 """
-import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'core'))
-if __name__ == '__main__':                      # the log and error reports start before the heavy imports,
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_BE)
+    # the log and error reports start before the heavy imports,
     from bfbc2core import errors                 # so a missing library is reported too
     errors.setup('map-inspector', gui='--screenshot' not in sys.argv)
 

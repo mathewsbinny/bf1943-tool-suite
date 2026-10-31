@@ -16,6 +16,12 @@ import struct
 import sys
 import tempfile
 import time
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 
 sys.dont_write_bytecode = True
 SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +36,6 @@ def check(ok, what):
 
 def bundle(entries):
     """A stored FbRB v2 bundle of [(name, bytes)] (fbrb1943.py's layout)."""
-    sys.path.insert(0, os.path.join(SUITE, 'bf1943-fbrb-tool'))
     import fbrb1943
     strings, offs = b'', {}
     for s in [n for n, _ in entries] + ['RawFileAsset']:

@@ -28,7 +28,7 @@ adapted to BF1943 are not kept (a tool gets its tests when it is adapted). Tests
           the bundle tool's command line, NavKit's prepare step, the hub, and the
           3D tools (the Navigation Studio when a Wake Island build exists), the enclosure probe on Wake Island's
           samples, the RSNV export of your builds (skipped without a Wake Island build), the executable tools from a
-          research workspace (skipped without one)
+          research workspace (skipped without one; the VMX recorder's checks too: they copy its checked image)
 
 --only <part of a name> runs the matching tests; --list lists them without running.
 Run `quick` before every commit and `bf1943 --strict` before every push.
@@ -73,7 +73,6 @@ def tests():
         ('executable tools: Xenon vector p-code generator', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_vector_semantics.py')]),
         ('executable tools: call graph forgets overwritten stores', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_callgraph_memory.py')]),
         ('executable tools: Ghidra mapping judged by its result', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_map_project.py')]),
-        ('executable tools: VMX recorder checks what the fingerprint misses', 'quick', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_record_vmx.py')]),
         ('Xenia UDP join probe never holds the server port', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_udp_join_probe.py')]),
         ('Xenia probe launcher on a made-up build', 'quick', [PY, os.path.join(SUITE, 'bf1943-automated-map-and-bot-test-harness', 'xenia-run', 'tests', 'test_run_xenia_probe.py')]),
         ('Xenia kit: patch file, port edit, Xenia fix', 'quick', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py')]),
@@ -123,6 +122,7 @@ def tests():
         ('Xenia kit: full build from your BF1943 package', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_xeniakit.py'), '--game']),
         ('Xenia kit: bots code against the decoded BF1943 image', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xenia-kit', 'tests', 'test_bots.py'), '--image']),
         ('executable tools: lis pairs end when the register is written', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_xexrefs.py')]),
+        ('executable tools: VMX recorder checks what the fingerprint misses', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_record_vmx.py')]),
         ('executable tools: pinned outputs written byte for byte', 'bf1943', [PY, os.path.join(SUITE, 'bf1943-xex-tools', 'tests', 'test_output_bytes.py')]),
         ('BF1943 bundles: read and rebuild (fbrb1943)', 'bf1943', [PY, data, 'bundles']),
         ('BF1943 DBX: every partition parses', 'bf1943', [PY, data, 'dbx']),
@@ -213,7 +213,12 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'core'))
+    # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
     from bfbc2core import errors
     errors.setup('run-tests', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

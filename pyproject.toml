@@ -1,0 +1,73 @@
+# The suite's packaging and tool settings.
+#
+# No install is needed to run the tools: `python -B <tool>.py` from a clone works, each script finding the suite's
+# folders through its bootstrap (core/suitepath.py; README "Running the tools"). An install is for development:
+#
+#   pip install -e .              core (bfbc2core, suitepath) and the shared tool folders on sys.path (an editable
+#                                 install's .pth file), so the bootstrap adds nothing for them; the NavKit variants
+#                                 are still chosen by each script
+#   pip install --group ci        only the libraries, as CI installs them (pinned: the versions this PC runs)
+#
+# A wheel (`pip install .`) holds the package bfbc2core only (suitepath finds the suite's folders from where it lies,
+# so it is used from a clone). The tools stay in the clone.
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bf1943-tool-suite"
+version = "0.1.0"
+description = "Tools for converting, inspecting and building AI data for Battlefield 1943 (XBLA), for the user's own copy"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"          # the version the suite is tested on (CI too); hashlib.file_digest needs 3.11 at least
+classifiers = ["Operating System :: Microsoft :: Windows", "Private :: Do Not Upload"]
+# every tool: numpy; NavKit's builder (navedits) and its views: matplotlib
+dependencies = ["numpy", "matplotlib"]
+
+[project.optional-dependencies]
+viewer = ["moderngl", "glfw", "imgui-bundle"]       # the 3D tools (Map Inspector, Navigation Studio: core viewer.py)
+xex = ["capstone"]                                  # the executable tools' disassembler, the Xenia kit's assembler test
+images = ["pillow"]                                 # rsnvtool's pictures
+all = ["bf1943-tool-suite[viewer,xex,images]"]
+
+[project.urls]
+Repository = "https://github.com/mathewsbinny/bf1943-tool-suite"
+
+[dependency-groups]
+# what CI installs (`pip install --group ci`): every library the tests import, at the versions this PC runs
+ci = [
+    "numpy==2.5.4",
+    "matplotlib==3.11.2",
+    "moderngl==5.13.0",
+    "glfw==2.11.0",
+    "imgui-bundle==1.92.900",
+    "capstone==5.0.9",
+    "pillow==12.3.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["core/bfbc2core"]
+# an editable install puts these folders on sys.path (suitepath.SHARED; tests/test_repo.py keeps the two lists equal)
+dev-mode-dirs = [
+    "core",
+    "bf1943-fbrb-tool",
+    "bf1943-apt-tools",
+    "bf1943-spawn-map",
+    "bf1943-console-readers/stfs",
+    "bf1943-xenia-kit",
+    "bf1943-automated-map-and-bot-test-harness/xenia-run",
+    "bf1943-xex-tools",
+]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["core", "pyproject.toml", "README.md", "LICENSE"]
+
+# Settings of the checks that come in a later phase (lint, tests through pytest, coverage); empty until then.
+[tool.ruff]
+
+[tool.pytest.ini_options]
+
+[tool.coverage.run]

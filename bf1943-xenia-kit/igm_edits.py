@@ -15,13 +15,10 @@ frontline_without_leaderboards(): the in-game menu FRONTLINE REPORT without its 
 no_gamer_card(): no SEE GAMER CARD button on My Squad, the scoreboard or the friends list.
 force_team(): experiment only; requests one team every time the deploy screen opens.
 """
-import os
 import struct
 import sys
 
 sys.dont_write_bytecode = True
-SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.join(SUITE, 'bf1943-apt-tools'), os.path.join(SUITE, 'bf1943-fbrb-tool')]
 from apt import Apt, Rewriter, op, be32
 from fbrb1943 import Bundle
 

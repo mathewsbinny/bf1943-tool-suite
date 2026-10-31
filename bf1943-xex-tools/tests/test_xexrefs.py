@@ -12,6 +12,13 @@ gone, and the zero-base rule changes no image reference (54,836 references at 21
 import os
 import sys
 
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
+
 sys.dont_write_bytecode = True
 TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.environ.get('BF1943_RESEARCH') or os.path.join(os.path.dirname(os.path.dirname(TOOLS)), 'operation-rising-sun')
@@ -43,7 +50,6 @@ def main():
         print(f'skip xexrefs: no research workspace at {SOURCE}')
         return
     os.environ['BF1943_RESEARCH'] = SOURCE
-    sys.path.insert(0, TOOLS)
     import xexrefs as X
     real_word, real_functions = X.word, X.functions
     hi = 0x8200                                  # r11 = 0x82000000: + 0x10 is in the image

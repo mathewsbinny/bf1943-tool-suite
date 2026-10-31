@@ -15,7 +15,6 @@ data in work\\navkit\\common\\); a level that is not prepared yet is prepared on
 import glob
 import os
 import re
-import sys
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -23,11 +22,6 @@ import numpy as np
 
 from . import dbx, terrain, water
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
-NAVKIT = os.path.join(SUITE, 'bf1943-auto-navkit-little-endian')
-sys.path.insert(0, NAVKIT)
-sys.path.insert(0, os.path.join(NAVKIT, 'tools'))
 
 # entity categories by type (DESIGN.md open question 6)
 CATEGORIES = [

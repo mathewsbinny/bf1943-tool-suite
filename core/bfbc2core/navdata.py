@@ -29,8 +29,13 @@ from typing import List
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', '..', 'bf1943-auto-navkit-little-endian', 'tools'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
+# the little-endian NavKit's tools: the script that was run puts them on sys.path (suitepath.NAVKIT_LE)
 import hpdtool  # noqa: E402
 import kymesh  # noqa: E402
 import navdiff  # noqa: E402

@@ -19,10 +19,12 @@ from collections import defaultdict
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(SUITE, 'core'))
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use(suitepath.NAVKIT_LE)
 import navdiff  # noqa: E402
 import navparity  # noqa: E402
 
@@ -230,7 +232,6 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'core'))
     from bfbc2core import errors
     errors.setup('navwater', gui=False)       # a log; an unexpected error explained in words (exit code 1)
     with errors.guard():

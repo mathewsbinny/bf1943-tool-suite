@@ -1,0 +1,70 @@
+# The quick tier on every push and pull request, on Windows (the suite uses msvcrt locks, PowerShell and the
+# .NET Framework C# compiler). CI has no game copy, no research workspace and no Xenia, and downloads none: only
+# Python libraries from PyPI. The tools run from the checkout without an install, as end users run them; the
+# package install is checked last, apart.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quick:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONIOENCODING: utf-8
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # tests/test_repo.py reads the whole history (no game files or large blobs, no co-author lines, one author);
+          # a pull request is checked out at its own head, not at GitHub's merge commit
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'          # this PC's (3.13.15)
+
+      - name: Install the libraries (pyproject.toml dependency group "ci")
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group ci
+          python -m pip list
+
+      - name: No game copy, no research workspace
+        # empty folders: a test that needs either skips with its reason, and --strict below fails on any skip
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\no-game", "$env:RUNNER_TEMP\no-research" | Out-Null
+          "BF1943_GAME=$env:RUNNER_TEMP\no-game" >> $env:GITHUB_ENV
+          "BF1943_RESEARCH=$env:RUNNER_TEMP\no-research" >> $env:GITHUB_ENV
+
+      - name: Build the C# tools (build.bat, the .NET Framework 4 compiler that ships with Windows)
+        run: |
+          $csc = 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe'
+          if (-not (Test-Path $csc)) { throw "C# compiler not found: $csc" }
+          cmd /c bf1943-dbx-tools\build.bat
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmd /c bf1943-diff-workbench\level-diff\build.bat
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Quick tier (strict)
+        # in a console with Windows' default OEM code page (437), as launch.cmd assumes: cmd.exe reads a batch file in
+        # the console's code page, and the Xenia kit writes launch.cmd in the OEM one (a UTF-8 console, 65001, fails
+        # its accented-path test; see the README's CI notes)
+        shell: cmd
+        run: chcp 437 >nul & python -B run_tests.py quick --strict
+
+      - name: The package installs, and an install changes nothing for the tools
+        # after the tests, so they ran without it; hatchling comes from PyPI
+        run: |
+          python -m pip install -e . --no-deps
+          python -B -c "import bfbc2core, suitepath, fbrb1943, apt, spawnmap, stfs, bots, guestmem, workspace; print('imports ok')"
+          python -B tests/test_cli_errors.py
