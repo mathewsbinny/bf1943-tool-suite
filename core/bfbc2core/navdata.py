@@ -213,11 +213,33 @@ def load(path, heightfield=None, cache_dir=None, y_offset=Y_OFFSET):
     return _load(path, heightfield, None, y_offset)
 
 
+AREA_EXTENT = 128.0                         # m: an area lies in one tile of its 100 m sector (KYNAPSE_SPEC.md); the
+                                            # largest in the four BF1943 builds spans 41.6 m
+
+
+def _check_area(path, sector, n, a):
+    """ValueError unless the area's boundary points (navdiff.segments: outlines, portals, border portals) are finite
+    and span at most AREA_EXTENT on x and z. 2026-10-31 fuzzing: an infinite point raised OverflowError in
+    navdiff.area_cells; review: one 1e30 m away made it sample every 0.8 m of the box between, without end."""
+    pts = ([q for line in a.outline for q in line] + [q for p in a.portals for q in (p.p0, p.p1)]
+           + [q for b in a.border_portals for q in (b.p0, b.p1)])
+    if not pts:
+        return
+    v = np.asarray(pts, dtype=np.float64)
+    if not np.isfinite(v).all():
+        raise ValueError(f'{path}: sector {sector:#06x} area {n} has a boundary point that is not a finite number')
+    span = max(float(np.ptp(v[:, 0])), float(np.ptp(v[:, 2])))
+    if span > AREA_EXTENT:
+        raise ValueError(f'{path}: sector {sector:#06x} area {n} spans {span:.1f} m, more than a sector '
+                         f'({AREA_EXTENT:g} m at most)')
+
+
 def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
     f = hpdtool.parse(open(path, 'rb').read())
     areas = []
     for s in f.sectors:
         for n, a in enumerate(kymesh.parse_mesh(s.mesh).areas):
+            _check_area(path, s.id, n, a)
             areas.append(NavArea(s.id, n, (a.tile_x, a.tile_z), a.layer, a.pitch, a.min_y, a.max_y,
                                  [np.asarray(l, dtype=np.float32) for l in a.outline if len(l) >= 2],
                                  [(np.asarray(p.p0), np.asarray(p.p1), p.target) for p in a.portals],
@@ -231,6 +253,10 @@ def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
     index, pos, sec, edges, costs = {}, [], [], [], []
     for s in f.sectors:
         local = []
+        n = len(s.nodes)
+        for e in s.edges:                   # 2026-10-31 fuzzing: an IndexError before
+            if e.src >= n or e.dst >= n:
+                raise ValueError(f'{path}: sector {s.id:#06x} has an edge {e.src} -> {e.dst} past its {n} nodes')
         for nd in s.nodes:
             if nd.id not in index:
                 index[nd.id] = len(pos)

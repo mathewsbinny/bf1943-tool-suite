@@ -58,12 +58,19 @@ sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for ev
 
 def load_samples(path):
     """A navsample version-1 file (navsample1943's output) as navsample.Samples, read with numpy: the same arrays
-    navsample.load gives (normals / 127 as float32), in a fraction of its time and memory."""
+    navsample.load gives (normals / 127 as float32), in a fraction of its time and memory; as it does, an interrupted
+    run keeps its finished columns. ValueError for a file that is not one (2026-10-31 fuzzing: struct.error on a cut
+    header, a 2^31-column header that made tables of 16 GiB and more; review: an IndexError where a run stopped
+    inside a column's records: navsample.load keeps the finished columns there, this read past the end)."""
     data = open(path, 'rb').read()
+    if len(data) < navsample.HEADER.size:
+        raise ValueError(f'{path}: not a version-1 navsample file ({len(data)} bytes, shorter than its header)')
     magic, version, pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_b, cap_t, ray_r, _ = \
         navsample.HEADER.unpack_from(data, 0)
     if magic != b'ONS1' or version != 1:
         raise ValueError(f'{path}: not a version-1 navsample file')
+    if nx < 1 or nz < 1 or nx * nz > navsample.MAX_COLUMNS:
+        raise ValueError(f'{path}: a grid of {nx} x {nz} columns (at least 1 x 1, at most {navsample.MAX_COLUMNS})')
     cols = nx * nz
     raw = np.frombuffer(data, np.uint8)
     pos = navsample.HEADER.size
@@ -75,6 +82,9 @@ def load_samples(path):
         colpos[c], counts[c] = pos, n
         pos += 1 + 8 * n
         c += 1
+    if pos > len(data):                           # the run stopped inside the last column's records: as navsample.load,
+        c -= 1                                    # keep the finished columns only
+        pos = int(colpos[c])
     counts[c:] = 0
     colpos[c:] = pos
     start = np.zeros(cols + 1, np.int64)

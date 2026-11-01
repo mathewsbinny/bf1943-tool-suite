@@ -54,17 +54,35 @@ def gzip_member(data, template_header):
     return template_header + c.compress(data) + c.flush() + struct.pack('<II', zlib.crc32(data), len(data) & 0xFFFFFFFF)
 
 
+def gunzip(data, what):
+    """gzip.decompress, its errors as ValueError (a bundle cut short or damaged: 2026-10-31 fuzzing found BadGzipFile,
+    EOFError and zlib.error passing through Bundle)."""
+    try:
+        return gzip.decompress(data)
+    except (OSError, EOFError, zlib.error) as e:
+        raise ValueError(f'damaged bundle: its {what} is not whole gzip data ({type(e).__name__}: {e})') from None
+
+
 class Bundle:
+    """A bundle's directory, entries and payload. ValueError for anything but a whole bundle in the layout this
+    reader knows (README; game1943 raises BundleError for a level bundle it refuses)."""
+
     def __init__(self, raw):
         if raw[:4] != b'FbRB':
             raise ValueError('not an FbRB bundle')
+        if len(raw) < 8:                    # 2026-10-31 fuzzing: struct.error on a cut header
+            raise ValueError(f'damaged bundle: {len(raw)} bytes, cut inside its 8-byte header')
         cut = struct.unpack_from('>I', raw, 4)[0]
+        if 8 + cut > len(raw):
+            raise ValueError(f'damaged bundle: a directory of {cut} bytes runs past the end of the file ({len(raw)} bytes)')
         self.raw, self.dir_header = raw, raw[8:18]
-        self.directory = gzip.decompress(raw[8:8 + cut])
+        self.directory = gunzip(raw[8:8 + cut], 'directory')
         d = self.directory
-        if struct.unpack_from('>I', d, 0)[0] != 2:
+        if len(d) < 12 or struct.unpack_from('>I', d, 0)[0] != 2:
             raise ValueError('unsupported directory version')
         strlen = struct.unpack_from('>I', d, 4)[0]
+        if 12 + strlen > len(d):            # 2026-10-31 fuzzing: struct.error
+            raise ValueError(f'damaged bundle: a string table of {strlen} bytes runs past its directory')
         self.strings_at, count = 8, struct.unpack_from('>I', d, 8 + strlen)[0]
         self.entries_at = 12 + strlen
         self.tail_at = self.entries_at + 24 * count
@@ -73,7 +91,7 @@ class Bundle:
         self.compressed = bool(d[self.tail_at])
         body = raw[8 + cut:]
         self.payload_header = body[:10] if self.compressed else None
-        self.payload = gzip.decompress(body) if self.compressed else body
+        self.payload = gunzip(body, 'payload') if self.compressed else body
         if struct.unpack_from('>I', d, self.tail_at + 1)[0] != len(self.payload):
             raise ValueError('payload size differs from the directory')
         self.entries = []
@@ -89,8 +107,16 @@ class Bundle:
             raise ValueError('entries do not cover the payload')
 
     def cstr(self, o):
+        """The string at offset o of the directory's string table. ValueError unless it ends inside the table and is
+        ASCII (2026-10-31 review: an offset past the table read a 'name' out of the entries after it)."""
         d = self.directory
-        return d[8 + o:d.index(0, 8 + o)].decode('ascii')
+        end = d.find(0, 8 + o, self.entries_at - 4)
+        if end < 0:
+            raise ValueError(f'damaged bundle: a name at {o} of the string table does not end inside it')
+        try:
+            return d[8 + o:end].decode('ascii')
+        except UnicodeDecodeError:
+            raise ValueError(f'damaged bundle: the name at {o} of the string table is not ASCII') from None
 
     def data(self, name):
         e = next(e for e in self.entries if e['name'] == name)

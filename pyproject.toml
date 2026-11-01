@@ -130,3 +130,7 @@ include_namespace_packages = true   # the suite's folders are not packages: thei
 omit = ["*/tests/*", "*/conftest.py"]   # the tools and libraries, not the tests
 skip_empty = true
 precision = 1
+# the quick tier's threshold: `coverage report` exits 2 below it, and CI's coverage job fails. A ratchet: it only
+# goes up (tests/test_repo.py checks every commit of this file); README "Coverage" says how to raise it.
+# 2026-10-31: quick tier 83.2 % (80.5 % without the parsers' fuzz tests)
+fail_under = 80

@@ -9,7 +9,9 @@ r"""The repository's own rules, checked before anything is pushed (no game data 
   bootstrap only where a script runs (under `if __name__ == '__main__':`); the folders it puts on sys.path share no
   module name, the two NavKit variants included (their shared modules are one copy in bf1943-auto-navkit-common
   since 2026-10-31), so the order a script names them in changes nothing it imports;
-- the lint (ruff) leaves out exactly the VMX fingerprint's Python inputs, which are never edited.
+- the lint (ruff) leaves out exactly the VMX fingerprint's Python inputs, which are never edited;
+- the coverage threshold (pyproject.toml [tool.coverage.report] fail_under) never goes down: in no commit of the
+  history (unless its message gives a "Coverage-threshold-lowered: <reason>" line) and not in the working copy.
 
   python tests\test_repo.py
 """
@@ -25,6 +27,7 @@ SUITE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 GAME_TYPES = re.compile(r'\.(dbx|res|fbrb|hpd|sb|raw|bik|fsb|fev|dds|tga|hkx)$', re.I)
 MAX_BLOB = 1_000_000
 LARGE_ALLOWED = {'bf1943-dbx-tools/tests/fingerprints_795745.txt'}       # SHA-1 hashes only
+LOWERED = re.compile(r'^Coverage-threshold-lowered: \S', re.M)     # a commit allowed to lower fail_under (its reason)
 ATTRIBUTION = re.compile(r'co-authored-by|generated with \[?claude|noreply@anthropic', re.I)
 TRACKED_NEVER = re.compile(r'(\.exe|\.pyc|\.dll|\.pdb)$|(^|/)__pycache__/', re.I)
 BOOTSTRAP = ("sys.path.insert(0, str(next((p for p in pathlib.Path(__file__).resolve().parents "
@@ -83,6 +86,41 @@ def shared_names():
                 clashes.append(f'{name}: {seen[name]} and {rel}')
             seen.setdefault(name, rel)
     return clashes
+
+
+def fail_under(text):
+    """pyproject.toml's [tool.coverage.report] fail_under (0 when it has none), from the file's text."""
+    import tomllib
+    return float(tomllib.loads(text).get('tool', {}).get('coverage', {}).get('report', {}).get('fail_under', 0))
+
+
+def coverage_ratchet():
+    """(check, problems): the coverage threshold only goes up. Each commit that changed pyproject.toml (oldest first,
+    the whole history: CI checks it out whole), then the working copy: a fail_under below the one before it is a
+    problem, so a lowered threshold fails whether it is committed or not (README "Coverage"). The one exception: a
+    commit whose message has a line "Coverage-threshold-lowered: <reason>" may lower it (a well-tested tool removed);
+    the working copy never may."""
+    log = git('log', '--reverse', '--format=%H%x00%B%x01', '--', 'pyproject.toml').split('\x01')
+    commits = [entry.strip('\n').split('\x00', 1) for entry in log if '\x00' in entry]
+    versions = [(sha[:10], git('show', f'{sha}:pyproject.toml'), bool(LOWERED.search(message)))
+                for sha, message in commits]
+    with open(os.path.join(SUITE, 'pyproject.toml'), encoding='utf-8', newline='') as f:
+        working = f.read()
+    if not versions or working != versions[-1][1]:      # an unchanged working copy is its last commit (reported once)
+        versions.append(('working copy', working, False))
+    problems, best, since = [], 0.0, None
+    for name, text, lowered in versions:
+        try:
+            value = fail_under(text)
+        except (ValueError, TypeError) as e:            # tomllib.TOMLDecodeError is a ValueError
+            problems.append(f'{name}: pyproject.toml does not read ({e})')
+            continue
+        if value < best and not lowered:
+            problems.append(f'{name}: fail_under {value:g} is below {best:g} (set in {since}); raise coverage instead')
+        elif value > best or lowered:
+            best, since = value, name
+    return (f'the coverage threshold only goes up (pyproject [tool.coverage.report] fail_under, now {best:g})',
+            problems)
 
 
 def main(argv):
@@ -155,6 +193,8 @@ def main(argv):
     results.append(("the lint skips the VMX fingerprint's Python inputs, and only those (pyproject [tool.ruff] "
                     'extend-exclude = vmx_inputs.INPUTS .py files, besides work and output)',
                     sorted(vmx_py ^ (lint_skips - {'work', 'output'}))))
+
+    results.append(coverage_ratchet())
 
     failed = 0
     for name, problems in results:

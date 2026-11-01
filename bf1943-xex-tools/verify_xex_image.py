@@ -35,15 +35,28 @@ def sha1(data):
     return hashlib.sha1(data).digest()
 
 
+def read(data, offset, fmt, what):
+    """struct.unpack_from(fmt, data, offset); ValueError naming what when it lies outside the data (2026-10-31
+    fuzzing: struct.error before, and a slice past the end read short)."""
+    size = struct.calcsize(fmt)
+    if offset < 0 or offset + size > len(data):
+        raise ValueError(f'damaged file: {what} ({size} bytes at {offset:#x}) lies outside its {len(data)} bytes')
+    return struct.unpack_from(fmt, data, offset)
+
+
 def security_info(xex):
-    magic, flags, pe_offset, _, security_offset, optional_count = struct.unpack_from('>4sIIIII', xex, 0)
+    """The XEX2 security info: sizes, flags, load address, image digest and page descriptors. ValueError for a file
+    that is not an XEX2 or whose security info lies outside it."""
+    magic, flags, pe_offset, _, security_offset, optional_count = read(xex, 0, '>4sIIIII', 'the XEX header')
     if magic != b'XEX2':
-        raise SystemExit('not an XEX2 file')
-    header_size, image_size = struct.unpack_from('>II', xex, security_offset)
+        raise ValueError('not an XEX2 file')
+    header_size, image_size = read(xex, security_offset, '>II', 'the security info')
     info = security_offset + 8 + 256                   # RSA signature (256 bytes) follows the two sizes
-    info_size, image_flags, load_address = struct.unpack_from('>III', xex, info)
+    info_size, image_flags, load_address = read(xex, info, '>III', 'the signed image info')
+    read(xex, info + 12, '20s', 'the image digest')
     image_digest = xex[info + 12:info + 32]
-    count = struct.unpack_from('>I', xex, security_offset + 0x180)[0]
+    count = read(xex, security_offset + 0x180, '>I', 'the page descriptor count')[0]
+    read(xex, security_offset + 0x184, f'{24 * count}s', f'{count} page descriptors')
     descriptors = []
     for i in range(count):
         at = security_offset + 0x184 + 24 * i
@@ -56,14 +69,18 @@ def security_info(xex):
 
 
 def pe_layout(image):
-    pe = struct.unpack_from('<I', image, 60)[0]
-    count = struct.unpack_from('<H', image, pe + 6)[0]
-    optional_size = struct.unpack_from('<H', image, pe + 20)[0]
+    """The PE headers of the decoded image: base, sizes, data directories and sections. ValueError for headers
+    that lie outside the image."""
+    pe = read(image, 60, '<I', 'the PE header offset')[0]
+    count = read(image, pe + 6, '<H', 'the section count')[0]
+    optional_size = read(image, pe + 20, '<H', 'the optional header size')[0]
     optional = pe + 24
-    image_base, = struct.unpack_from('<I', image, optional + 28)
-    size_of_image, size_of_headers = struct.unpack_from('<II', image, optional + 56)
-    directory_count = struct.unpack_from('<I', image, optional + 92)[0]
+    image_base, = read(image, optional + 28, '<I', 'the image base')
+    size_of_image, size_of_headers = read(image, optional + 56, '<II', 'the image sizes')
+    directory_count = read(image, optional + 92, '<I', 'the data directory count')[0]
+    read(image, optional + 96, f'{8 * directory_count}s', f'{directory_count} data directories')
     directories = [struct.unpack_from('<II', image, optional + 96 + 8 * i) for i in range(directory_count)]
+    read(image, optional + optional_size, f'{40 * count}s', f'{count} section headers')
     sections = []
     for i in range(count):
         at = optional + optional_size + 40 * i
@@ -98,7 +115,10 @@ def main():
     image = image_path.read_bytes()
     if sha256(image) != IMAGE_SHA256:
         raise SystemExit('unexpected decoded image; decode the extracted XEX first (decode.ps1)')
-    info = security_info(xex)
+    try:
+        info = security_info(xex)
+    except ValueError as e:                             # in words, as before (a SystemExit with the reason)
+        raise SystemExit(f'{xex_path}: {e}') from None
     descriptors = info['descriptors']
     if info['image_flags'] & 0x10000000:
         raise SystemExit('4 KiB-page image: not handled here')

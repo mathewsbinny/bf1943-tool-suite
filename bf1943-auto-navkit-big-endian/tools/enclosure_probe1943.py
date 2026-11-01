@@ -76,8 +76,9 @@ def main(argv):
     radius_cells = int(radius / s.pitch)
 
     def surfaces(i, j):
-        """[(surface, height, blocked)] of column (i, j)."""
-        return [(k, float(s.y[k]), bool(s.flags[k] & 1)) for k in s.column(i, j)]
+        """[(surface, height, blocked)] of column (i, j); none off the sample grid (2026-10-31: column -1 read the
+        previous row's last column, and past the last row raised IndexError)."""
+        return [(k, float(s.y[k]), bool(s.flags[k] & 1)) for k in column(s, i, j)]
 
     # (height difference, surface, height) of open surfaces near the point's height
     near = [(abs(sy - y), k, sy) for k, sy, blocked in surfaces(i0, j0) if not blocked and abs(sy - y) < 0.6]
@@ -92,7 +93,7 @@ def main(argv):
         return 1
     _, k0, y0 = min(near)
     start_i, start_j = next((i, j) for i in range(i0 - 5, i0 + 6) for j in range(j0 - 5, j0 + 6)
-                            if k0 in s.column(i, j))
+                            if k0 in column(s, i, j))
     seen = {k0}
     queue = deque([(start_i, start_j, y0)])
     cells, edge = [], {}                             # the fill's (i, j, y); its blocked edge: surface -> (i, j, y)
@@ -161,6 +162,11 @@ def main(argv):
     return 0
 
 
+def column(s, i, j):
+    """The surfaces of column (i, j), none off the sample grid."""
+    return s.column(i, j) if 0 <= i < s.nx and 0 <= j < s.nz else range(0)
+
+
 def draw(png, s, i0, j0, radius_cells, point, cells, edge, boxes):
     import matplotlib
     matplotlib.use('Agg')
@@ -172,7 +178,7 @@ def draw(png, s, i0, j0, radius_cells, point, cells, edge, boxes):
         for row in range(size):
             # (height difference, blocked) of the column's surfaces within 1 m of the point's height
             near = [(abs(float(s.y[k]) - point[1]), s.flags[k] & 1)
-                    for k in s.column(i0 - radius_cells + col, j0 - radius_cells + row)
+                    for k in column(s, i0 - radius_cells + col, j0 - radius_cells + row)
                     if abs(float(s.y[k]) - point[1]) < 1.0]
             if near:
                 img[row, col] = 2 if min(near)[1] else 1

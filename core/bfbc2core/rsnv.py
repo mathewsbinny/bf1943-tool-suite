@@ -716,8 +716,8 @@ def load(src):
         o, c, _ = sec('META')
         try:
             w.meta = json.loads(raw[o:o + c].decode('utf-8'))
-        except ValueError:                          # provenance only: the runtime does not read META
-            w.meta = {'unreadable META': True}
+        except (ValueError, RecursionError):        # provenance only: the runtime does not read META (2026-10-31:
+            w.meta = {'unreadable META': True}      # JSON nested past Python's recursion limit raised RecursionError)
         if not isinstance(w.meta, dict):            # 2026-10-30 second review: JSON null left meta None, and readers
             w.meta = {'unreadable META': True}      # calling meta.get() failed; rsnav ignores META, so no refusal
     problems = w.validate()

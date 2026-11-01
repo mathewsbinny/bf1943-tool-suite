@@ -105,8 +105,8 @@ their `build.bat` (the .NET Framework 4 compiler is part of the image) and runs 
 install; then it checks that the package installs (`pip install -e .`). It has no game copy, no research workspace and
 no Xenia, and downloads nothing but Python libraries: so every quick test runs without them, and a skip fails the run
 like a failure. A second job, `coverage`, runs the quick tier again through pytest (`--strict-skips`) with line
-coverage of every Python process it starts, and uploads the report (text, XML and HTML) as the artifact `coverage`;
-it has no threshold yet.
+coverage of every Python process it starts, uploads the report (text, XML and HTML) as the artifact `coverage`, and
+fails when the total is below the threshold (`fail_under`, below: "Coverage").
 The console's code page does not matter: the Xenia kit's `launch.cmd` switches to UTF-8 itself, and its test runs it
 under both the OEM page (437) and UTF-8 (65001).
 
@@ -159,6 +159,19 @@ line, and are listed by hand in `run_tests.py` (`scripts()`), with arguments whe
 They stay as they are; a script is the right form only when a test must run as its own program (arguments, exit
 codes, a fresh process).
 
+### Fuzz tests
+
+Every binary reader is fuzzed (`test_fuzz_*.py`, with [core/fuzzcheck.py](core/fuzzcheck.py): standard library only,
+seeded random). The contract each reader keeps on any input: it returns a result or raises `ValueError` (its own error
+type is a subclass) with a message; never another exception, never a hang or unbounded memory (each case runs under a
+time and memory limit), and never a file cut short read as whole. Cases are mutations of valid files (bit flips,
+bytes and words set to edge values, counts and offsets in named fields set to 0, 1, huge or negative, cuts at each
+structural boundary, deleted, duplicated or random slices); a breaking case is shrunk and reported with what replays
+it. The quick tier's seeds are made-up files from the tests' own builders, with fixed seeds (a few seconds a reader);
+the bf1943 tier's (`tests/test_fuzz_real.py`) are your own files, only read. `set BF1943_FUZZ=long` runs 50 times as
+many cases (`BF1943_FUZZ=<n>`: n times) from a random run seed, which it prints; `set BF1943_FUZZ_SEED=<seed>` replays
+one. A new reader gets a fuzz test, and each bug the fuzzer finds a regression test with its shrunk input.
+
 ### pytest
 
 `python -B -m pytest` (from the suite folder; pytest is in the `ci` group) runs both kinds:
@@ -199,6 +212,17 @@ Every Python started while `COVERAGE_PROCESS_START` is set measures itself (cove
 starts it), so the runner, its tests and their children all count. The three are absolute because tests start
 children in other folders and coverage reads a relative path from each process's own folder. The report counts the
 suite's files, those that never ran too, and leaves out the tests themselves.
+
+**The threshold** is `fail_under` in `pyproject.toml` `[tool.coverage.report]`: `coverage report` exits 2 when the
+quick tier's total is below it, and CI's coverage job fails then (its last step; the reports are uploaded first). It is
+a ratchet, set a little below the measured total so that a small change does not trip it, and it only goes up:
+`tests/test_repo.py` ("repository rules", quick tier) fails when any commit of `pyproject.toml`, or the working copy,
+has a `fail_under` below an earlier one (CI checks out the whole history, so a lowering committed fails there too). To
+raise it after adding tests: run the steps above with pytest as CI does (`python -B -m pytest --tier quick
+--strict-skips` in place of `run_tests.py quick`), read the total from `python -m coverage report --format=total`,
+and set `fail_under` about one point below it, in the same commit as the tests. When coverage falls below it, add
+tests rather than lower it. The one exception, a well-tested tool removed, is a commit whose message has a line
+`Coverage-threshold-lowered: <reason>`: that commit may lower `fail_under`, and later ones are held to its value.
 
 Only tests about BF1943 are kept. The tests OPFOR's tools came with ran on BFBC2 data (Project OPFOR's copy) and were
 removed; a copied tool gets BF1943 tests when it is adapted (they remain in OPFOR's `bfbc2-tool-suite` and in this

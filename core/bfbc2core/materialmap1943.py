@@ -42,14 +42,22 @@ class MaterialMap:
 
 
 def read(data):
-    """MaterialMap(names, grid) from the .res bytes (no placement: see place)."""
+    """MaterialMap(names, grid) from the .res bytes (no placement: see place). ValueError for a file that is not a
+    whole material map."""
+    if len(data) < 6:                   # 2026-10-31 fuzzing: a struct.error before
+        raise ValueError(f'not a TerrainMaterialMap: {len(data)} bytes, shorter than its 6-byte header')
     side = struct.unpack_from('>I', data, 0)[0]
     tiles = struct.unpack_from('>H', data, 4)[0]
     tile_w_bytes, tile_rows = 256, 256
     tile_w = 2 * tile_w_bytes
     across = side // tile_w
-    if across * tile_w != side or tiles != across * (side // tile_rows):
+    # at least one tile (a side of 0 read as an empty map, and place() then divided by zero), and every tile's size
+    # word and row lengths inside the file before the map is made (2026-10-31 review: the count is a u16, so a few
+    # damaged bytes could ask for a map of up to 65,535 tiles of 512 x 256 pixels, 8 GiB)
+    if not side or across * tile_w != side or tiles != across * (side // tile_rows):
         raise ValueError(f'not a TerrainMaterialMap: side {side}, {tiles} tiles')
+    if 6 + tiles * (4 + 512) + 4 > len(data):
+        raise ValueError(f'not a TerrainMaterialMap: {tiles} tiles cannot fit in {len(data)} bytes')
     grid = np.zeros((side, side), np.uint8)
     p = 6
     for t in range(tiles):
@@ -99,7 +107,10 @@ def read(data):
     if table and not table.endswith(b'\0'):
         last = table.rsplit(b'\0', 1)[-1][:40]
         raise ValueError(f'the name table\'s last name ({last!r}) does not end with a zero byte')
-    names = [n.decode('ascii') for n in table.split(b'\0')[:-1]]
+    try:
+        names = [n.decode('ascii') for n in table.split(b'\0')[:-1]]
+    except UnicodeDecodeError as e:     # a ValueError already; said in words
+        raise ValueError(f'the name table holds a byte that is not ASCII ({e.object[e.start]:#x})') from None
     used = int(grid.max()) if grid.size else -1
     if used >= len(names):
         raise ValueError(f'the map uses material {used}, and the name table names {len(names)}')

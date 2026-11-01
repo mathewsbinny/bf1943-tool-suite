@@ -124,13 +124,15 @@ MESH_OBJECT_HEADER = 0x50
 def mesh_layout(m: bytes):
     """Walk a runtime mesh record (offsets relative to its start) and return a list of
     (start, end, label) regions plus the parsed structure. Raises ValueError on inconsistencies."""
-    u32 = lambda o: struct.unpack_from('<I', m, o)[0]
+    u32 = lambda o: _at('<I', m, o)[0]
     regions = [(0, 0x50, 'header')]
     nx, nz = u32(0x38), u32(0x3C)
     tiles_off, links_n, links_off = u32(0x44), u32(0x48), u32(0x4C)
     if tiles_off != 0x50:
         raise ValueError(f'tile table at {tiles_off:#x}')
     tile_count = nx * nz
+    if 0x50 + 4 * (tile_count + 1) > len(m):
+        raise ValueError(f'a tile table of {nx} x {nz} tiles runs past the end of the mesh')
     regions.append((0x50, 0x50 + (tile_count + 1) * 4, 'tile table'))
     tile_offs = [u32(0x50 + i * 4) for i in range(tile_count + 1)]
     objects = {}
@@ -138,7 +140,9 @@ def mesh_layout(m: bytes):
     for t in range(tile_count):
         to = tile_offs[t]
         n = u32(to)
-        items = [struct.unpack_from('<Iff', m, to + 4 + k * 12) for k in range(n)]
+        if to + 4 + 12 * n > len(m):
+            raise ValueError(f'tile {t}: {n} items run past the end of the mesh')
+        items = [_at('<Iff', m, to + 4 + k * 12) for k in range(n)]
         # An empty tile is just its count; otherwise items are followed by an end offset.
         end_ptr = u32(to + 4 + n * 12) if n else None
         regions.append((to, to + (8 + n * 12 if n else 4), f'tile {t}'))
@@ -156,9 +160,13 @@ def mesh_layout(m: bytes):
     regions.append((len(m) - 8, len(m), 'trailer'))
     links = []
     if links_n:
+        if links_off + 12 * links_n > len(m):
+            raise ValueError(f'{links_n} neighbour links run past the end of the mesh')
         regions.append((links_off, links_off + links_n * 12, 'link table'))
         for k in range(links_n):
-            sid, cnt, lst = struct.unpack_from('<3I', m, links_off + k * 12)
+            sid, cnt, lst = _at('<3I', m, links_off + k * 12)
+            if lst + 4 * cnt > len(m):
+                raise ValueError(f'link {sid:#x}: a list of {cnt} runs past the end of the mesh')
             regions.append((lst, lst + cnt * 4, f'link list {sid:#x}'))
             for j in range(cnt):
                 lo = u32(lst + j * 4)
@@ -168,8 +176,17 @@ def mesh_layout(m: bytes):
     return regions, tiles, objects, links, tile_offs
 
 
+def _at(fmt, m, o):
+    """struct.unpack_from(fmt, m, o); ValueError when it runs past the mesh (2026-10-31 fuzzing: struct.error, and a
+    negative offset read from the end)."""
+    size = struct.calcsize(fmt)
+    if o < 0 or o + size > len(m):
+        raise ValueError(f'damaged runtime mesh: {size} bytes at {o:#x} lie outside the {len(m)}-byte record')
+    return struct.unpack_from(fmt, m, o)
+
+
 def _object_end(m: bytes, o: int) -> int:
-    u32 = lambda x: struct.unpack_from('<I', m, x)[0]
+    u32 = lambda x: _at('<I', m, x)[0]
     a, b, c = u32(o + 0x20), u32(o + 0x28), u32(o + 0x30)
     end = o + MESH_OBJECT_HEADER + a * 0x20 + b * 0x20 + c * 0x2C
     for cnt_off, tab_off, stride in ((0x38, 0x3C, 4), (0x40, 0x44, 4), (0x48, 0x4C, 16)):

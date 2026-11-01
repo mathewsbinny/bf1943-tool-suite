@@ -38,6 +38,8 @@ class Packfile:
                 raise ValueError('no Havok packfile')
         self.d = data
         self.base = base
+        if base < 0 or base + 0x40 > len(data):     # 2026-10-31 fuzzing: IndexError / struct.error before
+            raise ValueError(f'damaged Havok packfile: its header at {base:#x} runs past the end ({len(data)} bytes)')
         rules = data[base + 16:base + 20]       # layout rules: bytes in a pointer, little-endian, ...
         self.ptr_size, self.little_endian = rules[0], bool(rules[1])
         self.e = E = '<' if self.little_endian else '>'
@@ -45,10 +47,12 @@ class Packfile:
         (_m0, _m1, _tag, self.version, _layout, self.nsections, self.contents_sec, self.contents_off) = h
         self.contents_version = data[base + 0x28:base + 0x38].split(b'\0')[0].decode('ascii', 'replace')
         self.member_size = 20 if self.contents_version.startswith('Havok-4.') else 24
+        if base + 0x40 + 0x30 * self.nsections > len(data):
+            raise ValueError(f'damaged Havok packfile: {self.nsections} sections run past the end ({len(data)} bytes)')
         self.sections = []
         for i in range(self.nsections):
             o = base + 0x40 + i * 0x30
-            name = data[o:o + 20].split(b'\0')[0].decode()
+            name = data[o:o + 20].split(b'\0')[0].decode('ascii', 'replace')
             start, local, glob, virt, exp, imp, end = struct.unpack_from(E + '7I', data, o + 20)
             self.sections.append({'name': name, 'start': base + start, 'local': local, 'global': glob,
                                   'virtual': virt, 'exports': exp, 'imports': imp, 'end': end})
@@ -64,7 +68,7 @@ class Packfile:
                 src, sec, dst = struct.unpack_from(E + '3I', data, st + k)
                 if src == 0xFFFFFFFF:
                     continue
-                self.ptr[st + src] = self.sections[sec]['start'] + dst
+                self.ptr[st + src] = self._section(sec)['start'] + dst
         self.objects = []  # (absolute offset, class name)
         for s in self.sections:
             st = s['start']
@@ -72,7 +76,7 @@ class Packfile:
                 src, sec, name_off = struct.unpack_from(E + '3I', data, st + k)
                 if src == 0xFFFFFFFF:
                     continue
-                cname = self.cstr(self.sections[sec]['start'] + name_off)
+                cname = self.cstr(self._section(sec)['start'] + name_off)
                 self.objects.append((st + src, cname))
         self.by_offset = {o: c for o, c in self.objects}
         self.classes = {}
@@ -84,8 +88,25 @@ class Packfile:
                                      'size': c['size'], 'members': c['members']}
                 self.class_by_name[name] = key
 
+    def _section(self, k):
+        if k >= len(self.sections):                 # 2026-10-31 fuzzing: an IndexError before
+            raise ValueError(f'damaged Havok packfile: a fixup names section {k} of {len(self.sections)}')
+        return self.sections[k]
+
+    def at(self, fmt, off):
+        """struct.unpack_from(self.e + fmt, data, off); ValueError when it lies outside the file (2026-10-31 fuzzing:
+        struct.error before, and a negative offset read from the end)."""
+        size = struct.calcsize(self.e + fmt)
+        if off is None or off < 0 or off + size > len(self.d):
+            raise ValueError(f'damaged Havok packfile: {size} bytes at {off} lie outside the file ({len(self.d)} bytes)')
+        return struct.unpack_from(self.e + fmt, self.d, off)
+
     def cstr(self, off):
-        e = self.d.index(b'\0', off)
+        """The zero-ended string at off. ValueError when there is none inside the file (2026-10-31 fuzzing: a
+        TypeError for a missing pointer, and str.index's 'subsection not found')."""
+        e = self.d.find(b'\0', off) if off is not None and 0 <= off < len(self.d) else -1
+        if e < 0:
+            raise ValueError(f'damaged Havok packfile: a string at {off} does not end inside the file')
         return self.d[off:e].decode('ascii', 'replace')
 
     def deref(self, slot):
@@ -99,15 +120,17 @@ class Packfile:
             name_p = self.deref(off)
             name = self.cstr(name_p) if name_p else '?'
             parent = self.deref(off + 4)
-            size, _nint = struct.unpack_from(self.e + '2i', self.d, off + 8)
+            size, _nint = self.at('2i', off + 8)
             members_p = self.deref(off + 24)
-            nmembers = struct.unpack_from(self.e + 'i', self.d, off + 28)[0]
+            nmembers = self.at('i', off + 28)[0]
+            if nmembers > 0 and (members_p is None or members_p + nmembers * self.member_size > len(self.d)):
+                raise ValueError(f'damaged Havok packfile: the {nmembers} members of class {name!r} lie outside the file')
             members = []
-            for k in range(nmembers):
+            for k in range(max(0, nmembers)):
                 mo = members_p + k * self.member_size
                 mname = self.cstr(self.deref(mo))
                 mclass = self.deref(mo + 4)
-                mtype, msub, carr, flags, moff = struct.unpack_from(self.e + 'BBhHH', self.d, mo + 12)
+                mtype, msub, carr, flags, moff = self.at('BBhHH', mo + 12)
                 members.append({'name': mname, 'class': mclass, 'type': mtype, 'subtype': msub,
                                 'carray': carr, 'offset': moff})
             self.classes[off] = {'name': name, 'parent': parent, 'size': size, 'members': members}
@@ -116,8 +139,11 @@ class Packfile:
     def all_members(self, cname):
         """Members of a class including inherited ones, as (name, member)."""
         off = self.class_by_name.get(cname)
-        chain = []
-        while off is not None:
+        chain, seen = [], set()
+        while off is not None and off in self.classes:  # a parent that is no class description ends the chain
+            if off in seen:                             # 2026-10-31 review: a class its own parent looped forever
+                raise ValueError(f'damaged Havok packfile: class {cname!r} is among its own parents')
+            seen.add(off)
             chain.append(self.classes[off])
             off = self.classes[off]['parent']
         out = []
@@ -132,18 +158,20 @@ class Packfile:
         off = self.class_by_name.get(cname)
         return self.classes[off]['size'] if off is not None else None
 
-    def read_value(self, at, mtype, sub, mclass_name, carray=0):
-        d = self.d
+    def read_value(self, at, mtype, sub, mclass_name, carray=0, depth=0):
+        if depth > 32:                              # 2026-10-31 review: a struct holding itself recursed without end
+            raise ValueError(f'damaged Havok packfile: structs nested more than 32 deep at {at:#x}')
         if carray:
             size = self.elem_size(mtype, mclass_name)
-            return [self.read_value(at + i * size, mtype, sub, mclass_name) for i in range(carray)]
+            if not size or carray < 0 or at + carray * size > len(self.d):
+                raise ValueError(f'damaged Havok packfile: an array of {carray} at {at:#x} lies outside the file')
+            return [self.read_value(at + i * size, mtype, sub, mclass_name, depth=depth + 1) for i in range(carray)]
         if mtype in SIMPLE:
-            return struct.unpack_from(self.e + SIMPLE[mtype][0], d, at)[0]
+            return self.at(SIMPLE[mtype][0], at)[0]
         if mtype in VEC:
-            return struct.unpack_from(f'{self.e}{VEC[mtype]}f', d, at)
+            return self.at(f'{VEC[mtype]}f', at)
         if mtype in (T_ENUM, T_FLAGS):
-            return struct.unpack_from(self.e + {T_INT8: 'b', T_UINT8: 'B', T_INT16: 'h', T_UINT16: 'H'}.get(sub, 'i'),
-                                      d, at)[0]
+            return self.at({T_INT8: 'b', T_UINT8: 'B', T_INT16: 'h', T_UINT16: 'H'}.get(sub, 'i'), at)[0]
         if mtype == T_POINTER:
             target = self.deref(at)
             return ('ptr', target, self.by_offset.get(target)) if target else None
@@ -151,16 +179,21 @@ class Packfile:
             t = self.deref(at)
             return self.cstr(t) if t else None
         if mtype == T_STRUCT:
-            return self.read_object(at, mclass_name)
+            return self.read_object(at, mclass_name, depth + 1)
         if mtype in (T_ARRAY, T_SIMPLEARRAY):
             data_p = self.deref(at)
-            n = struct.unpack_from(self.e + 'i', d, at + 4)[0]
+            n = self.at('i', at + 4)[0]
             if not data_p or n <= 0:
                 return []
             size = self.elem_size(sub, mclass_name)
             if size is None:
                 return [('?', n)]
-            return [self.read_value(data_p + i * size, sub, 0, mclass_name) for i in range(n)]
+            # every element inside the file (2026-10-31 fuzzing: struct.error past the end; review: a count of 2^31
+            # elements of size 0 read for ever)
+            if not size or data_p + n * size > len(self.d):
+                raise ValueError(f'damaged Havok packfile: an array of {n} x {size} bytes at {data_p:#x} lies outside '
+                                 f'the file')
+            return [self.read_value(data_p + i * size, sub, 0, mclass_name, depth=depth + 1) for i in range(n)]
         return None
 
     def elem_size(self, t, mclass_name):
@@ -174,13 +207,14 @@ class Packfile:
             return self.struct_size(mclass_name)
         return None
 
-    def read_object(self, at, cname):
+    def read_object(self, at, cname, depth=0):
+        """The object's fields by its class's members. ValueError for a field outside the file."""
         out = {}
         for m in self.all_members(cname):
             if m['type'] in (T_ZERO, T_VOID, T_FUNCTIONPOINTER):
                 continue
             out[m['name']] = self.read_value(at + m['offset'], m['type'], m['subtype'], self.member_class_name(m),
-                                             m['carray'])
+                                             m['carray'], depth)
         return out
 
     def objects_of(self, cname):

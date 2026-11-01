@@ -5,6 +5,7 @@ parse_mesh(bytes) -> Mesh, write_mesh(Mesh) -> bytes. All offsets in the record 
 start; parse_mesh replaces them with references (object indices etc.) and write_mesh lays the record
 out again and recomputes every offset.
 """
+import bisect
 import struct
 from dataclasses import dataclass, field
 from typing import List, Tuple
@@ -92,26 +93,55 @@ class Mesh:
     links_null_offset: int = NULL
 
 
-def _u32(m, o): return struct.unpack_from('<I', m, o)[0]
-def _f32(m, o): return struct.unpack_from('<f', m, o)[0]
-def _v3(m, o): return struct.unpack_from('<3f', m, o)
+def _at(fmt, m, o):
+    """struct.unpack_from(fmt, m, o); ValueError when it runs past the record (2026-10-31 fuzzing: struct.error, and
+    a negative offset read from the end)."""
+    size = struct.calcsize(fmt)
+    if o < 0 or o + size > len(m):
+        raise ValueError(f'damaged runtime mesh: {size} bytes at {o:#x} lie outside the {len(m)}-byte record')
+    return struct.unpack_from(fmt, m, o)
+
+
+def _u32(m, o): return _at('<I', m, o)[0]
+def _f32(m, o): return _at('<f', m, o)[0]
+def _v3(m, o): return _at('<3f', m, o)
 
 
 def _points(m, a, b):
     return [_v3(m, q) for q in range(a, b, 12)]
 
 
+class _Budget:
+    """The bytes a record's tables may take together: every table lies in the record, and none overlaps another in a
+    file write_mesh makes, so a damaged record whose counts or offsets point many tables at the same bytes is refused
+    before it is read many times over (2026-10-31 review, while fuzzing: reading time grew with the square of the
+    record's size)."""
+
+    def __init__(self, m):
+        self.left = len(m)
+
+    def take(self, size, what):
+        self.left -= max(0, size)
+        if self.left < 0:
+            raise ValueError(f'damaged runtime mesh: {what} would take more bytes than the record has (tables '
+                             f'overlap)')
+
+
 def parse_mesh(m: bytes) -> Mesh:
+    """The record as a Mesh. ValueError for a record that is not one write_mesh could make: cut short, a count or
+    offset past its end, tables that overlap, a reference to no area."""
     if not m.startswith(MARKER):
         raise ValueError('not a KynogonRuntimeMesh record')
-    version, flags = struct.unpack_from('<HH', m, 0x14)
+    budget = _Budget(m)
+    version, flags = _at('<HH', m, 0x14)
     loaded, sector_id = _u32(m, 0x18), _u32(m, 0x1C)
     resolution, pitch = _f32(m, 0x20), _f32(m, 0x24)
-    rect = struct.unpack_from('<4f', m, 0x28)
+    rect = _at('<4f', m, 0x28)
     tx, tz = _u32(m, 0x38), _u32(m, 0x3C)
     radius = _f32(m, 0x40)
     tile_tab, n_links, links_off = _u32(m, 0x44), _u32(m, 0x48), _u32(m, 0x4C)
     ntiles = tx * tz
+    budget.take(4 * (ntiles + 1), f'a tile table of {tx} x {tz} tiles')
     tile_offs = [_u32(m, tile_tab + i * 4) for i in range(ntiles + 1)]
 
     area_index = {}           # object offset -> index
@@ -120,7 +150,8 @@ def parse_mesh(m: bytes) -> Mesh:
     for t in range(ntiles):
         to = tile_offs[t]
         n = _u32(m, to)
-        items = [struct.unpack_from('<Iff', m, to + 4 + k * 12) for k in range(n)]
+        budget.take(4 + 12 * n, f'the {n} items of tile {t}')
+        items = [_at('<Iff', m, to + 4 + k * 12) for k in range(n)]
         for ptr, _, _ in items:
             if ptr not in area_index:
                 area_index[ptr] = len(area_offsets)
@@ -130,13 +161,15 @@ def parse_mesh(m: bytes) -> Mesh:
 
     areas = []
     for o in area_offsets:
-        hdr = struct.unpack_from('<4I4f', m, o)
+        budget.take(0x50, f'the area at {o:#x}')
+        hdr = _at('<4I4f', m, o)
         cnt = {k: _u32(m, o + k) for k in (0x20, 0x28, 0x30, 0x38, 0x40, 0x48)}
         offs = {k: _u32(m, o + k + 4) for k in cnt}
         null_offsets = {k: offs[k] for k in cnt if cnt[k] == 0}
         area = Area(hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7], null_offsets=null_offsets)
         if cnt[0x20]:
             raise ValueError('A records present (never seen before)')
+        budget.take(0x20 * cnt[0x28] + 0x2C * cnt[0x30], f'the portals of the area at {o:#x}')
         pos = o + offs[0x28] if cnt[0x28] else None
         for k in range(cnt[0x28]):
             r = pos + k * 0x20
@@ -149,13 +182,17 @@ def parse_mesh(m: bytes) -> Mesh:
         for key, target in ((0x38, area.d_lines), (0x40, area.outline)):
             if cnt[key]:
                 tab = o + offs[key]
+                budget.take(4 * (cnt[key] + 1), f'the point lists of the area at {o:#x}')
                 idx = [_u32(m, tab + j * 4) for j in range(cnt[key] + 1)]
                 for j in range(cnt[key]):
+                    budget.take(idx[j + 1] - idx[j], f'the points of the area at {o:#x}')
                     target.append(_points(m, o + idx[j], o + idx[j + 1]))
         if cnt[0x48]:
             tab = o + offs[0x48]
-            rows = [struct.unpack_from('<I3f', m, tab + j * 16) for j in range(cnt[0x48] + 1)]
+            budget.take(16 * (cnt[0x48] + 1), f'the cells of the area at {o:#x}')
+            rows = [_at('<I3f', m, tab + j * 16) for j in range(cnt[0x48] + 1)]
             for j in range(cnt[0x48]):
+                budget.take(rows[j + 1][0] - rows[j][0], f'the cell points of the area at {o:#x}')
                 area.cells.append(Cell(rows[j][1:], _points(m, o + rows[j][0], o + rows[j + 1][0])))
             area.end_row = rows[-1][1:]
         areas.append(area)
@@ -165,20 +202,25 @@ def parse_mesh(m: bytes) -> Mesh:
                 raise ValueError(f'area {k}: portal target {p.target:#x} is not the start of an area')
             p.target = area_index[p.target]
 
+    starts = sorted(area_offsets)
     links = []
+    budget.take(12 * n_links, f'{n_links} neighbour links')
     for k in range(n_links):
-        sid, cnt, lst = struct.unpack_from('<3I', m, links_off + k * 12)
+        sid, cnt, lst = _at('<3I', m, links_off + k * 12)
+        budget.take(4 * cnt, f'the list of link {sid:#x}')
         objs = []
         for j in range(cnt):
             lo = _u32(m, lst + j * 4)
-            h = struct.unpack_from('<3I', m, lo)
+            h = _at('<3I', m, lo)
             c = _u32(m, lo + 0xC)
+            budget.take(0x10 + 4 * c, f'link {sid:#x}/{j}')
             refs = []
             for q in range(c):
                 ptr = _u32(m, lo + 0x10 + q * 4)
-                owner = max((a for a in area_offsets if a <= ptr), default=None)
-                if owner is None:
+                at = bisect.bisect_right(starts, ptr)       # the area that starts last at or before ptr
+                if not at:
                     raise ValueError(f'link {sid:#x}/{j}: reference {ptr:#x} lies before the first area')
+                owner = starts[at - 1]
                 refs.append((area_index[owner], ptr - owner))
             objs.append(LinkObject(h, refs))
         links.append(NeighbourLink(sid, objs))

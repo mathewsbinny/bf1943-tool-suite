@@ -122,7 +122,7 @@ class Package:
         return out
 
     def _file_table(self):
-        raw = b''
+        raw = bytearray()                           # joined in place (up to 65,535 blocks: bytes += copied them all)
         for b in self._blocks(self.ft_start, self.ft_blocks, False):
             self.f.seek(self._addr(b))
             chunk = self.f.read(BLOCK)
@@ -130,6 +130,7 @@ class Package:
                 raise ValueError(f'damaged package: the file table\'s block {b} holds {len(chunk)} of {BLOCK} bytes '
                                  f'(the package is cut short); nothing was read')
             raw += chunk
+        raw = bytes(raw)
         entries = []
         for i in range(0, len(raw), 0x40):
             e = raw[i:i + 0x40]
@@ -167,9 +168,16 @@ class Package:
             raise ValueError(f'damaged package: {e["path"]} declares {e["size"]} bytes in {e["count"]} block(s) '
                              f'of {BLOCK} bytes')
         out = bytearray()
-        for b in self._blocks(e['start'], e['count'], e['consecutive']):
+        # only the blocks that hold its size, and none past the end of the package (2026-10-31 review, while fuzzing:
+        # a count of 2^24 blocks was read block by block, millions of reads past the end, before the size check
+        # refused it)
+        need = min(e['count'], -(-e['size'] // BLOCK))
+        for b in self._blocks(e['start'], need, e['consecutive']):
             self.f.seek(self._addr(b))
-            out += self.f.read(BLOCK)
+            chunk = self.f.read(BLOCK)
+            out += chunk
+            if len(chunk) < BLOCK:
+                break
         if len(out) < e['size']:
             raise ValueError(f'damaged package: {e["path"]} declares {e["size"]} bytes, the package holds {len(out)} '
                              f'(it ends early)')

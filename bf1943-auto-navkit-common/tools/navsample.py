@@ -56,20 +56,38 @@ class Samples:
         return range(self.start[c], self.start[c + 1])
 
 
+MAX_COLUMNS = 1 << 27      # nx * nz at most: 1.8 x the largest run so far (Coral Sea at 0.2 m, 73,023,000 columns);
+                           # Samples.start holds 8 bytes per column, whether or not the run finished them
+
+
 def load(path):
+    """(Samples, columns read). Versions 1 and 2 keep an interrupted run's finished columns (the rest empty); version
+    3, written whole at the end of a run, is read exactly as OPFOR's navsample.cpp writes it. ValueError for anything
+    else (2026-10-31 fuzzing: struct.error on a cut header, a 2^31-column header that hung making its column table,
+    and version-3 counts or records outside their blocks)."""
     data = open(path, 'rb').read()
+    if len(data) < HEADER.size:
+        raise ValueError(f'{path}: not a navsample file ({len(data)} bytes, shorter than its header)')
     magic, version, pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_b, cap_t, ray_r, _ = \
         HEADER.unpack_from(data, 0)
     if magic != b'ONS1' or version not in (1, 2, 3):
         raise ValueError(f'{path}: not a navsample file')
+    if nx < 1 or nz < 1 or nx * nz > MAX_COLUMNS:
+        raise ValueError(f'{path}: a grid of {nx} x {nz} columns (at least 1 x 1, at most {MAX_COLUMNS} columns)')
     if version == 3:
         # records, then the column counts in one block, then { u64 offset of the counts, "CNT3" } - read at once
         if len(data) < HEADER.size + 12 or data[-4:] != b'CNT3':
             raise ValueError(f'{path}: sampling run not finished (no column counts)')
         at = struct.unpack_from('<Q', data, len(data) - 12)[0]
+        if at + nx * nz + 12 != len(data) or (at - HEADER.size) % 20:
+            raise ValueError(f'{path}: the column counts at {at} are not the {nx * nz} bytes before the trailer, after '
+                             f'whole 20-byte records')
         counts = np.frombuffer(data, np.uint8, nx * nz, at).astype(np.int64)
         start = np.zeros(nx * nz + 1, dtype=np.int64)
         np.cumsum(counts, out=start[1:])
+        if HEADER.size + 20 * int(start[-1]) != at:
+            raise ValueError(f'{path}: the column counts add up to {int(start[-1])} surfaces, and the records before '
+                             f'them hold {(at - HEADER.size) // 20}')
         rec = np.frombuffer(data, np.dtype([('y', '<f4'), ('n', 'i1', 3), ('f', 'u1'), ('h', '<u4', 3)]),
                             int(start[-1]), HEADER.size)
         return Samples(pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_b, cap_t, ray_r, start,

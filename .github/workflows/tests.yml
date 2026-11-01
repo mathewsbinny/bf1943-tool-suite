@@ -4,7 +4,8 @@
 # package install is checked last, apart. Two jobs:
 #   quick      the lint (ruff), then the quick tier through run_tests.py --strict, then the package install
 #   coverage   the quick tier again, through pytest (so pytest's way is run too), with line coverage of every
-#              process it starts; the report is uploaded as the artifact "coverage" (no threshold yet)
+#              process it starts; the report is uploaded as the artifact "coverage", then the total must reach
+#              pyproject.toml's [tool.coverage.report] fail_under (a threshold that only goes up: tests/test_repo.py)
 name: tests
 
 on:
@@ -119,12 +120,13 @@ jobs:
 
       - name: Coverage report
         if: always()
+        # written whatever the total (--fail-under=0); the threshold is the last step's
         run: |
           $env:COVERAGE_FILE = "$PWD\.coverage"
           python -m coverage combine
-          python -m coverage report | Tee-Object coverage.txt
-          python -m coverage html -d coverage-html
-          python -m coverage xml -o coverage.xml
+          python -m coverage report --fail-under=0 | Tee-Object coverage.txt
+          python -m coverage html -d coverage-html --fail-under=0
+          python -m coverage xml -o coverage.xml --fail-under=0
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -134,3 +136,10 @@ jobs:
             coverage.txt
             coverage.xml
             coverage-html/
+
+      - name: Coverage threshold (pyproject.toml [tool.coverage.report] fail_under)
+        # coverage exits 2 when the total is below fail_under (README "Coverage": how to raise it)
+        run: |
+          $env:COVERAGE_FILE = "$PWD\.coverage"
+          python -m coverage report --format=total
+          if ($LASTEXITCODE) { Write-Error "quick-tier line coverage is below pyproject.toml's fail_under"; exit $LASTEXITCODE }

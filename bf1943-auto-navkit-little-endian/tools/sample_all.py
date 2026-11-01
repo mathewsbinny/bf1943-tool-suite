@@ -32,38 +32,41 @@ def main(argv):
     budget = int(opts['--budget']) if '--budget' in opts else None
     logf = open(opts.get('--log', os.path.join(navkit.Project(None).work, 'navsample', 'sample_all.log')), 'a', encoding='utf-8', newline='\n')
 
-    def log(*a):
-        line = time.strftime('%H:%M:%S ') + ' '.join(str(x) for x in a)
-        print(line, flush=True)
-        logf.write(line + '\n')
-        logf.flush()
-    pr = navkit.Project(None)
-    order = ([smoke] if smoke else []) + [lv for lv in levels if lv != smoke]
-    done, failed = [], []
-    t0 = time.time()
-    log(f'== sample_all: {len(order)} levels at pitch {pitch}: {", ".join(order)}')
-    for n, lv in enumerate(order, 1):
-        t1 = time.time()
-        try:
-            if abs(pitch - 0.8) > 1e-6 and not pr.samples08(lv):
-                log(f'[{n}/{len(order)}] {lv}: no 0.8 m samples - those first')
-                if not navkit.sample(pr, lv, log=log, pitch=0.8):
-                    raise navkit.NavKitError('0.8 m sampling cancelled')
-            log(f'[{n}/{len(order)}] {lv}: {len(navkit.detailed_sectors(pr, lv)) if abs(pitch - 0.8) > 1e-6 else "all"} sectors')
-            if not navkit.sample(pr, lv, log=log, pitch=pitch, budget_ms=budget):
-                raise navkit.NavKitError('cancelled')
-            done.append(lv)
-            log(f'[{n}/{len(order)}] {lv}: done in {(time.time() - t1) / 60:.1f} min (total {(time.time() - t0) / 60:.0f} min)')
-        except Exception as e:     # noqa: BLE001 - log and go on
-            failed.append((lv, str(e)))
-            log(f'[{n}/{len(order)}] {lv}: FAILED - {e}')
-            logf.write(traceback.format_exc() + '\n')
-            if lv == smoke:
-                log('smoke test failed - stopping')
-                break
-    log(f'== sample_all finished in {(time.time() - t0) / 60:.0f} min: {len(done)} done, {len(failed)} failed'
-        + ''.join(f'\n   {lv}: {e}' for lv, e in failed))
-    return 1 if failed else 0
+    try:                        # the log is closed however the run ends (a failure's traceback can hold this frame)
+        def log(*a):
+            line = time.strftime('%H:%M:%S ') + ' '.join(str(x) for x in a)
+            print(line, flush=True)
+            logf.write(line + '\n')
+            logf.flush()
+        pr = navkit.Project(None)
+        order = ([smoke] if smoke else []) + [lv for lv in levels if lv != smoke]
+        done, failed = [], []
+        t0 = time.time()
+        log(f'== sample_all: {len(order)} levels at pitch {pitch}: {", ".join(order)}')
+        for n, lv in enumerate(order, 1):
+            t1 = time.time()
+            try:
+                if abs(pitch - 0.8) > 1e-6 and not pr.samples08(lv):
+                    log(f'[{n}/{len(order)}] {lv}: no 0.8 m samples - those first')
+                    if not navkit.sample(pr, lv, log=log, pitch=0.8):
+                        raise navkit.NavKitError('0.8 m sampling cancelled')
+                log(f'[{n}/{len(order)}] {lv}: {len(navkit.detailed_sectors(pr, lv)) if abs(pitch - 0.8) > 1e-6 else "all"} sectors')
+                if not navkit.sample(pr, lv, log=log, pitch=pitch, budget_ms=budget):
+                    raise navkit.NavKitError('cancelled')
+                done.append(lv)
+                log(f'[{n}/{len(order)}] {lv}: done in {(time.time() - t1) / 60:.1f} min (total {(time.time() - t0) / 60:.0f} min)')
+            except Exception as e:     # noqa: BLE001 - log and go on
+                failed.append((lv, str(e)))
+                log(f'[{n}/{len(order)}] {lv}: FAILED - {e}')
+                logf.write(traceback.format_exc() + '\n')
+                if lv == smoke:
+                    log('smoke test failed - stopping')
+                    break
+        log(f'== sample_all finished in {(time.time() - t0) / 60:.0f} min: {len(done)} done, {len(failed)} failed'
+            + ''.join(f'\n   {lv}: {e}' for lv, e in failed))
+        return 1 if failed else 0
+    finally:
+        logf.close()
 
 
 if __name__ == '__main__':

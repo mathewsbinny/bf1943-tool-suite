@@ -43,10 +43,14 @@ def convex_vertices(pf, off):
     import struct
     e, d = pf.e, pf.d
     p = pf.deref(off + 0x40)
+    if off < 0 or off + 0x50 > len(d):          # 2026-10-31 fuzzing: struct.error before
+        raise ValueError(f'damaged Havok packfile: a convex shape at {off:#x} runs past the end of the file')
     groups = struct.unpack_from(e + 'i', d, off + 0x44)[0]
     n = struct.unpack_from(e + 'i', d, off + 0x4C)[0]
     if not p or groups <= 0 or not 0 < n <= 4 * groups:
         return []
+    if p < 0 or p + 48 * groups > len(d):
+        raise ValueError(f'damaged Havok packfile: {groups} vertex groups at {p:#x} run past the end of the file')
     out = []
     for g in range(groups):
         x = struct.unpack_from(e + '4f', d, p + 48 * g)
@@ -60,7 +64,7 @@ def convex_box(pf, off):
     """(the 12 triangles of an hkConvexVerticesShape's vertex bounding box as [[(x, y, z)] * 3],
     stored half-extents, stored centre) - NavKit's BFBC2 reader uses the same box for convex shapes."""
     import struct
-    v = convex_vertices(pf, off)
+    v = convex_vertices(pf, off)                # checks that the shape's 0x50 bytes are in the file
     half = struct.unpack_from(pf.e + '3f', pf.d, off + 0x20)
     centre = struct.unpack_from(pf.e + '3f', pf.d, off + 0x30)
     if not v:
@@ -72,7 +76,9 @@ def convex_box(pf, off):
 
 
 def triangles(pf, off):
-    """(vertices [(x, y, z)], triangles [(a, b, c)]) of an hkStorageExtendedMeshShapeMeshSubpartStorage."""
+    """(vertices [(x, y, z)], triangles [(a, b, c)]) of an hkStorageExtendedMeshShapeMeshSubpartStorage. ValueError
+    when a triangle names a vertex the storage does not have (2026-10-31 fuzzing: read, then an IndexError in
+    levelobjects1943.collision; on BF1943's files every index is below the vertex count, tests/test_havok461.py)."""
     o = pf.read_object(off, 'hkStorageExtendedMeshShapeMeshSubpartStorage')
     vertices = [v[:3] for v in o['vertices']]
     if o['indices16']:
@@ -81,4 +87,7 @@ def triangles(pf, off):
     else:
         i = o['indices32']
         tris = [tuple(i[k:k + 3]) for k in range(0, len(i) - 2, 3)]
+    top = max((max(t) for t in tris), default=-1)
+    if top >= len(vertices):
+        raise ValueError(f'damaged Havok packfile: a triangle at {off:#x} names vertex {top} of {len(vertices)}')
     return vertices, tris

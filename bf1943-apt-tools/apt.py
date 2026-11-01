@@ -308,12 +308,18 @@ class Apt:
             args['raw'] = a[p:p + 20]
         return Ins(code, args, pc), p + OPERAND_BYTES[layout]
 
-    def walk(self, start):
-        """Instructions of one action block, linearly, to its End (the fixup walker's extent)."""
+    def walk(self, start, budget=None):
+        """Instructions of one action block, linearly, to its End (the fixup walker's extent). budget: a one-item list
+        of the instructions still allowed (validate shares one over all blocks); ValueError when it runs out."""
         pc, out = start, []
         while True:
             ins, nxt = self.decode(pc)
             out.append(ins)
+            if budget is not None:
+                budget[0] -= 1
+                if budget[0] < 0:
+                    raise ValueError(f'damaged movie: the action blocks hold more instructions than the .apt has bytes '
+                                     f'({len(self.apt)}): blocks overlap or are shared')
             if ins.op == 0x00:
                 return out
             pc = nxt
@@ -322,11 +328,15 @@ class Apt:
         """Every block decodes to an End with no End inside a function; branches and With bodies land on the
         block's instruction starts (2026-10-30 second review: the byte after the End passed, and Rewriter.block then
         failed on it); function ends on an instruction start up to the End. ValueError when the movie's characters or
-        frames cannot be read (the command line's exit 2)."""
+        frames cannot be read (the command line's exit 2). The blocks together decode at most one instruction per byte
+        of the .apt, as blocks that neither overlap nor are shared do (every block of the game's movies; the fixup walker
+        would fix a shared block's pointers twice); past that each block is a problem (2026-10-31: a 0.9 MB movie of
+        60,000 frame items naming one long block took hours)."""
         problems, blocks, count = [], self.action_blocks(), 0
+        budget = [len(self.apt)]
         for owner, start in blocks:
             try:
-                ins = self.walk(start)
+                ins = self.walk(start, budget)
             except Exception as e:
                 problems.append(f'{owner} @0x{start:x}: {e}')
                 continue

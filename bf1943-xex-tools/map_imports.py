@@ -22,7 +22,15 @@ def read(data, offset, fmt):
 
 
 def provenance(path, root):
+    """A workspace file's record: its path relative to the research workspace, and its SHA-256."""
     return dict(path=path.relative_to(root).as_posix(), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+def tool_provenance():
+    """This script's record, by its path in the suite (as verify_xex_image.py and export_callgraph_strings.py name
+    themselves): the script lies in the suite, not in the workspace, so provenance() cannot name it (2026-10-31: it
+    raised ValueError there, and the script always exited 1 without writing imports.tsv)."""
+    return dict(path='bf1943-xex-tools/map_imports.py', sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
 
 
 def names_from_java(text):
@@ -49,6 +57,8 @@ def parse(xex, image, tables):
         key, value = read(xex, 24 + i * 8, '>II')
         require(key not in headers, 'Duplicate optional header')
         headers[key] = value
+    # 2026-10-31 fuzzing: a KeyError before
+    require(0x10201 in headers and 0x103ff in headers, 'No image base or import directory optional header')
     base = headers[0x10201]
     start = headers[0x103ff]
     size, string_size, library_count = read(xex, start, '>III')
@@ -107,7 +117,7 @@ def main():
     reference = loader / 'ImportRenamer.java'
     before = [provenance(path, root) for path in (source, image)]
     report = parse(source.read_bytes(), image.read_bytes(), names_from_java(reference.read_text()))
-    report['provenance'] = dict(inputs=before, parser=provenance(Path(__file__), root),
+    report['provenance'] = dict(inputs=before, parser=tool_provenance(),
         references=[provenance(loader / name, root) for name in ('XEXHeader.java', 'ImportRenamer.java')],
         reference_repository='https://github.com/zeroKilo/XEXLoaderWV',
         reference_commit='4bcf58da4caa5260644fc19f5eef5ccde3b7ff46')

@@ -39,7 +39,7 @@ def load(path):
 def run(module):
     """(passed, failed, skipped) after running and reporting each test function."""
     passed, failed, skipped = 0, 0, []
-    for name, fn in vars(module).items():
+    for name, fn in list(vars(module).items()):      # a list: a test may add a global (a warning registry)
         if not (name.startswith('test') and inspect.isfunction(fn) and fn.__module__ == module.__name__):
             continue
         params = list(inspect.signature(fn).parameters)
