@@ -14,14 +14,17 @@ more than the tolerance (points); counts are listed when they change but do not 
 worse; 1: something worse (or a level failed to build); 2: no reference run.
 
 Progress: before each level, its number, its expected time and the run's share done and time left (from each
-level's time in the last run or the reference - saved per level as "seconds" - else from its sample file size at the seconds per MB of the timed levels; each finished level
-updates the estimates of the rest, and the time left is scaled by the pace so far);
-the build's stages are printed indented as they finish.
+level's time in the last run or the reference - saved per level as "seconds" - else from its sample file size at
+the seconds per MB of the timed levels; each finished level updates the estimates of the rest, and the time left
+is scaled by the pace so far); the build's stages are printed indented as they finish.
 
 The run is saved as "regression_last". After an intended improvement, make it the reference:
   navregress.py --save regression          (or: copy regression_last.json to regression.json)
 Default levels: the 13 campaign levels and the Onslaught maps with DICE path data (ONS_MP_002 / 004, when imported) -
 about 5 hours with detailed zones; --levels for a subset.
+
+The build-input helpers (inputs, sector_offsets, level_water, reference_bounds, order_points_of, detailed_of,
+ladders_of) are also navkit_le.py's, for build and apply.
 """
 import glob
 import json
@@ -30,6 +33,8 @@ import re
 import sys
 import functools
 import time
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 print = functools.partial(print, flush=True)   # progress shows at once when the output goes to a file
 
@@ -43,95 +48,106 @@ import navbuild  # noqa: E402
 import navparity  # noqa: E402
 import hpdcheck  # noqa: E402
 
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
 HIGHER = ['ground', 'areas_same', 'portals', 'outline', 'borders', 'costs', 'nodes_same', 'nodes_near', 'edges_same',
           'connectivity', 'ai_coverage', 'ai_pairwise']
 LOWER = ['extra_ground', 'over_connection', 'sectors_missing']
 COUNTS = ['sectors_candidate', 'areas_candidate', 'detailed_candidate', 'islands_candidate', 'large_islands_candidate',
           'ai_main_candidate']
 
+type Row = dict[str, Any]                         # one level's measures (navparity.run_level)
+type Change = tuple[str, Any, Any]                # (measure, reference value, value now)
+type Water = tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]    # (vertices, triangles)
 
 OFFSET_FIELD = r'name="{}"[^>]*>\s*(-?\d+)(?:\.0*)?\s*<'
 
 
-def sector_offsets(path):
+def sector_offsets(path: str) -> tuple[int, int]:
     """(XOffset, ZOffset) of a level's SectorOffsets.xml (DbxEdit's XML of Precomputed/Infantry/SectorOffsets).
     ValueError, naming the file, when a field is missing or not a whole number."""
     with open(path, encoding='utf-8', errors='replace') as f:
-        t = f.read()
+        text = f.read()
     out = []
     for name in ('XOffset', 'ZOffset'):
-        m = re.search(OFFSET_FIELD.format(name), t)
-        if not m:
+        match = re.search(OFFSET_FIELD.format(name), text)
+        if not match:
             raise ValueError(f'{path}: no whole-number {name} field (not the XML DbxEdit makes of SectorOffsets?)')
-        out.append(int(m.group(1)))
-    return tuple(out)
+        out.append(int(match.group(1)))
+    return out[0], out[1]
 
 
-def inputs(root, lv):
-    """The build inputs of a level, as navkit_le.py build uses them; raises if something is missing."""
-    L = os.path.join(root, 'work', 'levels', lv)
+def inputs(root: str, lv: str) -> tuple[str, int, int, dict[str, str]]:
+    """The build inputs of a level, as navkit_le.py build uses them: (0.8 m samples, xoff, zoff, {prepared file name:
+    path}); raises RuntimeError naming what is missing."""
+    level_dir = os.path.join(root, 'work', 'levels', lv)
     samples = None
     for name in (f'{lv}_navkit', f'{lv}_full'):
-        p = os.path.join(root, 'work', 'navsample', name + '.bin')
-        if os.path.isfile(p) and os.path.isfile(p[:-4] + '_hi.bin'):
-            samples = p
+        path = os.path.join(root, 'work', 'navsample', name + '.bin')
+        if os.path.isfile(path) and os.path.isfile(path[:-4] + '_hi.bin'):
+            samples = path
             break
     if samples is None:
         raise RuntimeError(f'{lv}: no in-game samples (work\\navsample\\{lv}_navkit.bin or _full.bin, with _hi)')
-    settings = os.path.join(root, 'work', 'navkit', lv, 'navkit.json')
-    if os.path.isfile(settings):
-        s = json.load(open(settings))
-        xoff, zoff = s['xoff'], s['zoff']
+    settings_path = os.path.join(root, 'work', 'navkit', lv, 'navkit.json')
+    if os.path.isfile(settings_path):
+        settings = json.load(open(settings_path))
+        xoff, zoff = settings['xoff'], settings['zoff']
     else:
-        so = glob.glob(os.path.join(L, 'dist', 'levels', lv, 'Precomputed', 'Infantry', 'SectorOffsets.xml'))
-        if not so:
+        offsets_files = glob.glob(os.path.join(level_dir, 'dist', 'levels', lv, 'Precomputed', 'Infantry',
+                                               'SectorOffsets.xml'))
+        if not offsets_files:
             raise RuntimeError(f'{lv}: no navkit.json and no SectorOffsets.xml (run navkit_le.py prepare {lv})')
         try:
-            xoff, zoff = sector_offsets(so[0])
+            xoff, zoff = sector_offsets(offsets_files[0])
         except ValueError as e:
             raise RuntimeError(f'{lv}: {e}') from e
-    files = {k: os.path.join(L, k) for k in ('forbid_tris.npy', 'dynamic_tris.npy', 'stair_tris.npy', 'soldier_spawns.json')}
-    missing = [k for k, p in files.items() if not os.path.isfile(p)]
+    files = {name: os.path.join(level_dir, name)
+             for name in ('forbid_tris.npy', 'dynamic_tris.npy', 'stair_tris.npy', 'soldier_spawns.json')}
+    missing = [name for name, path in files.items() if not os.path.isfile(path)]
     if missing:
         raise RuntimeError(f'{lv}: {", ".join(missing)} missing (run navkit_le.py prepare {lv})')
     return samples, xoff, zoff, files
 
 
-def level_water(root, lv):
+def level_water(root: str, lv: str) -> Water | None:
     """The level's water mesh (vertices, triangles) for the build, or None (core/bfbc2core/water.py)."""
     from bfbc2core import level as levelmod
-    w = levelmod.water_of(root, lv, log=lambda *a: None)
-    return (w.vertices, w.triangles) if w is not None and len(w) else None
+    water = levelmod.water_of(root, lv, log=lambda *a: None)
+    return (water.vertices, water.triangles) if water is not None and len(water) else None
 
 
-def reference_bounds(root, lv):
+def reference_bounds(root: str, lv: str) -> tuple[float, float, float, float] | None:
     """(minX, minZ, maxX, maxZ) of DICE's path data for the level - the extent of its area outlines and portals at
     every pitch (detailed zones included: on sp_008, sp_008_b, ons_mp_005gr they reach past the normal-pitch ground) -
     or None when the level has no DICE path data (a new map). Border portals are left out: they sit on sector margins."""
     import hpdtool
     import kymesh
     import numpy as np
-    p = navparity.reference_of(root, lv)
-    if not os.path.isfile(p):
+    path = navparity.reference_of(root, lv)
+    if not os.path.isfile(path):
         return None
-    pts = []
-    for s in hpdtool.parse(open(p, 'rb').read()).sectors:
-        for a in kymesh.parse_mesh(s.mesh).areas:
-            pts += [q for line in a.outline for q in line]
-            pts += [q for pt in a.portals for q in (pt.p0, pt.p1)]
-    if not pts:
+    points: list[Sequence[float]] = []
+    for sector in hpdtool.parse(open(path, 'rb').read()).sectors:
+        for area in kymesh.parse_mesh(sector.mesh).areas:
+            points += [point for line in area.outline for point in line]
+            points += [point for portal in area.portals for point in (portal.p0, portal.p1)]
+    if not points:
         return None
-    P = np.asarray(pts, float)
-    return float(P[:, 0].min()), float(P[:, 2].min()), float(P[:, 0].max()), float(P[:, 2].max())
+    coords = np.asarray(points, float)
+    return float(coords[:, 0].min()), float(coords[:, 2].min()), float(coords[:, 0].max()), float(coords[:, 2].max())
 
 
-def order_points_of(root, lv):
+def order_points_of(root: str, lv: str) -> Any:
     """The level's AI order positions (work/levels/<lv>/order_points.json, written by levelobjects.py), or None."""
-    p = os.path.join(root, 'work', 'levels', lv, 'order_points.json')
-    return json.load(open(p)) if os.path.isfile(p) else None
+    path = os.path.join(root, 'work', 'levels', lv, 'order_points.json')
+    return json.load(open(path)) if os.path.isfile(path) else None
 
 
-def detailed_of(root, lv, samples, xoff, zoff, chosen=None):
+def detailed_of(root: str, lv: str, samples: str, xoff: int, zoff: int,
+                chosen: Sequence[tuple[int, int]] | None = None) -> dict[str, Any] | None:
     """The detailed-zone pass, as navkit_le.py build does it: the level's pitch-0.2 samples (navkit_le.py sample --pitch 0.2,
     work\\navsample\\<lv>_navkit_p02.bin, with _hi_p02) and its detailed sectors chosen from the level alone
     (detailed.py; chosen: that choice when the caller already has it); None without pitch-0.2 samples. Raises
@@ -141,28 +157,30 @@ def detailed_of(root, lv, samples, xoff, zoff, chosen=None):
     p02 = os.path.join(root, 'work', 'navsample', f'{lv}_navkit_p02.bin')
     if not os.path.isfile(p02):
         return None
-    hi = p02[:-4].replace('_p02', '_hi_p02') + '.bin'
+    high = p02[:-4].replace('_p02', '_hi_p02') + '.bin'
     if chosen is None:
-        common = [os.path.join(root, 'work', 'navkit', 'common', c) for c in ('mp_common', 'sp_common')]
+        common = [os.path.join(root, 'work', 'navkit', 'common', name) for name in ('mp_common', 'sp_common')]
         chosen, _why = detailed.choose(os.path.join(root, 'work', 'levels', lv), common, samples, xoff, zoff)
     problem = detailed.sampled_problem(p02, samples, chosen, xoff, zoff)
     if problem:
         raise RuntimeError(f'{lv}: the 0.2 m samples are stale: {problem} - sample the detailed zones again '
                            f'(navkit_le.py sample {lv} --pitch 0.2)')
-    return dict(samples=p02, high=hi if os.path.isfile(hi) else None, sectors={tuple(s) for s in chosen})
+    return dict(samples=p02, high=high if os.path.isfile(high) else None,
+                sectors={tuple(sector) for sector in chosen})
 
 
-def ladders_of(root, lv):
+def ladders_of(root: str, lv: str) -> Any:
     """The level's ladders (ladders.py, written by navkit_le.py prepare), or None."""
-    p = os.path.join(root, 'work', 'levels', lv, 'ladders.json')
-    return json.load(open(p)) if os.path.isfile(p) else None
+    path = os.path.join(root, 'work', 'levels', lv, 'ladders.json')
+    return json.load(open(path)) if os.path.isfile(path) else None
 
 
-def build_level(root, lv, out, log=lambda *a: None):
-    samples, xoff, zoff, f = inputs(root, lv)
-    navbuild.build(samples, f['forbid_tris.npy'], xoff, zoff, out, dynamic_path=f['dynamic_tris.npy'],
-                   high_path=samples[:-4] + '_hi.bin', stairs_path=f['stair_tris.npy'],
-                   seeds=json.load(open(f['soldier_spawns.json'])), water=level_water(root, lv),
+def build_level(root: str, lv: str, out: str, log: Callable[[str], object] = lambda *a: None) -> None:
+    """Builds the level into out with the same inputs as navkit_le.py build."""
+    samples, xoff, zoff, files = inputs(root, lv)
+    navbuild.build(samples, files['forbid_tris.npy'], xoff, zoff, out, dynamic_path=files['dynamic_tris.npy'],
+                   high_path=samples[:-4] + '_hi.bin', stairs_path=files['stair_tris.npy'],
+                   seeds=json.load(open(files['soldier_spawns.json'])), water=level_water(root, lv),
                    order_points=order_points_of(root, lv),
                    bounds=reference_bounds(root, lv), log=log,
                    detailed=detailed_of(root, lv, samples, xoff, zoff), ladders=ladders_of(root, lv))
@@ -171,24 +189,25 @@ def build_level(root, lv, out, log=lambda *a: None):
 DEFAULT_SECONDS = 210                           # a level with no earlier timing: 45 minutes / 13 levels
 
 
-def duration(s):
-    s = int(round(s))
-    if s < 90:
-        return f'{s} s'
-    if s < 3600:
-        return f'{round(s / 60)} min'
-    return f'{s // 3600} h {s % 3600 // 60:02d} min'
+def duration(seconds: float) -> str:
+    """A duration in words: seconds, minutes, or hours and minutes."""
+    whole = int(round(seconds))
+    if whole < 90:
+        return f'{whole} s'
+    if whole < 3600:
+        return f'{round(whole / 60)} min'
+    return f'{whole // 3600} h {whole % 3600 // 60:02d} min'
 
 
-def estimates(root, levels, *runs):
+def estimates(root: str, levels: Sequence[str], *runs: dict[str, Row]) -> dict[str, float]:
     """Expected seconds per level: its time in the given earlier runs (first found), else its in-game sample file
     size times the median seconds per MB of every level the runs time, else DEFAULT_SECONDS. runs: {level: row}."""
-    known = {}
+    known: dict[str, float] = {}
     for rows in runs:
         for lv, row in rows.items():
             if lv not in known and row.get('seconds'):
                 known[lv] = row['seconds']
-    size = {}
+    size: dict[str, float] = {}
     for lv in set(levels) | set(known):
         try:
             size[lv] = os.path.getsize(inputs(root, lv)[0]) / 1e6
@@ -199,25 +218,27 @@ def estimates(root, levels, *runs):
     return {lv: known.get(lv) or (rate * size[lv] if rate and lv in size else DEFAULT_SECONDS) for lv in levels}
 
 
-def compare(ref, now, tol):
+def compare(ref: Row, now: Row, tol: float) -> tuple[list[Change], list[Change], list[Change]]:
     """(worse, better, count changes) for one level: lists of (measure, reference, now)."""
-    worse, better, counts = [], [], []
-    for k in HIGHER + LOWER:
-        a, b = ref.get(k), now.get(k)
-        if a is None or b is None:
+    worse: list[Change] = []
+    better: list[Change] = []
+    counts: list[Change] = []
+    for measure in HIGHER + LOWER:
+        before, after = ref.get(measure), now.get(measure)
+        if before is None or after is None:
             continue
-        d = (b - a) if k in HIGHER else (a - b)
-        if d < -tol:
-            worse.append((k, a, b))
-        elif d > tol:
-            better.append((k, a, b))
-    for k in COUNTS:
-        if ref.get(k) != now.get(k):
-            counts.append((k, ref.get(k), now.get(k)))
+        gain = (after - before) if measure in HIGHER else (before - after)
+        if gain < -tol:
+            worse.append((measure, before, after))
+        elif gain > tol:
+            better.append((measure, before, after))
+    for measure in COUNTS:
+        if ref.get(measure) != now.get(measure):
+            counts.append((measure, ref.get(measure), now.get(measure)))
     return worse, better, counts
 
 
-def save_run(target, run):
+def save_run(target: str, run: dict[str, Any]) -> None:
     """A run as JSON at target, put in place whole (a killed write leaves the previous file)."""
     tmp = target + '.tmp'
     try:
@@ -229,19 +250,22 @@ def save_run(target, run):
             os.remove(tmp)
 
 
-def merged_rows(rows, existing):
+def merged_rows(rows: list[Row], existing: list[Row]) -> list[Row]:
     """This run's level rows, then the rows of the run being replaced for the levels this run did not measure."""
-    done = {r['level'] for r in rows}
-    return rows + [r for r in existing if r['level'] not in done]
+    done = {row['level'] for row in rows}
+    return rows + [row for row in existing if row['level'] not in done]
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     args = argv[1:]
-    for k in ('--levels', '--reference', '--save', '--tolerance', '--opfor'):
-        if k in args and (args.index(k) + 1 >= len(args) or args[args.index(k) + 1].startswith('--')):
-            print(f'error: {k} needs a value')         # before a run of hours, not after it
+    for key in ('--levels', '--reference', '--save', '--tolerance', '--opfor'):
+        if key in args and (args.index(key) + 1 >= len(args) or args[args.index(key) + 1].startswith('--')):
+            print(f'error: {key} needs a value')         # before a run of hours, not after it
             return 2
-    opt = lambda k, d=None: args[args.index(k) + 1] if k in args else d
+
+    def opt(key: str, default: Any = None) -> Any:
+        return args[args.index(key) + 1] if key in args else default
+
     root = navparity.opfor_root(opt('--opfor'))
     levels = opt('--levels').split(',') if opt('--levels') else [
         lv for lv in navparity.LEVELS + navparity.ONSLAUGHT if os.path.isfile(navparity.reference_of(root, lv))]
@@ -250,7 +274,7 @@ def main(argv):
     ref_path = navparity.save_path(root, reference)
     ref_rows = {}
     if os.path.isfile(ref_path):
-        ref_rows = {r['level']: r for r in json.load(open(ref_path))['levels']}
+        ref_rows = {row['level']: row for row in json.load(open(ref_path))['levels']}
     elif '--save' not in args:
         print(f'no reference run "{reference}" ({ref_path}); make one with: navregress.py --save {reference}')
         return 2
@@ -258,25 +282,27 @@ def main(argv):
     os.makedirs(outdir, exist_ok=True)
     rows, failed = [], 0
     last_path = navparity.save_path(root, 'regression_last')
-    last_rows = {r['level']: r for r in json.load(open(last_path))['levels']} if os.path.isfile(last_path) else {}
+    last_rows = {row['level']: row for row in json.load(open(last_path))['levels']} if os.path.isfile(last_path) else {}
     est = estimates(root, levels, last_rows, ref_rows)
     total = sum(est.values())
     print(f'NavKit regression: {len(levels)} level(s), reference "{reference}", tolerance {tol} points; '
           f'expected about {duration(total)}')
-    start, done_est, timed = time.time(), 0.0, {}
+    start, done_est = time.time(), 0.0
+    timed: dict[str, Row] = {}
     for n, lv in enumerate(levels, 1):
-        t0 = time.time()
-        elapsed = t0 - start
+        level_start = time.time()
+        elapsed = level_start - start
         left = max(total - done_est, 0) * (elapsed / done_est if done_est else 1.0)   # scaled by the pace so far
-        print(f'[{n}/{len(levels)}] {lv}: building (about {duration(est[lv])}); run {100 * done_est / total:.0f} % done, '
-              f'{duration(elapsed)} so far, about {duration(left)} left')
+        print(f'[{n}/{len(levels)}] {lv}: building (about {duration(est[lv])}); '
+              f'run {100 * done_est / total:.0f} % done, {duration(elapsed)} so far, about {duration(left)} left')
         out = os.path.join(outdir, f'{lv}.hpd')
         try:
-            build_level(root, lv, out, lambda m: print(f'      {m}'))
-            structure = {k: v for k, v in hpdcheck.check(out).items() if v}    # what DICE's files always satisfy
-            for k, v in structure.items():
-                print(f'      structure: {k}: {len(v)} - {v[0]}')
-            print(f'      measuring parity against DICE ({duration(time.time() - t0)} in)')
+            build_level(root, lv, out, lambda message: print(f'      {message}'))
+            structure = {check: problems for check, problems in hpdcheck.check(out).items()
+                         if problems}    # what DICE's files always satisfy
+            for check, problems in structure.items():
+                print(f'      structure: {check}: {len(problems)} - {problems[0]}')
+            print(f'      measuring parity against DICE ({duration(time.time() - level_start)} in)')
             row = navparity.run_level(root, lv, out, lambda *a: None)
         except Exception as e:
             failed += 1
@@ -284,8 +310,8 @@ def main(argv):
             print(f'FAIL {lv}: {e}')
             continue
         done_est += est[lv]
-        row['seconds'] = round(time.time() - t0)
-        row['structure_problems'] = sum(len(v) for v in structure.values())
+        row['seconds'] = round(time.time() - level_start)
+        row['structure_problems'] = sum(len(problems) for problems in structure.values())
         rows.append(row)
         timed[lv] = {'seconds': row['seconds']}         # re-estimate the levels to come with this run's times
         rest = levels[n:]
@@ -296,21 +322,19 @@ def main(argv):
         ref = ref_rows.get(lv)
         if ref is None:
             failed += bool(structure)
-            print(f'{"FAIL" if structure else "new "} {lv}: not in the reference run ({time.time() - t0:.0f} s)')
+            print(f'{"FAIL" if structure else "new "} {lv}: not in the reference run '
+                  f'({time.time() - level_start:.0f} s)')
             continue
         worse, better, counts = compare(ref, row, tol)
         if structure:
             worse.append(('structure (hpdcheck)', ref.get('structure_problems', 0), row['structure_problems']))
         failed += bool(worse)
         print(f'{"FAIL" if worse else "ok  "} {lv:9s} ground {row["ground"]:6.2f}  extra {row["extra_ground"]:6.2f}  '
-              f'nodes {row["nodes_same"]:5.2f}  connect {row["connectivity"]:6.2f}  over {row["over_connection"]:6.2f}  '
-              f'AI {row["ai_coverage"]:5.1f}  ({time.time() - t0:.0f} s)')
-        for k, a, b in worse:
-            print(f'       worse:  {k} {a} -> {b}')
-        for k, a, b in better:
-            print(f'       better: {k} {a} -> {b}')
-        for k, a, b in counts:
-            print(f'       count:  {k} {a} -> {b}')
+              f'nodes {row["nodes_same"]:5.2f}  connect {row["connectivity"]:6.2f}  '
+              f'over {row["over_connection"]:6.2f}  AI {row["ai_coverage"]:5.1f}  ({time.time() - level_start:.0f} s)')
+        for label, changes in (('worse: ', worse), ('better:', better), ('count: ', counts)):
+            for measure, before, after in changes:
+                print(f'       {label} {measure} {before} -> {after}')
     run = {'name': 'regression_last', 'date': time.strftime('%Y-%m-%d %H:%M'), 'levels': rows}
     save_run(navparity.save_path(root, 'regression_last'), run)
     if '--save' in args:
@@ -322,7 +346,8 @@ def main(argv):
                 existing = json.load(f)['levels']
         save_run(target, dict(run, name=name, levels=merged_rows(rows, existing)))
         print(f'saved as reference run "{name}"')
-    print(('all passed' if not failed else f'{failed} level(s) worse or failed') + f' ({duration(time.time() - start)})')
+    verdict = 'all passed' if not failed else f'{failed} level(s) worse or failed'
+    print(verdict + f' ({duration(time.time() - start)})')
     return 1 if failed else 0
 
 

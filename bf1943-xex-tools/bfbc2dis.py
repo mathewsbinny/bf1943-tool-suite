@@ -12,6 +12,8 @@ import bisect  # noqa: E402
 import collections  # noqa: E402
 import hashlib  # noqa: E402
 import struct  # noqa: E402
+from collections.abc import Iterator  # noqa: E402
+
 import capstone  # noqa: E402
 
 from workspace import research_root  # noqa: E402
@@ -27,7 +29,10 @@ D_FORM_NAMES = {32: 'lwz', 34: 'lbz', 36: 'stw', 38: 'stb', 40: 'lhz', 44: 'sth'
                 54: 'stfd'}
 
 
-def normalize(instruction):
+type Normalized = tuple[int] | tuple[int, int]     # (primary opcode, extended opcode or form bits)
+
+
+def normalize(instruction: int) -> Normalized:
     """Same normalization as compare_bfbc2_code.py: primary + extended opcode, operands masked."""
     op = instruction >> 26
     if op in (19, 31, 63):
@@ -46,7 +51,9 @@ def normalize(instruction):
 
 
 class Image:
-    def __init__(self, name):
+    """One image ('bf1943' or 'bfbc2', IMAGES), checked against its hash: its .pdata functions and readers over it."""
+
+    def __init__(self, name: str) -> None:
         path, expected = IMAGES[name]
         self.name = name
         self.path = path
@@ -56,7 +63,7 @@ class Image:
         pe = struct.unpack_from('<I', self.data, 60)[0]
         self.base = struct.unpack_from('<I', self.data, pe + 24 + 28)[0]
         rva, size = struct.unpack_from('<II', self.data, pe + 24 + 96 + 3 * 8)   # the exception directory (.pdata)
-        functions = []
+        functions: list[tuple[int, int]] = []
         for offset in range(rva, rva + size, 8):
             start, packed = struct.unpack_from('>II', self.data, offset)
             length = ((packed >> 8) & 0x3fffff) * 4
@@ -65,87 +72,97 @@ class Image:
         self.functions = sorted(set(functions))
         self.starts = [start for start, _ in self.functions]
         self.end_of = dict(self.functions)
-        self._fingerprints = None
-        self._callers = None
+        self._fingerprints: dict[int, str] | None = None
+        self._callers: dict[int, list[tuple[int, int]]] | None = None
 
-    def word(self, a):
-        return struct.unpack_from('>I', self.data, a - self.base)[0]
+    def word(self, address: int) -> int:
+        return struct.unpack_from('>I', self.data, address - self.base)[0]
 
-    def valid(self, a):
-        return self.base <= a < self.base + len(self.data)
+    def valid(self, address: int) -> bool:
+        """Whether address lies in the image."""
+        return self.base <= address < self.base + len(self.data)
 
-    def containing(self, a):
-        i = bisect.bisect_right(self.starts, a) - 1
-        return self.functions[i] if i >= 0 and a < self.functions[i][1] else None
+    def containing(self, address: int) -> tuple[int, int] | None:
+        """The (start, end) of the .pdata function holding address, or None."""
+        i = bisect.bisect_right(self.starts, address) - 1
+        return self.functions[i] if i >= 0 and address < self.functions[i][1] else None
 
-    def norm_seq(self, start, end=None):
+    def norm_seq(self, start: int, end: int | None = None) -> list[Normalized]:
         """The normalized instruction words of the function at start (to end, else its .pdata end)."""
         end = end or self.end_of[start]
-        return [normalize(self.word(a)) for a in range(start, end, 4)]
+        return [normalize(self.word(address)) for address in range(start, end, 4)]
 
-    def fingerprint(self, start, end=None):
+    def fingerprint(self, start: int, end: int | None = None) -> str:
+        """SHA-1 of the function's normalized instructions (norm_seq), comparable across the two images."""
         return hashlib.sha1(repr(self.norm_seq(start, end)).encode()).hexdigest()
 
-    def fingerprints(self):
+    def fingerprints(self) -> dict[int, str]:
+        """{function start: fingerprint} of every .pdata function (computed once)."""
         if self._fingerprints is None:
             self._fingerprints = {start: self.fingerprint(start, end) for start, end in self.functions}
         return self._fingerprints
 
-    def calls(self, start, end=None):
+    def calls(self, start: int, end: int | None = None) -> list[tuple[int, int]]:
         """Direct bl targets in order, [(site, target)]."""
         end = end or self.end_of[start]
-        out = []
-        for a in range(start, end, 4):
-            instruction = self.word(a)
-            if instruction >> 26 == 18 and instruction & 1:       # bl / bla
+        out: list[tuple[int, int]] = []
+        for site in range(start, end, 4):
+            instruction = self.word(site)
+            # bl / bla
+            if instruction >> 26 == 18 and instruction & 1:
                 displacement = instruction & 0x3fffffc
                 if displacement & 0x2000000:
                     displacement -= 0x4000000
                 absolute = instruction & 2
-                out.append((a, (displacement if absolute else a + displacement) & 0xffffffff))
+                out.append((site, (displacement if absolute else site + displacement) & 0xffffffff))
         return out
 
-    def callers(self):
+    def callers(self) -> dict[int, list[tuple[int, int]]]:
         """{target: [(site, calling function start)]} over every function's direct calls."""
         if self._callers is None:
-            callers = collections.defaultdict(list)
+            callers: collections.defaultdict[int, list[tuple[int, int]]] = collections.defaultdict(list)
             for start, end in self.functions:
                 for site, target in self.calls(start, end):
                     callers[target].append((site, start))
             self._callers = callers
         return self._callers
 
-    def insn(self, a):
-        for instruction in _disassembler.disasm(self.data[a - self.base:a - self.base + 4], a):
+    def insn(self, address: int) -> tuple[str, str]:
+        """(mnemonic, operands) of the instruction at address; '.long' for a word capstone cannot decode."""
+        offset = address - self.base
+        for instruction in _disassembler.disasm(self.data[offset:offset + 4], address):
             return instruction.mnemonic, instruction.op_str
-        return '.long', f'0x{self.word(a):08x}'
+        return '.long', f'0x{self.word(address):08x}'
 
-    def lines(self, a, n):
-        for k in range(n):
-            mnemonic, operands = self.insn(a + 4 * k)
-            yield a + 4 * k, self.word(a + 4 * k), mnemonic, operands
+    def lines(self, address: int, count: int) -> Iterator[tuple[int, int, str, str]]:
+        """(address, word, mnemonic, operands) of count instructions from address."""
+        for k in range(count):
+            at = address + 4 * k
+            mnemonic, operands = self.insn(at)
+            yield at, self.word(at), mnemonic, operands
 
-    def cstring(self, a):
-        if not self.valid(a):
+    def cstring(self, address: int) -> str | None:
+        """The printable ASCII NUL-terminated string at address (1 to 159 characters), else None."""
+        if not self.valid(address):
             return None
-        offset = a - self.base
+        offset = address - self.base
         text = self.data[offset:self.data.find(b'\0', offset)]
         if 0 < len(text) < 160 and all(32 <= c < 127 for c in text):
             return text.decode('latin1')
         return None
 
-    def disp_accesses(self, start, end=None):
+    def disp_accesses(self, start: int, end: int | None = None) -> list[tuple[int, str, int, int]]:
         """D-form load/store accesses [(addr, mnemonic, base reg, displacement)]."""
         end = end or self.end_of[start]
-        out = []
-        for a in range(start, end, 4):
-            instruction = self.word(a)
+        out: list[tuple[int, str, int, int]] = []
+        for address in range(start, end, 4):
+            instruction = self.word(address)
             op = instruction >> 26
             if op in D_FORM_NAMES:
                 displacement = instruction & 0xffff
                 if displacement & 0x8000:
                     displacement -= 0x10000
-                out.append((a, D_FORM_NAMES[op], (instruction >> 16) & 31, displacement))
+                out.append((address, D_FORM_NAMES[op], (instruction >> 16) & 31, displacement))
         return out
 
 

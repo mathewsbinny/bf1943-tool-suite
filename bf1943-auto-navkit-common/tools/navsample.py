@@ -55,8 +55,8 @@ class Samples:
         return self.min_x + i * self.pitch, self.min_z + j * self.pitch
 
     def column(self, i: int, j: int) -> range:
-        c = j * self.nx + i
-        return range(self.start[c], self.start[c + 1])
+        col = j * self.nx + i
+        return range(self.start[col], self.start[col + 1])
 
 
 MAX_COLUMNS = 1 << 27      # nx * nz at most: 1.8 x the largest run so far (Coral Sea at 0.2 m, 73,023,000 columns);
@@ -71,7 +71,7 @@ def load(path: str) -> tuple[Samples, int]:
     data = open(path, 'rb').read()
     if len(data) < HEADER.size:
         raise ValueError(f'{path}: not a navsample file ({len(data)} bytes, shorter than its header)')
-    magic, version, pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_b, cap_t, ray_r, _ = \
+    magic, version, pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_bottom, cap_top, ray_radius, _ = \
         HEADER.unpack_from(data, 0)
     if magic != b'ONS1' or version not in (1, 2, 3):
         raise ValueError(f'{path}: not a navsample file')
@@ -81,47 +81,48 @@ def load(path: str) -> tuple[Samples, int]:
         # records, then the column counts in one block, then { u64 offset of the counts, "CNT3" } - read at once
         if len(data) < HEADER.size + 12 or data[-4:] != b'CNT3':
             raise ValueError(f'{path}: sampling run not finished (no column counts)')
-        at = struct.unpack_from('<Q', data, len(data) - 12)[0]
-        if at + nx * nz + 12 != len(data) or (at - HEADER.size) % 20:
-            raise ValueError(f'{path}: the column counts at {at} are not the {nx * nz} bytes before the trailer, after '
-                             f'whole 20-byte records')
-        counts = np.frombuffer(data, np.uint8, nx * nz, at).astype(np.int64)
+        counts_at = struct.unpack_from('<Q', data, len(data) - 12)[0]
+        if counts_at + nx * nz + 12 != len(data) or (counts_at - HEADER.size) % 20:
+            raise ValueError(f'{path}: the column counts at {counts_at} are not the {nx * nz} bytes before the trailer, '
+                             f'after whole 20-byte records')
+        counts = np.frombuffer(data, np.uint8, nx * nz, counts_at).astype(np.int64)
         start = np.zeros(nx * nz + 1, dtype=np.int64)
         np.cumsum(counts, out=start[1:])
-        if HEADER.size + 20 * int(start[-1]) != at:
+        if HEADER.size + 20 * int(start[-1]) != counts_at:
             raise ValueError(f'{path}: the column counts add up to {int(start[-1])} surfaces, and the records before '
-                             f'them hold {(at - HEADER.size) // 20}')
-        rec = np.frombuffer(data, np.dtype([('y', '<f4'), ('n', 'i1', 3), ('f', 'u1'), ('h', '<u4', 3)]),
-                            int(start[-1]), HEADER.size)
-        return Samples(pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_b, cap_t, ray_r, start,
-                       rec['y'].astype(np.float32), (rec['n'] / 127.0).astype(np.float32),
-                       rec['f'].astype(np.uint8), rec['h'].astype(np.uint32)), nx * nz
+                             f'them hold {(counts_at - HEADER.size) // 20}')
+        # per surface: height, normal (signed bytes, / 127), flags, hit details
+        records = np.frombuffer(data, np.dtype([('y', '<f4'), ('n', 'i1', 3), ('f', 'u1'), ('h', '<u4', 3)]),
+                                int(start[-1]), HEADER.size)
+        return Samples(pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_bottom, cap_top, ray_radius, start,
+                       records['y'].astype(np.float32), (records['n'] / 127.0).astype(np.float32),
+                       records['f'].astype(np.uint8), records['h'].astype(np.uint32)), nx * nz
     pos = HEADER.size
     cols = nx * nz
     start = np.zeros(cols + 1, dtype=np.int64)
     ys, normals, flags, hits = [], [], [], []
-    rec = 8 if version == 1 else 20
-    c = 0
-    while c < cols and pos < len(data):
-        n = data[pos]
-        if pos + 1 + n * rec > len(data):
+    record_size = 8 if version == 1 else 20
+    col = 0
+    while col < cols and pos < len(data):
+        count = data[pos]
+        if pos + 1 + count * record_size > len(data):
             break                     # the run stopped inside this column's records: keep the finished columns
         pos += 1
-        for _ in range(n):
-            y, a, b, d, f = struct.unpack_from('<f3bB', data, pos)
+        for _ in range(count):
+            y, normal_x, normal_y, normal_z, flag = struct.unpack_from('<f3bB', data, pos)
             if version == 2:
                 hits.append(struct.unpack_from('<3I', data, pos + 8))
-            pos += rec
+            pos += record_size
             ys.append(y)
-            normals.append((a / 127.0, b / 127.0, d / 127.0))
-            flags.append(f)
-        c += 1
-        start[c] = len(ys)
-    start[c:] = len(ys)   # an interrupted run leaves the rest empty
-    return Samples(pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_b, cap_t, ray_r, start,
+            normals.append((normal_x / 127.0, normal_y / 127.0, normal_z / 127.0))
+            flags.append(flag)
+        col += 1
+        start[col] = len(ys)
+    start[col:] = len(ys)   # an interrupted run leaves the rest empty
+    hit_details = np.array(hits, dtype=np.uint32).reshape(-1, 3) if version == 2 else None    # version 1: none
+    return Samples(pitch, min_x, min_z, nx, nz, y_top, y_bottom, radius, cap_bottom, cap_top, ray_radius, start,
                    np.array(ys, dtype=np.float32), np.array(normals, dtype=np.float32).reshape(-1, 3),
-                   np.array(flags, dtype=np.uint8),
-                   np.array(hits, dtype=np.uint32).reshape(-1, 3) if version == 2 else None), c   # version 1: no hit details
+                   np.array(flags, dtype=np.uint8), hit_details), col
 
 
 def column_sectors(s: Samples, cols: npt.ArrayLike) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
@@ -148,67 +149,69 @@ def reference_cells(s: Samples, hpd_path: str) -> dict[int, list[tuple[float, fl
     cell in half. Coverage is measured at four points inside the cell, off both diagonals:
     1 = whole cell inside, 0.5 = cut by a diagonal, 0.25/0.75 = rarer cases. Layers of overlapping
     areas (sector margins) are merged, keeping the largest coverage."""
-    f = hpdtool.parse(open(hpd_path, 'rb').read())
+    hpd = hpdtool.parse(open(hpd_path, 'rb').read())
     cells: dict[int, list[tuple[float, float, float]]] = {}
-    for sec in f.sectors:
-        m = kymesh.parse_mesh(sec.mesh)
-        for a in m.areas:
+    for sector in hpd.sectors:
+        mesh = kymesh.parse_mesh(sector.mesh)
+        for area in mesh.areas:
             # The boundary of an area is its outline polylines (open) closed by its portal segments
             # (B to neighbouring areas, C on the sector border).
-            segs = [(line[k], line[k + 1]) for line in a.outline for k in range(len(line) - 1)]
-            segs += [(b.p0, b.p1) for b in a.portals] + [(c.p0, c.p1) for c in a.border_portals]
-            pts = [p for seg in segs for p in seg]
-            if not pts:
+            segs = [(line[k], line[k + 1]) for line in area.outline for k in range(len(line) - 1)]
+            segs += ([(portal.p0, portal.p1) for portal in area.portals]
+                     + [(border.p0, border.p1) for border in area.border_portals])
+            points = [point for seg in segs for point in seg]
+            if not points:
                 continue
-            xs = [p[0] for p in pts]
-            zs = [p[2] for p in pts]
+            xs = [point[0] for point in points]
+            zs = [point[2] for point in points]
             i0 = max(0, int(math.ceil((min(xs) - s.min_x) / s.pitch)))
             i1 = min(s.nx - 1, int(math.floor((max(xs) - s.min_x) / s.pitch)))
             j0 = max(0, int(math.ceil((min(zs) - s.min_z) / s.pitch)))
             j1 = min(s.nz - 1, int(math.floor((max(zs) - s.min_z) / s.pitch)))
             if i0 > i1 or j0 > j1:
                 continue
-            gi, gj = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))
-            px = s.min_x + gi * s.pitch
-            pz = s.min_z + gj * s.pitch
+            grid_i, grid_j = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))
+            px = s.min_x + grid_i * s.pitch          # the samples' x and z
+            pz = s.min_z + grid_j * s.pitch
             count = np.zeros(px.shape, dtype=np.int8)
-            for ox, oz in ((0.25, 0.1), (-0.25, -0.1), (0.1, -0.25), (-0.1, 0.25)):
-                qx, qz = px + ox * s.pitch, pz + oz * s.pitch
+            # the four probe points of each cell, as fractions of the pitch from its sample
+            for off_x, off_z in ((0.25, 0.1), (-0.25, -0.1), (0.1, -0.25), (-0.1, 0.25)):
+                probe_x, probe_z = px + off_x * s.pitch, pz + off_z * s.pitch
                 inside = np.zeros(px.shape, dtype=bool)
                 for (x1, _, z1), (x2, _, z2) in segs:    # even-odd rule
                     if z1 == z2:
                         continue
-                    cross = (qz >= min(z1, z2)) & (qz < max(z1, z2))
-                    xi = x1 + (qz - z1) * (x2 - x1) / (z2 - z1)
-                    inside ^= cross & (qx < xi)
+                    cross = (probe_z >= min(z1, z2)) & (probe_z < max(z1, z2))
+                    x_cross = x1 + (probe_z - z1) * (x2 - x1) / (z2 - z1)
+                    inside ^= cross & (probe_x < x_cross)
                 count += inside
-            ys = [p[1] for p in pts]
+            ys = [point[1] for point in points]
             lo, hi = min(ys), max(ys)
-            for i, j, n in zip(gi[count > 0], gj[count > 0], count[count > 0]):
+            for i, j, inside_count in zip(grid_i[count > 0], grid_j[count > 0], count[count > 0]):
                 layers = cells.setdefault(int(j) * s.nx + int(i), [])
-                cov = n / 4.0
-                for k, (l2, h2, c2) in enumerate(layers):
-                    if lo <= h2 + 0.6 and l2 <= hi + 0.6:      # same surface (overlapping sectors)
-                        layers[k] = (min(lo, l2), max(hi, h2), max(cov, c2))
+                coverage = inside_count / 4.0
+                for k, (layer_lo, layer_hi, layer_coverage) in enumerate(layers):
+                    if lo <= layer_hi + 0.6 and layer_lo <= hi + 0.6:      # same surface (overlapping sectors)
+                        layers[k] = (min(lo, layer_lo), max(hi, layer_hi), max(coverage, layer_coverage))
                         break
                 else:
-                    layers.append((lo, hi, cov))
+                    layers.append((lo, hi, coverage))
     return cells
 
 
 def flood(s: Samples, ok: npt.NDArray[np.bool], seeds: Iterable[int], max_dy: float) -> npt.NDArray[np.bool]:
     """Surfaces reachable from the seed surfaces over walkable neighbours (4-connected, |dy| <= max_dy)."""
     reach = np.zeros(len(s.y), dtype=bool)
-    q: deque[int] = deque()
+    queue: deque[int] = deque()
     for k in seeds:
         if ok[k] and not reach[k]:
             reach[k] = True
-            q.append(k)
-    col_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
-    while q:
-        k = q.popleft()
-        c = col_of[k]
-        i, j = c % s.nx, c // s.nx
+            queue.append(k)
+    column_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
+    while queue:
+        k = queue.popleft()
+        col = column_of[k]
+        i, j = col % s.nx, col // s.nx
         for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             ni, nj = i + di, j + dj
             if not (0 <= ni < s.nx and 0 <= nj < s.nz):
@@ -216,26 +219,27 @@ def flood(s: Samples, ok: npt.NDArray[np.bool], seeds: Iterable[int], max_dy: fl
             for n in s.column(ni, nj):
                 if ok[n] and not reach[n] and abs(float(s.y[n]) - float(s.y[k])) <= max_dy:
                     reach[n] = True
-                    q.append(n)
+                    queue.append(n)
     return reach
 
 
 def compare(s: Samples, hpd_path: str, png: str | None = None, slope: float = 40.0, step: float = 0.28,
             tol: float = 0.6) -> None:
-    ref = reference_cells(s, hpd_path)
+    """Prints how well the samples' walkable surfaces agree with an existing pathdata.hpd, and draws it to png."""
+    reference = reference_cells(s, hpd_path)
     ok = walkable(s, slope)
-    tp = fn = fp_raw = 0
+    tp = fn = fp_raw = 0        # reference cells found, reference cells missed; walkable surfaces not in the reference
     part_yes = part_no = 0
     matched = np.zeros(len(s.y), dtype=bool)
     status = np.zeros((s.nz, s.nx), dtype=np.uint8)   # 0 none, 1 both, 2 only reference, 3 only ours, 4 cut cell
-    for c in range(s.nx * s.nz):
-        surf = range(s.start[c], s.start[c + 1])
-        layers = ref.get(c, [])
-        j, i = divmod(c, s.nx)
-        for lo, hi, cov in layers:
-            hit = [k for k in surf if ok[k] and lo - tol <= s.y[k] <= hi + tol]
+    for col in range(s.nx * s.nz):
+        surfaces = range(s.start[col], s.start[col + 1])
+        layers = reference.get(col, [])
+        j, i = divmod(col, s.nx)
+        for lo, hi, coverage in layers:
+            hit = [k for k in surfaces if ok[k] and lo - tol <= s.y[k] <= hi + tol]
             matched[hit] = True
-            if cov < 1:        # cut by a diagonal: either answer is consistent with the reference
+            if coverage < 1:        # cut by a diagonal: either answer is consistent with the reference
                 part_yes += bool(hit)
                 part_no += not hit
                 status[j, i] = max(status[j, i], 4)
@@ -251,8 +255,8 @@ def compare(s: Samples, hpd_path: str, png: str | None = None, slope: float = 40
     fp = reach & ~matched
     fp_raw = int((ok & ~matched).sum())
     for k in np.nonzero(fp)[0]:
-        c = int(np.searchsorted(s.start, k, side='right') - 1)
-        j, i = divmod(c, s.nx)
+        col = int(np.searchsorted(s.start, k, side='right') - 1)
+        j, i = divmod(col, s.nx)
         if status[j, i] == 0:
             status[j, i] = 3
     total_ref = tp + fn
@@ -269,11 +273,12 @@ def compare(s: Samples, hpd_path: str, png: str | None = None, slope: float = 40
         import matplotlib.pyplot as plt
         from matplotlib.colors import ListedColormap
         cmap = ListedColormap(['#202020', '#3cb44b', '#e6194b', '#4363d8', '#7a9a7a'])
-        h = s.pitch / 2
-        ext = (s.min_x - h, s.min_x + s.nx * s.pitch - h, s.min_z - h, s.min_z + s.nz * s.pitch - h)
+        half = s.pitch / 2
+        extent = (s.min_x - half, s.min_x + s.nx * s.pitch - half, s.min_z - half, s.min_z + s.nz * s.pitch - half)
         fig, ax = plt.subplots(figsize=(12, 12 * s.nz / max(s.nx, 1)))
-        ax.imshow(status, origin='lower', extent=ext, cmap=cmap, vmin=0, vmax=4, interpolation='nearest')
-        ax.set_title('green = both, red = only reference, blue = only NavKit (connected), grey-green = cell cut by a diagonal')
+        ax.imshow(status, origin='lower', extent=extent, cmap=cmap, vmin=0, vmax=4, interpolation='nearest')
+        ax.set_title('green = both, red = only reference, blue = only NavKit (connected), '
+                     'grey-green = cell cut by a diagonal')
         fig.savefig(png, dpi=110, bbox_inches='tight')
         print('wrote', png)
 
@@ -284,12 +289,13 @@ def main(argv: list[str]) -> int:
         return 1
     s, cols = load(argv[2])
     if argv[1] == 'info':
-        n = np.diff(s.start)
+        per_column = np.diff(s.start)
         ok = walkable(s)
+        blocked = int((s.flags & BLOCKED).astype(bool).sum())
+        faults = int((s.flags & FAULT).astype(bool).sum())
         print(f'{s.nx} x {s.nz} columns at {s.pitch} m from ({s.min_x}, {s.min_z}); {cols} sampled')
-        print(f'surfaces {len(s.y)}, per column max {n.max() if len(n) else 0}, '
-              f'blocked {int((s.flags & BLOCKED).astype(bool).sum())}, faults {int((s.flags & FAULT).astype(bool).sum())}, '
-              f'walkable {int(ok.sum())}')
+        print(f'surfaces {len(s.y)}, per column max {per_column.max() if len(per_column) else 0}, '
+              f'blocked {blocked}, faults {faults}, walkable {int(ok.sum())}')
         print(f'agent capsule r {s.radius} from {s.cap_bottom} to {s.cap_top} m, ray radius {s.ray_radius}')
     elif argv[1] == 'compare':
         compare(s, argv[3], argv[4] if len(argv) > 4 else None)

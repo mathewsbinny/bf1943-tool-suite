@@ -309,6 +309,19 @@ def test_changed_heightfield_is_refused(tmp_path):
             assert 'not the height field the level was prepared with' in str(e)
 
 
+def test_game_copy_without_the_heightfield_is_refused(tmp_path):
+    # 2026-11-01: Game.data's None was passed on (prepared_heightfield skipped its check) and the export failed later
+    # with a TypeError; the audit's load the same (navaudit1943_checks.loading, through nj.game_heightfield)
+    with level(tmp_path) as L:
+        game1943.Game = lambda game, lv: SimpleNamespace(data=lambda n: None)
+        try:
+            ne.export(LV, log=QUIET)
+            raise AssertionError('a game copy without the height field was exported against')
+        except nj.NavKitError as e:
+            assert 'has no height field' in str(e), e
+        assert nj.game_heightfield(L.st, LV, b'hf') == b'hf'
+
+
 def test_output_path():
     st_ok = {'checked': 't ok'}
     st_failed = {'checked': 't FAILED'}

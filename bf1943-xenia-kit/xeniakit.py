@@ -32,6 +32,10 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import logging
 
 sys.dont_write_bytecode = True
 KIT = os.path.dirname(os.path.abspath(__file__))
@@ -51,26 +55,32 @@ from stfs import Package  # noqa: E402
 
 KNOWN = json.load(open(os.path.join(KIT, 'known.json'), encoding='utf-8'))
 DEFAULT_OUT = os.path.join(KIT, 'output')
-log = None
+type Manifest = dict[str, Any]     # kit-manifest.json
+log = cast('logging.Logger', None)     # set when run (errors.setup) or by a test, before anything says a word
 
 
-def sha256_file(path):
+def sha256_file(path: str) -> str:
     with open(path, 'rb') as f:
         return hashlib.file_digest(f, 'sha256').hexdigest()
 
 
-def sha256(b):
-    return hashlib.sha256(b).hexdigest()
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
-def say(msg):
+def say(msg: str) -> None:
     print(msg, flush=True)
     log.info(msg)
 
 
-def safe_join(root, rel):
+def unsafe_part(part: str) -> bool:
+    """A package path component that could leave the folder: empty, '.', '..', or holding a backslash or colon."""
+    return part in ('', '.', '..') or any(char in part for char in '\\:')
+
+
+def safe_join(root: str, rel: str) -> str:
     parts = rel.split('/')
-    if any(p in ('', '.', '..') or any(c in p for c in '\\:') for p in parts):
+    if any(unsafe_part(part) for part in parts):
         raise ValueError(f'unsafe path in the package: {rel!r}')
     path = os.path.abspath(os.path.join(root, *parts))
     if os.path.commonpath([path, os.path.abspath(root)]) != os.path.abspath(root):
@@ -78,41 +88,41 @@ def safe_join(root, rel):
     return path
 
 
-def extract(package, title):
+def extract(package: str, title: str) -> int:
     """Every file, each data block checked against the package's SHA-1, each file against the known hashes."""
-    known = {f['path']: f for f in KNOWN['game']['files']}
+    known = {file['path']: file for file in KNOWN['game']['files']}
     pkg = Package(package)
     try:
         if pkg.magic not in (b'LIVE', b'PIRS', b'CON '):
             raise ValueError('this is not an Xbox 360 content package')
-        files = [e for e in pkg.entries if not e['dir']]
-        if {e['path'] for e in files} != set(known):
+        files = [entry for entry in pkg.entries if not entry['dir']]
+        if {entry['path'] for entry in files} != set(known):
             raise ValueError('the package holds different files from the known release')
-        for e in files:
-            path = safe_join(title, e['path'])
+        for entry in files:
+            path = safe_join(title, entry['path'])
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            blocks = pkg._blocks(e['start'], e['count'], e['consecutive'])
-            if len(set(blocks)) != len(blocks) or e['size'] > len(blocks) * 4096:
-                raise ValueError(f'invalid block chain: {e["path"]}')
-            digest, remaining = hashlib.sha256(), e['size']
+            blocks = pkg._blocks(entry['start'], entry['count'], entry['consecutive'])
+            if len(set(blocks)) != len(blocks) or entry['size'] > len(blocks) * 4096:
+                raise ValueError(f'invalid block chain: {entry["path"]}')
+            digest, remaining = hashlib.sha256(), entry['size']
             with open(path, 'xb') as out:
-                for b in blocks:
-                    pkg.f.seek(pkg._addr(b))
+                for block in blocks:
+                    pkg.f.seek(pkg._addr(block))
                     data = pkg.f.read(4096)
-                    if len(data) != 4096 or hashlib.sha1(data).digest() != pkg._hash_entry(b)[:20]:
-                        raise ValueError(f'data block SHA-1 mismatch in {e["path"]} (a damaged package?)')
+                    if len(data) != 4096 or hashlib.sha1(data).digest() != pkg._hash_entry(block)[:20]:
+                        raise ValueError(f'data block SHA-1 mismatch in {entry["path"]} (a damaged package?)')
                     chunk = data[:min(remaining, 4096)]
                     out.write(chunk)
                     digest.update(chunk)
                     remaining -= len(chunk)
-            if digest.hexdigest() != known[e['path']]['sha256']:
-                raise ValueError(f'{e["path"]} differs from the known release')
+            if digest.hexdigest() != known[entry['path']]['sha256']:
+                raise ValueError(f'{entry["path"]} differs from the known release')
         return len(files)
     finally:
         pkg.f.close()
 
 
-def build(args):
+def build(args: argparse.Namespace) -> None:
     out = os.path.abspath(args.out)
     args.xenia = os.path.abspath(args.xenia)
     title = os.path.join(out, 'title')
@@ -121,7 +131,8 @@ def build(args):
     xenia_exe = os.path.join(args.xenia, netfix.EXE)
     if not os.path.isfile(xenia_exe):
         raise FileNotFoundError(f'{xenia_exe} not found: give the folder that holds xenia_canary.exe')
-    launcher_text(dict(netfix=os.path.join(args.xenia, netfix.FIXED), title=title), args.gpu)   # refused before any work
+    # a path launch.cmd cannot name is refused before any work
+    launcher_text(dict(netfix=os.path.join(args.xenia, netfix.FIXED), title=title), args.gpu)
     say('1/5 checking the package')
     package_hash = sha256_file(args.package)
     if package_hash != KNOWN['game']['package_sha256']:
@@ -136,7 +147,7 @@ def build(args):
     count = extract(args.package, title)
     say(f'    {count} files match the known release')
     say('3/5 editing the main menu and the network ports')
-    replaced = {}
+    replaced: dict[str, list[dict[str, Any]]] = {}     # path in the title: its change log
     menu_path = safe_join(title, menu_edits.BUNDLE)
     new_bundle, new_res, menu_log, new_root = menu_edits.build(open(menu_path, 'rb').read())
     if (sha256(new_res) != KNOWN['expected']['main_nav_res_sha256']
@@ -171,7 +182,8 @@ def build(args):
     bots_dst = os.path.join(args.xenia, 'patches', bots.PATCH_FILE)
     bots_text = None
     if args.experiment_bots:
-        say('    experiment: offline bots (bots.py; they join, take a kit and spawn, and move only on a host program\'s commands: navhost, guestmem.py)')
+        say('    experiment: offline bots (bots.py; they join, take a kit and spawn, and move only on a host '
+            'program\'s commands: navhost, guestmem.py)')
         bots_text = bots.patch_toml()
     install_bots_patch(os.path.dirname(bots_dst), bots_text)
     fixed, fix_log = netfix.build(xenia_bytes)
@@ -182,59 +194,68 @@ def build(args):
         with open(fixed_path, 'wb') as f:  # an identical copy is kept as is (it may be running)
             f.write(fixed)
     say('5/5 manifests and launch.cmd')
-    known = {f['path']: f['sha256'] for f in KNOWN['game']['files']}
+    known = {file['path']: file['sha256'] for file in KNOWN['game']['files']}
     files = []
     for rel in sorted(known):
-        h = sha256_file(safe_join(title, rel))
-        files.append(dict(path=rel, sha256=h, replaced=rel in replaced, **({'original_sha256': known[rel]} if rel in replaced else {})))
+        digest = sha256_file(safe_join(title, rel))
+        original = {'original_sha256': known[rel]} if rel in replaced else {}
+        files.append(dict(path=rel, sha256=digest, replaced=rel in replaced, **original))
     with open(os.path.join(title, 'title-manifest.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(dict(name='bf1943-xenia-kit', base='package', files=files), f, indent=1)
-    manifest = dict(tool='bf1943-xenia-kit/xeniakit.py', built=datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+    built = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
+    manifest = dict(tool='bf1943-xenia-kit/xeniakit.py', built=built,
                     package=os.path.abspath(args.package), package_sha256=package_hash,
                     xenia=os.path.abspath(args.xenia), xenia_sha256=KNOWN['xenia']['exe_sha256'],
                     netfix=fixed_path, netfix_sha256=sha256(fixed), netfix_changes=fix_log,
                     patch=patch_dst, patch_sha256=KNOWN['patch']['sha256'], title=title, edits=replaced,
                     experiment_team=args.experiment_team,
-                    bots_patch=bots_dst if bots_text else None, bots_patch_sha256=sha256(bots_text.encode()) if bots_text else None)
+                    bots_patch=bots_dst if bots_text else None,
+                    bots_patch_sha256=sha256(bots_text.encode()) if bots_text else None)
     with open(os.path.join(out, 'kit-manifest.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(manifest, f, indent=1)
     write_launcher(out, manifest, args.gpu)
     say(f'done: {out}\n    play: {os.path.join(out, "launch.cmd")}  (or: python -B xeniakit.py launch)')
 
 
-def kit_bots_patches(patches):
+def made_by_kit(path: str) -> bool:
+    """Whether a patch file starts with the kit's bots header (bots.HEADER)."""
+    return open(path, encoding='utf-8', errors='replace').read().startswith(bots.HEADER)
+
+
+def kit_bots_patches(patches: str) -> list[str]:
     """Every bots experiment patch in a Xenia patches folder: the file under the kit's bots patch name, and any .toml
     the kit made (it starts with bots.HEADER) under another name. verify allows none in a normal build and only its
     own in a bots build; build leaves the folder that way."""
     if not os.path.isdir(patches):
         return []
-    return [os.path.join(patches, f) for f in sorted(os.listdir(patches)) if f == bots.PATCH_FILE or f.endswith('.toml')
-            and open(os.path.join(patches, f), encoding='utf-8', errors='replace').read().startswith(bots.HEADER)]
+    return [os.path.join(patches, name) for name in sorted(os.listdir(patches))
+            if name == bots.PATCH_FILE or name.endswith('.toml') and made_by_kit(os.path.join(patches, name))]
 
 
-def foreign_bots_patch(patches):
+def foreign_bots_patch(patches: str) -> None:
     """Refuses a file under the kit's bots patch name that the kit did not make (it is never overwritten or removed)."""
     own = os.path.join(patches, bots.PATCH_FILE)
-    if os.path.isfile(own) and not open(own, encoding='utf-8', errors='replace').read().startswith(bots.HEADER):
+    if os.path.isfile(own) and not made_by_kit(own):
         raise FileExistsError(f'{own} was not made by this kit: move it away first')
 
 
-def install_bots_patch(patches, text):
+def install_bots_patch(patches: str, text: str | None) -> None:
     """A normal build (text None) leaves no bots patch in Xenia's patches folder, a bots build exactly its own: every
     other kit-made bots patch, under any name, is removed (verify would refuse it; before 2026-10-30 only the kit's own
     file name was, so a renamed copy made the build pass and its verify fail). A file under the kit's name that the
     kit did not make is refused, with nothing changed."""
     foreign_bots_patch(patches)
     own = os.path.join(patches, bots.PATCH_FILE)
-    for p in kit_bots_patches(patches):
-        if text is None or os.path.normcase(p) != os.path.normcase(own):
-            os.remove(p)
+    for path in kit_bots_patches(patches):
+        if text is None or os.path.normcase(path) != os.path.normcase(own):
+            os.remove(path)
     if text is not None:
         with open(own, 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)
 
 
-def launch_args(manifest, gpu):
+def launch_args(manifest: Manifest, gpu: str) -> list[str]:
+    """Xenia's command line: the fixed Xenia, the GPU backend, the license mask and the title's default.xex."""
     return [manifest['netfix'], f'--gpu={gpu}', '--license_mask=1', os.path.join(manifest['title'], 'default.xex')]
 
 
@@ -249,7 +270,7 @@ def launch_args(manifest, gpu):
 LAUNCHER_ENCODING = 'utf-8'
 
 
-def cmd_quoted(path):
+def cmd_quoted(path: str) -> str:
     """A path as one quoted cmd.exe argument: '%' doubled (cmd expands %...% even inside quotes, so a folder such as
     "50%off" broke the line before 2026-10-30); a path with a double quote, or one UTF-8 cannot write (a lone
     surrogate), is refused."""
@@ -263,7 +284,7 @@ def cmd_quoted(path):
     return '"' + path.replace('%', '%%') + '"'
 
 
-def launcher_text(manifest, gpu):
+def launcher_text(manifest: Manifest, gpu: str) -> str:
     """launch.cmd's text (raises ValueError when a path cannot be written in it). The lines before "chcp 65001" are
     ASCII: they are read in whatever code page the console has."""
     netfix_exe, gpu_flag, license_flag, title = launch_args(manifest, gpu)
@@ -278,29 +299,32 @@ def launcher_text(manifest, gpu):
             'if defined KIT_CODE_PAGE chcp %KIT_CODE_PAGE% >nul 2>nul\r\n')
 
 
-def write_launcher(out, manifest, gpu):
+def write_launcher(out: str, manifest: Manifest, gpu: str) -> None:
     text = launcher_text(manifest, gpu)
     with open(os.path.join(out, 'launch.cmd'), 'wb') as f:
         f.write(text.encode(LAUNCHER_ENCODING))
 
 
-def load(out):
+def load(out: str) -> Manifest:
+    """The build's kit-manifest.json from an output folder."""
     path = os.path.join(os.path.abspath(out), 'kit-manifest.json')
     if not os.path.isfile(path):
         raise FileNotFoundError(f'{path} not found: run "xeniakit.py build" first')
     return json.load(open(path, encoding='utf-8'))
 
 
-def verify(args):
-    m = load(args.out)
+def verify(args: argparse.Namespace) -> None:
+    """Every title file, the fixed Xenia and the patch files as the build left them; raises ValueError otherwise."""
+    manifest = load(args.out)
     bad = []
-    title_manifest = json.load(open(os.path.join(m['title'], 'title-manifest.json'), encoding='utf-8'))
-    for f in title_manifest['files']:
-        if sha256_file(os.path.join(m['title'], *f['path'].split('/'))) != f['sha256']:
-            bad.append(f['path'])
-    checked = [(m['netfix'], m['netfix_sha256']), (m['patch'], m['patch_sha256'])]
-    if m.get('bots_patch'):
-        checked.append((m['bots_patch'], m['bots_patch_sha256']))
+    title_manifest = json.load(open(os.path.join(manifest['title'], 'title-manifest.json'), encoding='utf-8'))
+    for file in title_manifest['files']:
+        if sha256_file(os.path.join(manifest['title'], *file['path'].split('/'))) != file['sha256']:
+            bad.append(file['path'])
+    checked = [(manifest['netfix'], manifest['netfix_sha256']), (manifest['patch'], manifest['patch_sha256'])]
+    bots_patch = manifest.get('bots_patch')
+    if bots_patch:
+        checked.append((bots_patch, manifest['bots_patch_sha256']))
     for path, expected in checked:
         if not os.path.isfile(path) or sha256_file(path) != expected:
             bad.append(path)
@@ -308,35 +332,38 @@ def verify(args):
         raise ValueError(f'changed or missing since the build: {bad}')
     # the build's bot mode: Xenia applies every patch file in the folder, so a normal build must find no bots patch
     # there (another build against the same Xenia may have written one), and a bots build only its own
-    extra = [p for p in kit_bots_patches(os.path.dirname(m['patch']))
-             if not (m.get('bots_patch') and os.path.normcase(p) == os.path.normcase(m['bots_patch']))]
+    extra = [path for path in kit_bots_patches(os.path.dirname(manifest['patch']))
+             if not (bots_patch and os.path.normcase(path) == os.path.normcase(bots_patch))]
     if extra:
-        raise ValueError(f'{"a normal build, but Xenia has" if not m.get("bots_patch") else "Xenia has another"} '
-                         f'bots experiment patch: {extra} (rebuild, or move it away)')
+        found = 'a normal build, but Xenia has' if not bots_patch else 'Xenia has another'
+        raise ValueError(f'{found} bots experiment patch: {extra} (rebuild, or move it away)')
     say(f'ok: {len(title_manifest["files"])} title files, the fixed Xenia and the patch file match the build'
-        f'{" (with the bots experiment)" if m.get("bots_patch") else "; no bots patch"}')
+        f'{" (with the bots experiment)" if bots_patch else "; no bots patch"}')
 
 
-def launch(args):
-    m = load(args.out)
+def launch(args: argparse.Namespace) -> None:
+    manifest = load(args.out)
     verify(args)
-    subprocess.Popen(launch_args(m, args.gpu), cwd=os.path.dirname(m['netfix']))
+    subprocess.Popen(launch_args(manifest, args.gpu), cwd=os.path.dirname(manifest['netfix']))
     say('Xenia started')
 
 
-def main(argv):
-    p = argparse.ArgumentParser(prog='xeniakit.py', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = p.add_subparsers(dest='command', required=True)
-    b = sub.add_parser('build')
-    b.add_argument('package')
-    b.add_argument('xenia')
-    b.add_argument('--replace-patch', action='store_true')
-    b.add_argument('--experiment-team', type=int, choices=[1, 2], help='experiment: the deploy screen requests this team')
-    b.add_argument('--experiment-bots', action='store_true', help='experiment: a second patch file with offline bots')
-    for s in (b, sub.add_parser('verify'), sub.add_parser('launch')):
-        s.add_argument('--out', default=DEFAULT_OUT)
-        s.add_argument('--gpu', default='vulkan', choices=['vulkan', 'd3d12'])
-    args = p.parse_args(argv[1:])
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog='xeniakit.py', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest='command', required=True)
+    build_parser = commands.add_parser('build')
+    build_parser.add_argument('package')
+    build_parser.add_argument('xenia')
+    build_parser.add_argument('--replace-patch', action='store_true')
+    build_parser.add_argument('--experiment-team', type=int, choices=[1, 2],
+                              help='experiment: the deploy screen requests this team')
+    build_parser.add_argument('--experiment-bots', action='store_true',
+                              help='experiment: a second patch file with offline bots')
+    for command in (build_parser, commands.add_parser('verify'), commands.add_parser('launch')):
+        command.add_argument('--out', default=DEFAULT_OUT)
+        command.add_argument('--gpu', default='vulkan', choices=['vulkan', 'd3d12'])
+    args = parser.parse_args(argv[1:])
     {'build': build, 'verify': verify, 'launch': launch}[args.command](args)
     return 0
 

@@ -1,4 +1,5 @@
-"""NavKit: sample several levels in one unattended run (each run starts the game, samples, closes it).
+"""NavKit: sample several levels in one unattended run (each run starts the game, samples, closes it), through
+navkit_le.py's sample step; writes the levels' sample files and a log (default work\\navsample\\sample_all.log).
 
   sample_all.py [--pitch 0.2] [--levels sp_009,sp_01,...] [--smoke sp_009] [--budget <ms per frame>] [--log <file>]
 
@@ -24,49 +25,56 @@ LEVELS = ['sp_01', 'sp_02', 'sp_03', 'sp_04', 'sp_003_b', 'sp_004_b', 'sp_005', 
           'sp_008_b', 'sp_009', 'ons_mp_002', 'ons_mp_004']
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     opts = dict(zip(argv[1:], argv[2:]))
     pitch = float(opts.get('--pitch', 0.2))
     levels = opts['--levels'].split(',') if '--levels' in opts else list(LEVELS)
     smoke = opts.get('--smoke')
     budget = int(opts['--budget']) if '--budget' in opts else None
-    logf = open(opts.get('--log', os.path.join(navkit.Project(None).work, 'navsample', 'sample_all.log')), 'a', encoding='utf-8', newline='\n')
+    log_path = opts.get('--log', os.path.join(navkit.Project(None).work, 'navsample', 'sample_all.log'))
+    log_file = open(log_path, 'a', encoding='utf-8', newline='\n')
+    detailed_run = abs(pitch - 0.8) > 1e-6
 
     try:                        # the log is closed however the run ends (a failure's traceback can hold this frame)
-        def log(*a):
-            line = time.strftime('%H:%M:%S ') + ' '.join(str(x) for x in a)
+        def log(*parts: object) -> None:
+            line = time.strftime('%H:%M:%S ') + ' '.join(str(part) for part in parts)
             print(line, flush=True)
-            logf.write(line + '\n')
-            logf.flush()
-        pr = navkit.Project(None)
+            log_file.write(line + '\n')
+            log_file.flush()
+        project = navkit.Project(None)
         order = ([smoke] if smoke else []) + [lv for lv in levels if lv != smoke]
-        done, failed = [], []
-        t0 = time.time()
+        done: list[str] = []
+        failed: list[tuple[str, str]] = []
+        run_start = time.time()
         log(f'== sample_all: {len(order)} levels at pitch {pitch}: {", ".join(order)}')
         for n, lv in enumerate(order, 1):
-            t1 = time.time()
+            level_start = time.time()
+            counter = f'[{n}/{len(order)}] {lv}'
             try:
-                if abs(pitch - 0.8) > 1e-6 and not pr.samples08(lv):
-                    log(f'[{n}/{len(order)}] {lv}: no 0.8 m samples - those first')
-                    if not navkit.sample(pr, lv, log=log, pitch=0.8):
+                if detailed_run and not project.samples08(lv):
+                    log(f'{counter}: no 0.8 m samples - those first')
+                    if not navkit.sample(project, lv, log=log, pitch=0.8):
                         raise navkit.NavKitError('0.8 m sampling cancelled')
-                log(f'[{n}/{len(order)}] {lv}: {len(navkit.detailed_sectors(pr, lv)) if abs(pitch - 0.8) > 1e-6 else "all"} sectors')
-                if not navkit.sample(pr, lv, log=log, pitch=pitch, budget_ms=budget):
+                sectors = len(navkit.detailed_sectors(project, lv)) if detailed_run else 'all'
+                log(f'{counter}: {sectors} sectors')
+                if not navkit.sample(project, lv, log=log, pitch=pitch, budget_ms=budget):
                     raise navkit.NavKitError('cancelled')
                 done.append(lv)
-                log(f'[{n}/{len(order)}] {lv}: done in {(time.time() - t1) / 60:.1f} min (total {(time.time() - t0) / 60:.0f} min)')
+                log(f'{counter}: done in {(time.time() - level_start) / 60:.1f} min '
+                    f'(total {(time.time() - run_start) / 60:.0f} min)')
             except Exception as e:     # noqa: BLE001 - log and go on
                 failed.append((lv, str(e)))
-                log(f'[{n}/{len(order)}] {lv}: FAILED - {e}')
-                logf.write(traceback.format_exc() + '\n')
+                log(f'{counter}: FAILED - {e}')
+                log_file.write(traceback.format_exc() + '\n')
                 if lv == smoke:
                     log('smoke test failed - stopping')
                     break
-        log(f'== sample_all finished in {(time.time() - t0) / 60:.0f} min: {len(done)} done, {len(failed)} failed'
+        log(f'== sample_all finished in {(time.time() - run_start) / 60:.0f} min: '
+            f'{len(done)} done, {len(failed)} failed'
             + ''.join(f'\n   {lv}: {e}' for lv, e in failed))
         return 1 if failed else 0
     finally:
-        logf.close()
+        log_file.close()
 
 
 if __name__ == '__main__':

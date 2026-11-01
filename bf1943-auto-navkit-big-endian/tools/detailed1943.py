@@ -25,30 +25,36 @@ import detailed  # noqa: E402
 import soldier1943  # noqa: E402
 
 
-def flagged_sectors(level_dir, xoff, zoff, margin=detailed.MARGIN):
+type SectorKey = tuple[int, int]        # (X, Z): a 100 m sector, less the level's sector offsets
+
+
+def flagged_sectors(level_dir: str, xoff: int, zoff: int, margin: float = detailed.MARGIN) -> set[SectorKey]:
+    """The sectors within margin m of a NeedsDetailedPathfinding object's collision box (object_boxes.json)."""
     out = set()
-    for b in json.load(open(os.path.join(level_dir, 'object_boxes.json'), encoding='utf-8')):
-        if not b.get('detailed'):
+    for box in json.load(open(os.path.join(level_dir, 'object_boxes.json'), encoding='utf-8')):
+        if not box.get('detailed'):
             continue
-        (x0, _, z0), (x1, _, z1) = b['min'], b['max']
+        (x0, _, z0), (x1, _, z1) = box['min'], box['max']
         for X in range(math.floor((x0 - margin) / 100) - xoff, math.floor((x1 + margin) / 100) - xoff + 1):
             for Z in range(math.floor((z0 - margin) / 100) - zoff, math.floor((z1 + margin) / 100) - zoff + 1):
                 out.add((X, Z))
     return out
 
 
-def choose(level_dir, samples_path, xoff, zoff, margin=detailed.MARGIN, stacked_min=detailed.STACKED_MIN):
+def choose(level_dir: str, samples_path: str, xoff: int, zoff: int, margin: float = detailed.MARGIN,
+           stacked_min: int = detailed.STACKED_MIN) -> tuple[list[SectorKey], dict[str, int]]:
     """(sorted [(X, Z)], counts) - the detailed sectors of a BF1943 level."""
-    flag = flagged_sectors(level_dir, xoff, zoff, margin)
+    flagged = flagged_sectors(level_dir, xoff, zoff, margin)
     # standable at BF1943's slope limit (45 deg), not NavKit's BFBC2 40; a column's sector by the rule BF1943's builds
     # take (soldier1943.SETTINGS: the float position)
     counts = detailed.stacked_columns(samples_path, xoff, zoff, slope_max=soldier1943.SLOPE_MAX,
                                       cm_sectors=soldier1943.SETTINGS.column_sectors_cm)
-    stacked = {k for k, n in counts.items() if n >= stacked_min}
-    return sorted(flag | stacked), {'flag': len(flag), 'stacked': len(stacked), 'stacked only': len(stacked - flag)}
+    stacked = {sector for sector, columns in counts.items() if columns >= stacked_min}
+    return sorted(flagged | stacked), {'flag': len(flagged), 'stacked': len(stacked),
+                                       'stacked only': len(stacked - flagged)}
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) != 5:
         print(__doc__)
         return 1

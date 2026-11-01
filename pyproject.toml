@@ -109,13 +109,47 @@ ignore = [
 # not ask PyPI for a newer version). The folders whose code is annotated, checked at pyright's "standard" strictness;
 # a folder is added to `include` once it is annotated and passes.
 [tool.pyright]
+# every library and tool module (2026-11-01). bf1943-xex-tools is listed by file: its folder holds the VMX
+# validation's inputs, which are never edited and so never checked. Tests are left out (**/tests below)
 include = [
     "core/bfbc2core",
     "bf1943-auto-navkit-common/tools",
+    "bf1943-auto-navkit-big-endian/tools",
+    "bf1943-auto-navkit-little-endian",
+    "bf1943-xenia-kit",
+    "bf1943-automated-map-and-bot-test-harness/xenia-run",
+    "bf1943-fbrb-tool",
+    "bf1943-console-readers/stfs",
+    "bf1943-apt-tools",
+    "bf1943-spawn-map",
+    "bf1943-map-inspector",
+    "bf1943-navigation-studio",
+    "bf1943-xex-tools/bfbc2dis.py",
+    "bf1943-xex-tools/classify_vmx.py",
+    "bf1943-xex-tools/export_callgraph_strings.py",
+    "bf1943-xex-tools/inspect_decoded.py",
+    "bf1943-xex-tools/inventory_vmx.py",
+    "bf1943-xex-tools/map_functions.py",
+    "bf1943-xex-tools/map_imports.py",
+    "bf1943-xex-tools/parse_function_trace.py",
+    "bf1943-xex-tools/ppcdis.py",
+    "bf1943-xex-tools/record_batch_decompile.py",
+    "bf1943-xex-tools/record_vmx_validation.py",
+    "bf1943-xex-tools/resolve_helpers.py",
+    "bf1943-xex-tools/verify_xex_image.py",
+    "bf1943-xex-tools/vmx_inputs.py",
+    "bf1943-xex-tools/workspace.py",
+    "bf1943-xex-tools/xenonrecomp_reference.py",
+    "bf1943-xex-tools/xexrefs.py",
+    "tools/import_opfor.py",
+    "run_tests.py",
+    "tests/functions.py",
+    "conftest.py",
+    "BF1943 Tool Suite.pyw",
 ]
 # the VMX validation's inputs are never edited (as in [tool.ruff]), so never checked: none may be in an included
 # folder (tests/test_repo.py checks it)
-exclude = ["**/work", "**/output", "**/__pycache__"]
+exclude = ["**/work", "**/output", "**/__pycache__", "bf1943-*/**/tests", "core/tests"]
 # where the included code's imports are found: the folders suitepath.use puts on sys.path (SHARED and both NavKit
 # variants; no module name is in two of them, so the order changes nothing)
 extraPaths = [

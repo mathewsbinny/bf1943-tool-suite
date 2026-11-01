@@ -36,8 +36,11 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
+import numpy.typing as npt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
@@ -51,12 +54,25 @@ import soldier1943  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 from bfbc2core import game1943, terrain  # noqa: E402
 
+if TYPE_CHECKING:
+    class CellIndex(Protocol):
+        """What the line rule and join_pieces read of a grid: each surface's (or cell's) column i, j."""
+        i: npt.NDArray[np.int64]
+        j: npt.NDArray[np.int64]
+
+type Log = Callable[[str], object]
+type Mask = npt.NDArray[np.bool_]                   # per surface (or cell): bool
+type Surfaces = npt.NDArray[np.int64]               # surface indices
+type LinkTable = dict[tuple[int, int, int], int]    # {(surface k, di, dj): its linked neighbour n}
+type Edges = set[tuple[int, int]]                   # undirected route-graph edges (a, b), a < b
+
 GROUND_CLASSES = ('jeep', 'tank')
 GROUND_LIKE_SLOPE = 10.0     # deg over the class's slope: ground under the disc may be this much steeper than drivable
 SEED_REACH = 6.0             # m: a spawn keeps the drivable component within this of it
 
 
-def paths(lv):
+def paths(lv: str) -> dict[str, Any]:
+    """The level's vehicle files: folders, and 'samples' / 'rsnv' as functions of the class."""
     work = game1943.level_work(lv)
     vehicles = os.path.join(work, 'vehicles')
     return {'work': work, 'objects': os.path.join(work, 'objects'), 'vehicles': vehicles,
@@ -68,13 +84,13 @@ def paths(lv):
 sha256 = nj.sha256                 # (navkitjson1943: one chunked SHA-256 for every tool)
 
 
-def _rows(a):
+def _rows(a: npt.NDArray[Any]) -> npt.NDArray[np.void]:
     """Each row of a (as float32) as one opaque value, so that np.isin compares whole triangles."""
     a = np.ascontiguousarray(a.reshape(len(a), -1).astype(np.float32))
     return a.view(np.dtype((np.void, a.dtype.itemsize * a.shape[1]))).ravel()
 
 
-def prepare(lv, log=print):
+def prepare(lv: str, log: Log = print) -> tuple[int, int]:
     """work\\levels\\<lv>\\vehicles\\objects\\: all_tris.npy without excluded objects and dynamic props, and the box
     files the sampler reads. Returns the triangle counts. Stamped in navkit.json (vehicleclasses1943: 'collision',
     the preparation it was made from)."""
@@ -107,7 +123,8 @@ def prepare(lv, log=print):
     return int(keep.sum()), len(tris)
 
 
-def sample_command(lv, cls):
+def sample_command(lv: str, cls: str) -> list[str]:
+    """The navsample1943.py command line that samples the class's clearance."""
     files = paths(lv)
     state = nj.read(lv)
     args = [sys.executable, '-B', '-u', os.path.join(HERE, 'navsample1943.py'), files['vobjects'],
@@ -117,7 +134,7 @@ def sample_command(lv, cls):
     return args + soldier1943.sea_level_args(state)
 
 
-def samples_current(lv, cls, st=None):
+def samples_current(lv: str, cls: str, st: 'nj.Settings | None' = None) -> bool:
     """Whether the class's samples on disk are of the current preparation and class parameters (their stamp)."""
     st = st or nj.read(lv)
     if not os.path.isfile(paths(lv)['samples'](cls)):
@@ -125,7 +142,7 @@ def samples_current(lv, cls, st=None):
     return vc.current(st, 'samples', vc.inputs(st, lv, cls, sampling=True), cls)
 
 
-def sample(lv, cls, log=print):
+def sample(lv: str, cls: str, log: Log = print) -> None:
     """The class's samples, on the vehicle collision of the current preparation (made again when it is of another:
     2026-10-30, it was made only when its file was missing). Stamped 'samples' / cls; the class's world loses its."""
     files = paths(lv)
@@ -153,8 +170,26 @@ class Grid:
     """The samples of one run: columns j-major; surfaces in CSR order (start per column). Per surface k: y[k],
     normal[k], flags[k] (bit 0: blocked), its column col[k] = j[k] * nx + i[k], and the slope as gx, gz (the rise
     per metre along x and z). Elsewhere in this file g is a Grid and k, n, m surface indices."""
+    pitch: float
+    x0: float
+    z0: float
+    nx: int
+    nz: int
+    radius: float
+    step: float
+    height: float
+    start: npt.NDArray[np.int64]            # per column: its first surface (and the total at [nx * nz])
+    y: npt.NDArray[np.float64]
+    normal: npt.NDArray[np.float64]         # (n, 3)
+    flags: npt.NDArray[np.uint8]
+    col: npt.NDArray[np.int64]
+    i: npt.NDArray[np.int64]
+    j: npt.NDArray[np.int64]
+    n: int
+    gx: npt.NDArray[np.float64]
+    gz: npt.NDArray[np.float64]
 
-    def __init__(self, path):
+    def __init__(self, path: str) -> None:
         import navsample1943
         data = open(path, 'rb').read()
         (magic, version, pitch, x0, z0, nx, nz, y_top, y_bottom, radius, step, height, _r, _z) = \
@@ -168,10 +203,10 @@ class Grid:
         at = navsample1943.HEADER.size
         record_starts = np.zeros(n_columns, np.int64)     # per column: the byte offset of its first record
         view = memoryview(data)
-        for c in range(n_columns):                       # a count byte, then 8-byte records
+        for column in range(n_columns):                  # a count byte, then 8-byte records
             n = view[at]
-            counts[c] = n
-            record_starts[c] = at + 1
+            counts[column] = n
+            record_starts[column] = at + 1
             at += 1 + 8 * n
         self.start = np.zeros(n_columns + 1, np.int64)
         np.cumsum(counts, out=self.start[1:])
@@ -191,7 +226,9 @@ class Grid:
         self.gx, self.gz = -self.normal[:, 0] / normal_y, -self.normal[:, 2] / normal_y
 
     @classmethod
-    def from_columns(cls, pitch, x0, z0, nx, nz, columns, radius=0.0, step=0.0, height=0.0):
+    def from_columns(cls, pitch: float, x0: float, z0: float, nx: int, nz: int,
+                     columns: Sequence[Sequence[tuple[float, Sequence[float], int]]], radius: float = 0.0,
+                     step: float = 0.0, height: float = 0.0) -> 'Grid':
         """A grid from made-up data (tests): columns[j * nx + i] = [(y, (nx, ny, nz), flags)], top down."""
         grid = cls.__new__(cls)
         grid.pitch, grid.x0, grid.z0, grid.nx, grid.nz = pitch, x0, z0, nx, nz
@@ -209,10 +246,11 @@ class Grid:
         grid.gx, grid.gz = -grid.normal[:, 0] / normal_y, -grid.normal[:, 2] / normal_y
         return grid
 
-    def xz(self, k):
+    def xz(self, k: int) -> tuple[Any, Any]:
+        """Surface k's column centre (x, z)."""
         return self.x0 + self.i[k] * self.pitch, self.z0 + self.j[k] * self.pitch
 
-    def dense(self, values, k_max=8, fill=np.nan):
+    def dense(self, values: npt.NDArray[Any], k_max: int = 8, fill: float = np.nan) -> npt.NDArray[np.float64]:
         """(nz, nx, k_max) array of a per-surface value by column (the first k_max surfaces, top down)."""
         out = np.full((self.nz, self.nx, k_max), fill)
         rank = np.arange(self.n) - self.start[self.col]
@@ -221,51 +259,53 @@ class Grid:
         return out
 
 
-def neighbour_links(g, ok, step, di, dj, dense=None):
+def neighbour_links(g: Grid, ok: Mask, step: float, di: int, dj: int,
+                    dense: 'tuple[npt.NDArray[np.float32], npt.NDArray[np.int32]] | None' = None) \
+        -> tuple[Surfaces, Surfaces]:
     """For direction (di, dj): (k, n) pairs of surfaces in ok linked by the step rule (each k: its best n). dense:
-    (Y, IDX) from dense_surfaces, shared by the eight directions."""
+    (heights, indices) from dense_surfaces, shared by the eight directions."""
     K = 8                                          # surfaces per column looked at
-    Y, IDX = dense if dense is not None else dense_surfaces(g, ok)
-    ks = np.nonzero(ok)[0]                         # the surfaces linked from
-    ni, nj = g.i[ks] + di, g.j[ks] + dj            # their neighbour columns
-    inside = (ni >= 0) & (nj >= 0) & (ni < g.nx) & (nj < g.nz)
-    ks, ni, nj = ks[inside], ni[inside], nj[inside]
-    best_n = np.full(len(ks), -1, np.int64)
-    best_rise = np.full(len(ks), np.inf)
+    heights, indices = dense if dense is not None else dense_surfaces(g, ok)
+    from_k = np.nonzero(ok)[0]                     # the surfaces linked from
+    to_i, to_j = g.i[from_k] + di, g.j[from_k] + dj    # their neighbour columns
+    inside = (to_i >= 0) & (to_j >= 0) & (to_i < g.nx) & (to_j < g.nz)
+    from_k, to_i, to_j = from_k[inside], to_i[inside], to_j[inside]
+    best_n = np.full(len(from_k), -1, np.int64)
+    best_rise = np.full(len(from_k), np.inf)
     for rank in range(K):
-        n = IDX[nj, ni, rank]
-        y_n = Y[nj, ni, rank]
+        n = indices[to_j, to_i, rank]
+        y_n = heights[to_j, to_i, rank]
         valid = (n >= 0) & ~np.isnan(y_n)
         n_safe = np.where(valid, n, 0)
-        dy = y_n - g.y[ks]
+        dy = y_n - g.y[from_k]
         # the rise the two surfaces' mean slope predicts over one cell in this direction
-        predicted = g.pitch * ((g.gx[ks] + g.gx[n_safe]) / 2 * di + (g.gz[ks] + g.gz[n_safe]) / 2 * dj)
+        predicted = g.pitch * ((g.gx[from_k] + g.gx[n_safe]) / 2 * di + (g.gz[from_k] + g.gz[n_safe]) / 2 * dj)
         fit = valid & (np.abs(dy - predicted) <= step)
         rise = np.where(fit, np.abs(dy), np.inf)
         better = rise < best_rise
         best_rise = np.where(better, rise, best_rise)
         best_n = np.where(better, n, best_n)
     found = best_n >= 0
-    return ks[found], best_n[found]
+    return from_k[found], best_n[found]
 
 
-def dense_surfaces(g, ok, K=8):
-    """(Y, IDX): per column the first K surfaces' heights (NaN where not in ok) and indices (-1 none)."""
-    Y = g.dense(np.where(ok, g.y, np.nan), K).astype(np.float32)
-    IDX = g.dense(np.arange(g.n).astype(float), K, fill=-1).astype(np.int32)
-    return Y, IDX
+def dense_surfaces(g: Grid, ok: Mask, K: int = 8) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int32]]:
+    """(heights, indices): per column the first K surfaces' heights (NaN where not in ok) and indices (-1 none)."""
+    heights = g.dense(np.where(ok, g.y, np.nan), K).astype(np.float32)
+    indices = g.dense(np.arange(g.n).astype(float), K, fill=-1).astype(np.int32)
+    return heights, indices
 
 
-def components(n, pairs):
+def components(n: int, pairs: npt.NDArray[np.int64]) -> npt.NDArray[np.int64]:
     """Connected-component labels (smallest member index) of n items under undirected pairs (a, b)."""
     labels = np.arange(n)
     if not len(pairs):
         return labels
-    a, b = pairs[:, 0], pairs[:, 1]
+    first, second = pairs[:, 0], pairs[:, 1]
     while True:
-        lower = np.minimum(labels[a], labels[b])
+        lower = np.minimum(labels[first], labels[second])
         changed = False
-        for side in (a, b):
+        for side in (first, second):
             current = labels[side]
             lowered = lower < current
             if lowered.any():
@@ -284,7 +324,7 @@ def components(n, pairs):
 DIRS8 = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 
-def drivable(g, cls, sea_level, forbid_mask=None, log=print):
+def drivable(g: Grid, cls: str, sea_level: float, forbid_mask: Mask | None = None, log: Log = print) -> Mask:
     """Bool per surface: drivable centre positions for the class (see the module's description)."""
     slope = vc.value(cls, 'slope')
     step = vc.value(cls, 'step')
@@ -301,29 +341,29 @@ def drivable(g, cls, sea_level, forbid_mask=None, log=print):
     # the ground under the disc continues: every column within the radius has a ground-like surface within the slope's
     # rise (plus the step) of this one
     K = 8                                          # surfaces per column looked at
-    Y = g.dense(np.where(groundlike, g.y, np.nan), K).astype(np.float32)
+    ground_heights = g.dense(np.where(groundlike, g.y, np.nan), K).astype(np.float32)
     bank_tan = math.tan(math.radians(slope + GROUND_LIKE_SLOPE / 2))
     reach = int(math.floor((radius - g.pitch / 2) / g.pitch + 1e-9))     # cells
-    ks = np.nonzero(ok)[0]                         # the surfaces still drivable
-    good = np.ones(len(ks), bool)
+    still_ok = np.nonzero(ok)[0]                   # the surfaces still drivable
+    good = np.ones(len(still_ok), bool)
     for dj in range(-reach, reach + 1):
         for di in range(-reach, reach + 1):
             dist = math.hypot(di, dj) * g.pitch
             if (di == 0 and dj == 0) or dist > radius - g.pitch / 2 + 1e-9:
                 continue
-            ni, nj = g.i[ks] + di, g.j[ks] + dj
-            inside = (ni >= 0) & (nj >= 0) & (ni < g.nx) & (nj < g.nz)
+            col_i, col_j = g.i[still_ok] + di, g.j[still_ok] + dj
+            inside = (col_i >= 0) & (col_j >= 0) & (col_i < g.nx) & (col_j < g.nz)
             tol = step + bank_tan * dist
-            heights = Y[np.clip(nj, 0, g.nz - 1), np.clip(ni, 0, g.nx - 1)]          # (len, K)
-            hit = inside & np.any(np.abs(heights - g.y[ks][:, None]) <= tol, axis=1)
+            heights = ground_heights[np.clip(col_j, 0, g.nz - 1), np.clip(col_i, 0, g.nx - 1)]     # (len, K)
+            hit = inside & np.any(np.abs(heights - g.y[still_ok][:, None]) <= tol, axis=1)
             good &= hit
-    ok[ks[~good]] = False
+    ok[still_ok[~good]] = False
     log(f'  drivable: {int(ok.sum())} of {g.n} surfaces (blocked {int((~clear).sum())}, steep {int((~flat).sum())}, '
         f'deep {int((~wet_ok).sum())}, bank or drop under the disc {int((~good).sum())})')
     return ok
 
 
-def forbid_surfaces(g, forbid_tris, tol=0.3):
+def forbid_surfaces(g: Grid, forbid_tris: npt.NDArray[np.float32] | None, tol: float = 0.3) -> Mask:
     """Bool per surface: on the top of a ForbidPathfinding object (its triangle under the column within tol)."""
     out = np.zeros(g.n, bool)
     if forbid_tris is None or not len(forbid_tris):
@@ -337,24 +377,26 @@ def forbid_surfaces(g, forbid_tris, tol=0.3):
         i1, j1 = min(cell_hi[tri, 0], g.nx - 1), min(cell_hi[tri, 1], g.nz - 1)
         if i1 < i0 or j1 < j0:
             continue
-        ii, jj = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))     # the columns under its box
-        ii, jj = ii.ravel(), jj.ravel()
-        px, pz = g.x0 + ii * g.pitch, g.z0 + jj * g.pitch
-        u, v, w, inside = navsample1943.inside(tris[tri:tri + 1, :, [0, 2]], px, pz)   # barycentric, per column
+        # the columns under its box
+        cols_i, cols_j = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))
+        cols_i, cols_j = cols_i.ravel(), cols_j.ravel()
+        px, pz = g.x0 + cols_i * g.pitch, g.z0 + cols_j * g.pitch
+        # barycentric (u, v, w) of each column in the triangle, and whether it lies inside
+        u, v, w, inside = navsample1943.inside(tris[tri:tri + 1, :, [0, 2]], px, pz)
         inside = inside[0]
         if not inside.any():
             continue
         tri_y = u[0] * tris[tri, 0, 1] + v[0] * tris[tri, 1, 1] + w[0] * tris[tri, 2, 1]
-        for c, y in zip((jj[inside] * g.nx + ii[inside]).tolist(), tri_y[inside].tolist()):
-            for k in range(g.start[c], g.start[c + 1]):
-                if abs(g.y[k] - y) <= tol:
+        for column, top in zip((cols_j[inside] * g.nx + cols_i[inside]).tolist(), tri_y[inside].tolist()):
+            for k in range(g.start[column], g.start[column + 1]):
+                if abs(g.y[k] - top) <= tol:
                     out[k] = True
     return out
 
 
 # ---- the route graph -------------------------------------------------------------------------------------------------
 
-def link_table(g, ok, step):
+def link_table(g: Grid, ok: Mask, step: float) -> tuple[LinkTable, npt.NDArray[np.int64]]:
     """{(k, di, dj): n} of linked drivable neighbours, and the undirected pairs."""
     table = {}
     pairs = []
@@ -369,7 +411,7 @@ def link_table(g, ok, step):
     return table, all_pairs
 
 
-def grid_line(g, table, ka, kb):
+def grid_line(g: 'CellIndex', table: LinkTable, ka: int, kb: int) -> list[int] | None:
     """Whether a straight line from surface ka to kb stays on linked drivable surfaces (the grid line rule): the
     columns the line crosses, stepped through by straight neighbours (a diagonal step: through a linked side column
     on either side). Returns the surfaces passed, or None."""
@@ -377,12 +419,12 @@ def grid_line(g, table, ka, kb):
     steps = max(abs(ib - ia), abs(jb - ja))
     if steps == 0:
         return [ka] if ka == kb else None
-    current, ci, cj = ka, ia, ja
+    current, current_i, current_j = ka, ia, ja
     out = [ka]
-    for s in range(1, steps + 1):
-        to_i = int(round(ia + (ib - ia) * s / steps))
-        to_j = int(round(ja + (jb - ja) * s / steps))
-        di, dj = to_i - ci, to_j - cj
+    for step in range(1, steps + 1):
+        to_i = int(round(ia + (ib - ia) * step / steps))
+        to_j = int(round(ja + (jb - ja) * step / steps))
+        di, dj = to_i - current_i, to_j - current_j
         if di and dj:
             following = None
             for first, second in (((di, 0), (0, dj)), ((0, dj), (di, 0))):
@@ -398,40 +440,41 @@ def grid_line(g, table, ka, kb):
             following = table.get((current, di, dj))
             if following is None:
                 return None
-        current, ci, cj = following, to_i, to_j
+        current, current_i, current_j = following, to_i, to_j
         out.append(current)
     return out if current == kb else None
 
 
-def clearance(g, ok, max_cells=6):
+def clearance(g: Grid, ok: Mask, max_cells: int = 6) -> npt.NDArray[np.int64]:
     """Per surface: cells (chessboard) to the nearest column without a drivable surface linked at this height
     (capped at max_cells) - an approximation by the column masks: drivable columns."""
     drivable_column = np.zeros((g.nz, g.nx), bool)
     drivable_column[g.j[ok], g.i[ok]] = True
     dist = np.where(drivable_column, max_cells, 0).astype(np.int64)
     remaining = drivable_column.copy()
-    for r in range(1, max_cells):
+    for ring in range(1, max_cells):
         eroded = remaining.copy()
         eroded[1:, :] &= remaining[:-1, :]
         eroded[:-1, :] &= remaining[1:, :]
         eroded[:, 1:] &= remaining[:, :-1]
         eroded[:, :-1] &= remaining[:, 1:]
-        dist = np.where(remaining & ~eroded, np.minimum(dist, r), dist)
+        dist = np.where(remaining & ~eroded, np.minimum(dist, ring), dist)
         remaining = eroded
     return dist[g.j, g.i]
 
 
-def build_graph(g, ok, table, labels, spacing, log=print):
+def build_graph(g: Grid, ok: Mask, table: LinkTable, labels: npt.NDArray[np.int64], spacing: int,
+                log: Log = print) -> tuple[list[int], list[tuple[int, int]]]:
     """Route nodes (surface indices) and edges [(a, b)] over the drivable surfaces."""
     clear_cells = clearance(g, ok)
-    ks = np.nonzero(ok)[0]                         # the drivable surfaces
-    block_i, block_j = g.i[ks] // spacing, g.j[ks] // spacing
+    drivable_k = np.nonzero(ok)[0]                 # the drivable surfaces
+    block_i, block_j = g.i[drivable_k] // spacing, g.j[drivable_k] // spacing
     # one node per (block, component): the surface farthest from the undrivable, then nearest the block's centre
     centre_i = (block_i * spacing + spacing / 2.0 - 0.5)
     centre_j = (block_j * spacing + spacing / 2.0 - 0.5)
-    centre_dist2 = (g.i[ks] - centre_i) ** 2 + (g.j[ks] - centre_j) ** 2
-    order = np.lexsort((centre_dist2, -clear_cells[ks], labels[ks], block_j, block_i))
-    ordered = ks[order]
+    centre_dist2 = (g.i[drivable_k] - centre_i) ** 2 + (g.j[drivable_k] - centre_j) ** 2
+    order = np.lexsort((centre_dist2, -clear_cells[drivable_k], labels[drivable_k], block_j, block_i))
+    ordered = drivable_k[order]
     block_keys = np.stack([block_i[order], block_j[order], labels[ordered]], 1)
     first = np.ones(len(ordered), bool)
     first[1:] = np.any(block_keys[1:] != block_keys[:-1], axis=1)
@@ -454,7 +497,8 @@ def build_graph(g, ok, table, labels, spacing, log=print):
     return nodes, sorted(edges)
 
 
-def join_pieces(g, ok, table, labels, nodes, edges, log):
+def join_pieces(g: 'CellIndex', ok: Mask | None, table: LinkTable, labels: npt.NDArray[np.int64],
+                nodes: Iterable[int], edges: Edges, log: Log) -> tuple[list[int], Edges]:
     """Joins graph pieces lying on one drivable component: from each smaller piece, the grid's shortest path (BFS
     over linked surfaces) to the nearest node of another piece of the component, with nodes placed along it by
     the line rule (each as far along the path as a straight line holds)."""
@@ -467,7 +511,8 @@ def join_pieces(g, ok, table, labels, nodes, edges, log):
         pairs = np.array([(index_of[a], index_of[b]) for a, b in edges], np.int64).reshape(-1, 2)
         piece_of = components(len(nodes), pairs)        # per node (by its index in nodes): its graph piece
         # {drivable component: {graph piece: [its nodes]}}
-        pieces_by_component = collections.defaultdict(lambda: collections.defaultdict(list))
+        pieces_by_component: collections.defaultdict[int, collections.defaultdict[int, list[int]]] = \
+            collections.defaultdict(lambda: collections.defaultdict(list))
         for index, node in enumerate(nodes):
             pieces_by_component[int(labels[node])][int(piece_of[index])].append(node)
         split = [(component, pieces) for component, pieces in pieces_by_component.items() if len(pieces) > 1]
@@ -480,7 +525,7 @@ def join_pieces(g, ok, table, labels, nodes, edges, log):
                     continue
                 # BFS from the piece's nodes to any node of another piece
                 own = set(members)
-                came_from = {node: None for node in members}
+                came_from: dict[int, int | None] = {node: None for node in members}
                 queue = collections.deque(members)
                 goal = None
                 while queue and goal is None:
@@ -497,8 +542,8 @@ def join_pieces(g, ok, table, labels, nodes, edges, log):
                 if goal is None:
                     continue
                 path = [goal]
-                while came_from[path[-1]] is not None:
-                    path.append(came_from[path[-1]])
+                while (previous := came_from[path[-1]]) is not None:
+                    path.append(previous)
                 path.reverse()
                 # string-pull along the path with the line rule
                 at = 0
@@ -507,21 +552,22 @@ def join_pieces(g, ok, table, labels, nodes, edges, log):
                     while to > at + 1 and (grid_line(g, table, path[at], path[to]) is None or
                                            grid_line(g, table, path[to], path[at]) is None):
                         to -= 1
-                    u, v = path[at], path[to]
-                    for k in (u, v):
+                    from_k, to_k = path[at], path[to]
+                    for k in (from_k, to_k):
                         if k not in node_set:
                             nodes.append(k)
                             node_set.add(k)
                             added += 1
-                    edges.add((min(u, v), max(u, v)))
+                    edges.add((min(from_k, to_k), max(from_k, to_k)))
                     at = to
     if added:
         log(f'  joined graph pieces: {added} nodes added')
     return nodes, edges
 
 
-def spawn_seeds(lv, cls, game=None):
-    """[(vehicle name, team, position, yaw, [entry points], spawn index)] of the level's ground vehicle spawns."""
+def spawn_seeds(lv: str, cls: str, game: str | None = None) -> list[dict[str, Any]]:
+    """[(vehicle name, team, position, yaw, [entry points], spawn index)] of the level's ground vehicle spawns; the
+    level's bases and flags are left in spawn_seeds.objectives (build passes them on to the export)."""
     from bfbc2core import level1943, vehicles1943
     level = level1943.load(lv, game=game, log=lambda *a: None)
     game_copy = game1943.Game(game1943.find_game(game), lv)
@@ -539,11 +585,12 @@ def spawn_seeds(lv, cls, game=None):
         out.append({'vehicle': name, 'class': vehicle_class,
                     'team': entity.team, 'pos': [float(v) for v in entity.position], 'yaw': yaw,
                     'entries': vehicles1943.entry_points(game_copy, entity), 'index': entity.index})
-    spawn_seeds.objectives = getattr(level, 'objectives', [])
+    # a function attribute: the tests replace spawn_seeds with stand-ins that set it
+    spawn_seeds.objectives = getattr(level, 'objectives', [])  # pyright: ignore[reportFunctionMemberAccess]
     return out
 
 
-def build(lv, cls, log=print, game=None):
+def build(lv: str, cls: str, log: Log = print, game: str | None = None) -> tuple[str, dict[str, Any]]:
     """The class's world: returns (rsnv path, stats). Needs samples of the current preparation and class parameters
     and the export of the current soldier build; reads the level from the game copy it was prepared from (2026-10-30:
     game=None read the default copy's spawns). Stamped 'worlds' / cls."""
@@ -576,12 +623,12 @@ def build(lv, cls, log=print, game=None):
     # keep the components a ground-vehicle spawn stands on (within SEED_REACH)
     seeds = spawn_seeds(lv, cls, game)
     keep_labels = set()
-    ks = np.nonzero(ok)[0]                         # the drivable surfaces
-    px, pz = g.x0 + g.i[ks] * g.pitch, g.z0 + g.j[ks] * g.pitch
+    drivable_k = np.nonzero(ok)[0]                 # the drivable surfaces
+    px, pz = g.x0 + g.i[drivable_k] * g.pitch, g.z0 + g.j[drivable_k] * g.pitch
     for seed in seeds:
-        dist = np.hypot(px - seed['pos'][0], pz - seed['pos'][2]) + np.abs(g.y[ks] - seed['pos'][1]) * 2
+        dist = np.hypot(px - seed['pos'][0], pz - seed['pos'][2]) + np.abs(g.y[drivable_k] - seed['pos'][1]) * 2
         if len(dist) and dist.min() <= SEED_REACH:
-            keep_labels.add(int(labels[ks[int(np.argmin(dist))]]))
+            keep_labels.add(int(labels[drivable_k[int(np.argmin(dist))]]))
     kept = ok & np.isin(labels, list(keep_labels))
     sizes = np.bincount(labels[kept]) if kept.any() else np.zeros(0)
     log(f'  {len(seeds)} ground-vehicle spawns; kept {len(keep_labels)} components, {int(kept.sum())} surfaces '
@@ -593,15 +640,16 @@ def build(lv, cls, log=print, game=None):
                     'forbid_tris.npy': forbid, 'navkit.json': os.path.join(files['navkit'], 'navkit.json'),
                     'heightfield.res': hf_path}
     meta_sources['soldier rsnv'] = soldier
+    objectives = spawn_seeds.objectives  # pyright: ignore[reportFunctionMemberAccess]  # set by spawn_seeds
     stats = rsnvgrid1943.export_surfaces(lv, cls, g, kept, table, nodes, edges, seeds, out, state, meta_sources, sea,
-                                         log, soldier=soldier, objectives=spawn_seeds.objectives)
+                                         log, soldier=soldier, objectives=objectives)
     vc.record(lv, 'worlds', dict(want, sha256=sha256(out)), cls)   # the file itself too (second review)
     stats['seconds'] = round(time.time() - started, 1)
     log(f'{lv} {cls}: wrote {out} in {stats["seconds"]:.0f} s')
     return out, stats
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog='groundnav1943.py', description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('step', choices=['prepare', 'sample', 'build', 'all'])

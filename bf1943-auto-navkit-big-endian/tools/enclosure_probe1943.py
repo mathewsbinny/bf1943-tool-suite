@@ -17,8 +17,10 @@ import json
 import os
 import sys
 from collections import defaultdict, deque
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 
 sys.dont_write_bytecode = True
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
@@ -30,16 +32,26 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
 import navsample  # noqa: E402
 import navsample1943 as ns  # noqa: E402
 
+if TYPE_CHECKING:
+    from navsample import Samples
 
-def blockers(T, N, steep, slope, tri_lo, tri_hi, px, pz, y):
-    """(triangle index, low, high, over) for the triangles that block a surface at y in column (px, pz). T: triangles
-    (N, 3, 3) with their normals N, steep mask, height change per metre (slope) and height range (tri_lo, tri_hi)."""
-    X, Z = np.array([px]), np.array([pz])
-    T2 = T[:, :, [0, 2]]
-    u, v, w, ins = ns.inside(T2, X, Z)
-    plane_y = (u * T[:, 0, 1, None] + v * T[:, 1, 1, None] + w * T[:, 2, 1, None])[:, 0]   # each plane at the column
+type FloatArray = npt.NDArray[np.floating]
+type Blocker = tuple[int, float, float, bool]       # (triangle index, low, high, over the column)
+type Cell = tuple[int, int, float]                  # a sample column (i, j) and a surface's height there
+
+
+def blockers(tris: FloatArray, tri_normal: FloatArray, steep: npt.NDArray[np.bool], slope: FloatArray,
+             tri_lo: FloatArray, tri_hi: FloatArray, px: float, pz: float, y: float) -> list[Blocker]:
+    """(triangle index, low, high, over) for the triangles that block a surface at y in column (px, pz). tris:
+    triangles (N, 3, 3) with their normals tri_normal, steep mask, height change per metre (slope) and height range
+    (tri_lo, tri_hi)."""
+    point_x, point_z = np.array([px]), np.array([pz])
+    tris_xz = tris[:, :, [0, 2]]
+    # u, v, w: the column's barycentric coordinates in each triangle
+    u, v, w, ins = ns.inside(tris_xz, point_x, point_z)
+    plane_y = (u * tris[:, 0, 1, None] + v * tris[:, 1, 1, None] + w * tris[:, 2, 1, None])[:, 0]   # each plane there
     ins = ins[:, 0]
-    dist = ns.dist2d(T2, X, Z)[:, 0]
+    dist = ns.dist2d(tris_xz, point_x, point_z)[:, 0]
     out = []
     for tri in np.nonzero(dist <= ns.RADIUS)[0]:
         if ins[tri] and not steep[tri]:
@@ -58,7 +70,7 @@ def blockers(T, N, steep, slope, tri_lo, tri_hi, px, pz, y):
     return out
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     png = argv[argv.index('--png') + 1] if '--png' in argv else None
     argv = [arg for arg in argv if arg not in ('--png', png)]
     if len(argv) < 5:
@@ -72,31 +84,34 @@ def main(argv):
     x, y, z = map(float, argv[2:5])
     radius = float(argv[5]) if len(argv) > 5 else 20.0
     s, _ = navsample.load(samples)
-    i0, j0 = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))
+    i0, j0 = int(round((x - s.min_x) / s.pitch)), int(round((z - s.min_z) / s.pitch))     # the point's column
     radius_cells = int(radius / s.pitch)
 
-    def surfaces(i, j):
+    def surfaces(i: int, j: int) -> list[tuple[int, float, bool]]:
         """[(surface, height, blocked)] of column (i, j); none off the sample grid (2026-10-31: column -1 read the
         previous row's last column, and past the last row raised IndexError)."""
         return [(k, float(s.y[k]), bool(s.flags[k] & 1)) for k in column(s, i, j)]
 
     # (height difference, surface, height) of open surfaces near the point's height
-    near = [(abs(sy - y), k, sy) for k, sy, blocked in surfaces(i0, j0) if not blocked and abs(sy - y) < 0.6]
+    near = [(abs(surface_y - y), k, surface_y) for k, surface_y, blocked in surfaces(i0, j0)
+            if not blocked and abs(surface_y - y) < 0.6]
     if not near:                                     # the spawn's own sample may be within a wall's radius
-        for r in range(1, 6):
-            near = [(abs(sy - y), k, sy) for di in range(-r, r + 1) for dj in range(-r, r + 1)
-                    for k, sy, blocked in surfaces(i0 + di, j0 + dj) if not blocked and abs(sy - y) < 0.6]
+        for ring in range(1, 6):
+            near = [(abs(surface_y - y), k, surface_y) for di in range(-ring, ring + 1) for dj in range(-ring, ring + 1)
+                    for k, surface_y, blocked in surfaces(i0 + di, j0 + dj)
+                    if not blocked and abs(surface_y - y) < 0.6]
             if near:
                 break
     if not near:
         print('no open surface near the point')
         return 1
-    _, k0, y0 = min(near)
+    _, start_k, start_y = min(near)
     start_i, start_j = next((i, j) for i in range(i0 - 5, i0 + 6) for j in range(j0 - 5, j0 + 6)
-                            if k0 in column(s, i, j))
-    seen = {k0}
-    queue = deque([(start_i, start_j, y0)])
-    cells, edge = [], {}                             # the fill's (i, j, y); its blocked edge: surface -> (i, j, y)
+                            if start_k in column(s, i, j))
+    seen = {start_k}
+    queue = deque([(start_i, start_j, start_y)])
+    cells: list[Cell] = []                           # the fill's (i, j, y)
+    edge: dict[int, Cell] = {}                       # its blocked edge: surface -> (i, j, y)
     while queue:
         i, j, cell_y = queue.popleft()
         cells.append((i, j, cell_y))
@@ -120,22 +135,23 @@ def main(argv):
         print('(the fill is large: the point is probably not enclosed)')
 
     # the collision triangles within the radius (plus 1 m) of the point
-    T = np.load(os.path.join(objects, 'all_tris.npy'))
-    corner_min, corner_max = T.min(1), T.max(1)
+    tris = np.load(os.path.join(objects, 'all_tris.npy'))
+    corner_min, corner_max = tris.min(1), tris.max(1)
     pad = radius + 1
     nearby = np.nonzero((corner_max[:, 0] > x - pad) & (corner_min[:, 0] < x + pad)
                         & (corner_max[:, 2] > z - pad) & (corner_min[:, 2] < z + pad))[0]
-    T = T[nearby]
-    N, _ = ns.normals(T)
-    steep = N[:, 1] <= ns.FLOOR_MIN
-    slope = np.sqrt(np.maximum(1 - N[:, 1] ** 2, 0)) / np.maximum(N[:, 1], 0.05)
-    tri_lo, tri_hi = T[:, :, 1].min(1), T[:, :, 1].max(1)
+    tris = tris[nearby]
+    tri_normal, _ = ns.normals(tris)
+    steep = tri_normal[:, 1] <= ns.FLOOR_MIN
+    slope = np.sqrt(np.maximum(1 - tri_normal[:, 1] ** 2, 0)) / np.maximum(tri_normal[:, 1], 0.05)
+    tri_lo, tri_hi = tris[:, :, 1].min(1), tris[:, :, 1].max(1)
     boxes = json.load(open(os.path.join(objects, 'object_boxes.json')))
     box_min = np.array([box['min'] for box in boxes])
     box_max = np.array([box['max'] for box in boxes])
-    centres = T.mean(1)
+    centres = tris.mean(1)
 
-    def owner(tri):
+    def owner(tri: int) -> str:
+        """The name of the smallest object box holding the triangle's centre."""
         centre = centres[tri]
         holding = np.nonzero(np.all(box_min - 0.05 <= centre, 1) & np.all(box_max + 0.05 >= centre, 1))[0]
         if not len(holding):
@@ -143,10 +159,11 @@ def main(argv):
         box = boxes[min(holding, key=lambda b: np.prod(box_max[b] - box_min[b]))]   # the smallest box holding it
         return box['bp'].split('/')[-1] + (' [destructible]' if box['destructible'] else '')
 
-    by_owner = defaultdict(lambda: {'surfaces': set(), 'rise': [], 'over': 0, 'xz': []})
+    by_owner: defaultdict[str, dict[str, Any]] = defaultdict(
+        lambda: {'surfaces': set(), 'rise': [], 'over': 0, 'xz': []})
     for k, (i, j, edge_y) in edge.items():
         px, pz = s.min_x + i * s.pitch, s.min_z + j * s.pitch
-        for tri, _low, high, over in blockers(T, N, steep, slope, tri_lo, tri_hi, px, pz, edge_y):
+        for tri, _low, high, over in blockers(tris, tri_normal, steep, slope, tri_lo, tri_hi, px, pz, edge_y):
             entry = by_owner[owner(tri)]
             entry['surfaces'].add(k)
             entry['rise'].append(min(high, edge_y + ns.HEIGHT) - edge_y)
@@ -154,7 +171,7 @@ def main(argv):
             entry['xz'].append((px, pz))
     if png:
         draw(png, s, i0, j0, radius_cells, (x, y, z), cells, edge, boxes)
-    for name, entry in sorted(by_owner.items(), key=lambda kv: -len(kv[1]['surfaces'])):
+    for name, entry in sorted(by_owner.items(), key=lambda item: -len(item[1]['surfaces'])):
         xz = np.array(entry['xz'])
         print(f"  {len(entry['surfaces']):4d} edge surfaces blocked by {name}: "
               f"reaches {np.median(entry['rise']):.2f} m above them (median), {entry['over']} overhead hits; "
@@ -162,12 +179,15 @@ def main(argv):
     return 0
 
 
-def column(s, i, j):
+def column(s: 'Samples', i: int, j: int) -> range:
     """The surfaces of column (i, j), none off the sample grid."""
     return s.column(i, j) if 0 <= i < s.nx and 0 <= j < s.nz else range(0)
 
 
-def draw(png, s, i0, j0, radius_cells, point, cells, edge, boxes):
+def draw(png: str, s: 'Samples', i0: int, j0: int, radius_cells: int, point: tuple[float, float, float],
+         cells: list[Cell], edge: dict[int, Cell], boxes: list[dict[str, Any]]) -> None:
+    """The fill from above: its cells, its blocked edge, other open and blocked ground near the point's height, and
+    the object boxes there."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt

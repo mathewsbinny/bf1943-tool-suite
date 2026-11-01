@@ -24,6 +24,8 @@ import os
 import sys
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable, Collection
+from typing import Any
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -43,13 +45,18 @@ NEAR_DY = 1.0                   # height tolerance of a node match (both files' 
                                 # 2.5 m: a street node then matched a deck node 2.5 m above it, and ONS_MP_002's detailed
                                 # build showed 119 'missing' DICE links - 12 with 1 m (2026-10-21)
 
+type Box = tuple[float, float, float, float]       # (minX, minZ, maxX, maxZ)
+type Row = dict[str, Any]                          # one level's measures (run_level)
+type Run = dict[str, Any]                          # {'name', 'date', 'levels': [Row]}
 
-def opfor_root(given=None):
+
+def opfor_root(given: str | None = None) -> str:
+    """The Project OPFOR folder (navkit_le.find_opfor)."""
     import navkit_le as navkit
     return navkit.find_opfor(given)
 
 
-def reference_of(root, lv):
+def reference_of(root: str, lv: str) -> str:
     """DICE's path data for the level: the kept original while NavKit's file is installed. A level that had none
     (navkit_le.py install left its .opfor-none marker) gives the backup's path, which does not exist: the installed
     file is NavKit's own, not a reference."""
@@ -59,7 +66,8 @@ def reference_of(root, lv):
     return path
 
 
-def level_xml(root, lv):
+def level_xml(root: str, lv: str) -> str:
+    """The level's converted partition (work\\levels\\<lv>\\dist\\levels\\<lv>.xml, any case)."""
     folder = os.path.join(root, 'work', 'levels', lv, 'dist', 'levels')
     for name in os.listdir(folder):
         if name.lower() == lv + '.xml':
@@ -67,7 +75,7 @@ def level_xml(root, lv):
     raise FileNotFoundError(f'{lv}: converted level partition not found in {folder} (navkit_le.py prepare {lv})')
 
 
-def terrain_bounds(root, lv):
+def terrain_bounds(root: str, lv: str) -> Box | None:
     r"""(minX, minZ, maxX, maxZ) of the level's terrain heightfield (work\levels\<lv>\terrain), or None. DICE's console
     path data can reach past it (ONS_MP_002: ground to z -527, the PC terrain ends at -512 - 3,600 m2 and a route
     that do not exist on PC), so the reference is clipped to it: ground and connectivity are measured on PC ground."""
@@ -76,15 +84,16 @@ def terrain_bounds(root, lv):
     for dirpath, _dirs, files in os.walk(folder):
         for name in files:
             if name.lower().endswith('.heightfield-000.res'):
-                hf = terrain.read(os.path.join(dirpath, name))
-                return (float(hf.min[0]), float(hf.min[2]), float(hf.max[0]), float(hf.max[2]))
+                heightfield = terrain.read(os.path.join(dirpath, name))
+                return (float(heightfield.min[0]), float(heightfield.min[2]),
+                        float(heightfield.max[0]), float(heightfield.max[2]))
     return None
 
 
 STALE_DY = 1.0     # a reference route node with no sampled PC surface within this of its ground height is stale
 
 
-def stale_nodes(root, lv, reference, clip=None):
+def stale_nodes(root: str, lv: str, reference: str, clip: Box | None = None) -> set[int]:
     """Ids of the reference's route nodes on ground the PC level does not have: no surface of NavKit's 0.8 m samples
     (the column and its 8 neighbours) within STALE_DY of the node's ground (node height - 0.95). DICE's data was built
     before some late geometry - sp_03: its only valley-to-plateau links run 1.5-5 m under the cliff mesh sp03_cliff_2
@@ -96,27 +105,27 @@ def stale_nodes(root, lv, reference, clip=None):
     import navsample
     candidates = (os.path.join(root, 'work', 'navsample', f'{lv}_navkit.bin'),
                   os.path.join(root, 'work', 'navsample', f'{lv}_full.bin'))
-    samples_path = next((p for p in candidates if os.path.isfile(p)), None)
+    samples_path = next((path for path in candidates if os.path.isfile(path)), None)
     if samples_path is None:
         return set()
-    s, _ = navsample.load(samples_path)
+    samples, _ = navsample.load(samples_path)
     out = set()
     for sector in hpdtool.parse(open(reference, 'rb').read()).sectors:
         for node in sector.nodes:
             x, y, z = node.pos
             if clip and not (clip[0] <= x <= clip[2] and clip[1] <= z <= clip[3]):
                 continue
-            i = int(round((x - s.min_x) / s.pitch))
-            j = int(round((z - s.min_z) / s.pitch))
-            if not (1 <= i < s.nx - 1 and 1 <= j < s.nz - 1):
+            i = int(round((x - samples.min_x) / samples.pitch))
+            j = int(round((z - samples.min_z) / samples.pitch))
+            if not (1 <= i < samples.nx - 1 and 1 <= j < samples.nz - 1):
                 continue
             ground = y - 0.95
             on_pc_ground = False
-            for dj in (-1, 0, 1):
-                # columns i-1..i+1 of row j+dj are consecutive, so their surfaces are one run of the sample arrays
-                column = (j + dj) * s.nx + i
-                first, end = s.start[column - 1], s.start[column + 2]
-                if end > first and np.min(np.abs(s.y[first:end] - ground)) <= STALE_DY:
+            for row_offset in (-1, 0, 1):
+                # columns i-1..i+1 of row j+row_offset are consecutive, so their surfaces are one run of the arrays
+                column = (j + row_offset) * samples.nx + i
+                first, end = samples.start[column - 1], samples.start[column + 2]
+                if end > first and np.min(np.abs(samples.y[first:end] - ground)) <= STALE_DY:
                     on_pc_ground = True
                     break
             if not on_pc_ground:
@@ -124,51 +133,57 @@ def stale_nodes(root, lv, reference, clip=None):
     return out
 
 
-def ladder_ground(reference, candidate, reference_cells):
+def ladder_ground(reference: str, candidate: str, reference_cells: int) -> dict[str, float | int]:
     """Ground reached only through ladder links (navdata: ladder edges, ladder areas): its share of the reference's
     ground, and how many of its cells the reference lacks (kept out of 'extra ground')."""
     from bfbc2core import navdata
     import numpy as np
     cand_nav, ref_nav = navdata.load(candidate), navdata.load(reference)
-    if not len(cand_nav.cell_area) or not any(a.ladder for a in cand_nav.areas):
+    if not len(cand_nav.cell_area) or not any(area.ladder for area in cand_nav.areas):
         return {'percent': 0.0, 'extra_cells': 0, 'cells': 0}
     cand_in_ref, _ = navdata.compare_cells(cand_nav, ref_nav)
-    on_ladder_area = np.array([a.ladder for a in cand_nav.areas])[cand_nav.cell_area]     # per candidate cell
+    on_ladder_area = np.array([area.ladder for area in cand_nav.areas])[cand_nav.cell_area]     # per candidate cell
     return {'percent': round(100.0 * int(on_ladder_area.sum()) / max(reference_cells, 1), 2),
             'extra_cells': int((on_ladder_area & ~cand_in_ref).sum()),
             'cells': int(on_ladder_area.sum())}
 
 
-def pairs(n):
+def pairs(n: int) -> int:
+    """The number of pairs among n things."""
     return n * (n - 1) // 2
 
 
-def islands(reference, candidate, clip=None, drop=None):
+def islands(reference: str, candidate: str, clip: Box | None = None,
+            drop: Collection[int] | None = None) -> dict[str, float | int]:
+    """Island counts of both files and, over DICE's route nodes paired with a NavKit node within NEAR, the
+    connectivity and over-connection shares (module docstring)."""
     ref_data, cand_data = ordercheck.PathData(reference, clip, drop), ordercheck.PathData(candidate)
-    res = {'reference': len(ref_data.group_size), 'candidate': len(cand_data.group_size),
-           'large_reference': sum(1 for v in ref_data.group_size.values() if v >= 25),
-           'large_candidate': sum(1 for v in cand_data.group_size.values() if v >= 25)}
-    grid = defaultdict(list)            # NEAR-sized square -> candidate node indices
+    res: dict[str, float | int] = {
+        'reference': len(ref_data.group_size), 'candidate': len(cand_data.group_size),
+        'large_reference': sum(1 for size in ref_data.group_size.values() if size >= 25),
+        'large_candidate': sum(1 for size in cand_data.group_size.values() if size >= 25)}
+    grid: defaultdict[tuple[int, int], list[int]] = defaultdict(list)   # NEAR-sized square -> candidate node indices
     for k, (_nid, pos) in enumerate(cand_data.nodes):
         grid[(math.floor(pos[0] / NEAR), math.floor(pos[2] / NEAR))].append(k)
-    group_pairs = Counter()             # (reference group, candidate group) -> reference nodes matched across them
+    group_pairs: Counter[tuple[int, int]] = Counter()   # (reference group, candidate group) -> nodes matched across
     matched = 0
     for nid, pos in ref_data.nodes:
-        gx, gz = math.floor(pos[0] / NEAR), math.floor(pos[2] / NEAR)
+        cell_x, cell_z = math.floor(pos[0] / NEAR), math.floor(pos[2] / NEAR)
         best, best_dist2 = None, None
-        for dx in (-1, 0, 1):
-            for dz in (-1, 0, 1):
-                for k in grid.get((gx + dx, gz + dz), ()):
+        for offset_x in (-1, 0, 1):
+            for offset_z in (-1, 0, 1):
+                for k in grid.get((cell_x + offset_x, cell_z + offset_z), ()):
                     other = cand_data.nodes[k][1]
                     if abs(other[1] - pos[1]) > NEAR_DY:
                         continue
                     dist2 = (other[0] - pos[0]) ** 2 + (other[2] - pos[2]) ** 2
-                    if dist2 <= NEAR * NEAR and (best is None or dist2 < best_dist2):
+                    if dist2 <= NEAR * NEAR and (best is None or best_dist2 is None or dist2 < best_dist2):
                         best, best_dist2 = k, dist2
         if best is not None:
             matched += 1
             group_pairs[(ref_data.group[nid], cand_data.group[cand_data.nodes[best][0]])] += 1
-    by_ref, by_cand = Counter(), Counter()
+    by_ref: Counter[int] = Counter()
+    by_cand: Counter[int] = Counter()
     for (ref_group, cand_group), n in group_pairs.items():
         by_ref[ref_group] += n
         by_cand[cand_group] += n
@@ -181,7 +196,8 @@ def islands(reference, candidate, clip=None, drop=None):
     return res
 
 
-def run_level(root, lv, candidate, log):
+def run_level(root: str, lv: str, candidate: str, log: Callable[[str], object]) -> Row:
+    """Every measure of one level's candidate against DICE's file (one row of a run)."""
     ref = reference_of(root, lv)
     xml = level_xml(root, lv)
     started = time.time()
@@ -189,7 +205,7 @@ def run_level(root, lv, candidate, log):
     content, _, _, _ = navdiff.diff(ref, candidate, log=lambda *a: None, clip=clip)
     ai = navcompare.compare(xml, ref, candidate)
     stale = stale_nodes(root, lv, ref, clip)
-    isl = islands(ref, candidate, clip, stale)
+    island_stats = islands(ref, candidate, clip, stale)
     ladder = ladder_ground(ref, candidate, content['cells']['reference'])
     sectors, cells, areas = content['sectors'], content['cells'], content['areas']
     bounds, graph = content['bounds_of_same_areas'], content['graph']
@@ -207,9 +223,11 @@ def run_level(root, lv, candidate, log):
         'outline': bounds['outline'], 'portals': bounds['portals'], 'borders': bounds['borders'],
         'nodes_same': graph['node_parity'], 'edges_same': graph['edge_parity'],
         'costs': graph['costs_same_of_same_edges'],
-        'islands_reference': isl['reference'], 'islands_candidate': isl['candidate'],
-        'large_islands_reference': isl['large_reference'], 'large_islands_candidate': isl['large_candidate'],
-        'nodes_near': isl['nodes_near'], 'connectivity': isl['connectivity'], 'over_connection': isl['over_connection'],
+        'islands_reference': island_stats['reference'], 'islands_candidate': island_stats['candidate'],
+        'large_islands_reference': island_stats['large_reference'],
+        'large_islands_candidate': island_stats['large_candidate'],
+        'nodes_near': island_stats['nodes_near'], 'connectivity': island_stats['connectivity'],
+        'over_connection': island_stats['over_connection'],
         'ai_coverage': ai['coverage_percent'], 'ai_pairwise': ai['pairwise']['percent'],
         'ai_main_reference': ai['main_network']['reference'], 'ai_main_candidate': ai['main_network']['candidate'],
     }
@@ -233,10 +251,11 @@ TOTALS = ['ground', 'extra_ground', 'areas_same', 'portals', 'nodes_same', 'edge
           'over_connection', 'ai_coverage', 'ai_pairwise', 'ladder_ground']
 
 
-def table(run, other=None, log=print):
-    rows = {r['level']: r for r in run['levels']}
-    base = {r['level']: r for r in other['levels']} if other else {}
-    head = f"{'level':9s} " + ' '.join(f'{h:>10s}' for _, h, _ in COLUMNS)
+def table(run: Run, other: Run | None = None, log: Callable[[str], object] = print) -> None:
+    """A run as a table, one row per level and a mean; with other, each value's change against it."""
+    rows = {row['level']: row for row in run['levels']}
+    base = {row['level']: row for row in other['levels']} if other else {}
+    head = f"{'level':9s} " + ' '.join(f'{heading:>10s}' for _, heading, _ in COLUMNS)
     against = f" against '{other['name']}' ({other['date']}): value (change)" if other else ''
     log(f"run '{run['name']}' ({run['date']})" + against)
     log(head)
@@ -254,55 +273,57 @@ def table(run, other=None, log=print):
                 text += f"({'+' if delta > 0 else ''}{fmt.format(delta) if isinstance(delta, float) else delta})"
             cells.append(f'{text:>10s}')
         log(f'{lv:9s} ' + ' '.join(cells))
-    mean = {k: sum(r.get(k, 0) for r in rows.values()) / len(rows) for k in TOTALS}
-    if all(r['areas_same'] == 0 for r in rows.values()):
+    mean = {key: sum(row.get(key, 0) for row in rows.values()) / len(rows) for key in TOTALS}
+    if all(row['areas_same'] == 0 for row in rows.values()):
         mean.pop('portals')
-    line = f"{'mean':9s} " + ' '.join(f"{(fmt.format(mean[k]) if k in mean else ''):>10s}" for k, _, fmt in COLUMNS)
+    line = f"{'mean':9s} " + ' '.join(f"{(fmt.format(mean[key]) if key in mean else ''):>10s}"
+                                      for key, _, fmt in COLUMNS)
     log(line)
     if other:
-        base_mean = {k: sum(r.get(k, 0) for r in other['levels']) / len(other['levels']) for k in TOTALS}
+        base_mean = {key: sum(row.get(key, 0) for row in other['levels']) / len(other['levels']) for key in TOTALS}
 
-        def change(key, fmt):
+        def change(key: str, fmt: str) -> str:
             if key not in mean or key not in base_mean:
                 return ''
             delta = mean[key] - base_mean[key]
             return ('+' if delta > 0 else '') + fmt.format(delta)
 
-        log(f"{'change':9s} " + ' '.join(f'{change(k, fmt):>10s}' for k, _, fmt in COLUMNS))
+        log(f"{'change':9s} " + ' '.join(f'{change(key, fmt):>10s}' for key, _, fmt in COLUMNS))
 
 
-def save_path(root, name):
+def save_path(root: str, name: str) -> str:
+    """Where a named run is saved (OPFOR's work\\navkit\\parity\\<name>.json); the folder is made."""
     folder = os.path.join(root, 'work', 'navkit', 'parity')
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, name.replace(' ', '_') + '.json')
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     args = argv[1:]
     opfor = None
     if '--opfor' in args:
-        i = args.index('--opfor')
-        opfor = args[i + 1]
-        del args[i:i + 2]
+        index = args.index('--opfor')
+        opfor = args[index + 1]
+        del args[index:index + 2]
     if len(args) < 2 or args[0] not in ('run', 'show'):
         print(__doc__)
         return 1
     root = opfor_root(opfor)
     if args[0] == 'show':
-        runs = [json.load(open(save_path(root, n))) for n in args[1:3]]
+        runs = [json.load(open(save_path(root, name))) for name in args[1:3]]
         if len(runs) == 1:
             table(runs[0])
         else:
             table(runs[1], runs[0])         # the second against the first
         return 0
     name = args[1]
-    targets = []
+    targets: list[tuple[str, str]] = []
     if '--pattern' in args:
         pattern = args[args.index('--pattern') + 1]
         levels = args[args.index('--levels') + 1].split(',') if '--levels' in args else LEVELS
         targets = [(lv, pattern.replace('{lv}', lv)) for lv in levels]
     else:
-        targets = [tuple(a.split('=', 1)) for a in args[2:] if '=' in a]
+        targets = [(level, path) for level, path in (arg.split('=', 1) for arg in args[2:] if '=' in arg)]
     print(f"parity run '{name}': {len(targets)} level(s)")
     rows = [run_level(root, lv, path, print) for lv, path in targets]
     run = {'name': name, 'date': time.strftime('%Y-%m-%d %H:%M'), 'levels': rows}

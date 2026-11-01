@@ -16,7 +16,8 @@ SUITES = ['validation.txt', 'logical-validation.txt', 'permutation-validation.tx
 PROBES = ['caller-validation.txt', 'permutation-caller-validation.txt']
 # every input of a run (tools, test scripts, the compiled language, its tables, the image); not the results
 INPUTS = ['bf1943-xex-tools/build_vmx_language.py', 'bf1943-xex-tools/run_vmx.ps1', 'bf1943-xex-tools/TestVmx.java',
-          'bf1943-xex-tools/TestLogical.java', 'bf1943-xex-tools/TestPermutation.java', 'bf1943-xex-tools/TestRlimi.java',
+          'bf1943-xex-tools/TestLogical.java', 'bf1943-xex-tools/TestPermutation.java',
+          'bf1943-xex-tools/TestRlimi.java',
           'bf1943-xex-tools/TestUnaligned.java', 'bf1943-xex-tools/TestDecodeCoverage.java',
           'bf1943-xex-tools/InspectVmxCaller.java', 'bf1943-xex-tools/TestVectorSemantics.java',
           'bf1943-xex-tools/TestScalarFp.java', 'bf1943-xex-tools/xenon_vector_semantics.py',
@@ -28,23 +29,28 @@ INPUTS = ['bf1943-xex-tools/build_vmx_language.py', 'bf1943-xex-tools/run_vmx.ps
 # (after the fingerprint is taken); the recorder hashes them with the results
 
 
-def path_of(f, root=None):
+def path_of(name: str, root: str | Path | None = None) -> Path:
+    """An INPUTS name's file: the suite's own tools are here, the rest are in the research workspace."""
     root = root or research_root()
-    return HERE / f[len('bf1943-xex-tools/'):] if f.startswith('bf1943-xex-tools/') else Path(root) / f
+    if name.startswith('bf1943-xex-tools/'):
+        return HERE / name[len('bf1943-xex-tools/'):]
+    return Path(root) / name
 
 
-def hashes(root=None):
-    return {f: hashlib.sha256(path_of(f, root).read_bytes()).hexdigest() for f in INPUTS}
+def hashes(root: str | Path | None = None) -> dict[str, str]:
+    """{INPUTS name: SHA-256 of its file}."""
+    return {name: hashlib.sha256(path_of(name, root).read_bytes()).hexdigest() for name in INPUTS}
 
 
-def fingerprint(root=None):
-    h = hashlib.sha256()
-    for f, d in sorted(hashes(root).items()):
-        h.update(f'{f} {d}\n'.encode())
-    return h.hexdigest()
+def fingerprint(root: str | Path | None = None) -> str:
+    """One SHA-256 over every input's name and hash, in name order."""
+    digest = hashlib.sha256()
+    for name, file_hash in sorted(hashes(root).items()):
+        digest.update(f'{name} {file_hash}\n'.encode())
+    return digest.hexdigest()
 
 
-def stamp_of(text):
+def stamp_of(text: str) -> str | None:
     """The INPUTS fingerprint a result file was stamped with, or None."""
     for line in reversed(text.splitlines()):
         if line.startswith('INPUTS '):

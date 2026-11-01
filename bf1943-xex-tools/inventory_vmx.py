@@ -1,4 +1,10 @@
-"""Bounded lvx128/stvx128 candidate inventory within known BF1943 function ranges."""
+"""Bounded lvx128/stvx128 candidate inventory within known BF1943 function ranges.
+
+  python -B inventory_vmx.py        (from the research workspace, or with BF1943_RESEARCH set)
+
+Reads the checked image and work/xex-analysis/functions.tsv; writes work/vmx128/inventory.tsv (CRLF, pinned by
+evidence) and research/evidence/vmx128-inventory.json.
+"""
 import collections
 import csv
 import hashlib
@@ -13,7 +19,7 @@ LVX128 = 0x100000c3
 STVX128 = 0x100001c3
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     data = (root / 'work/xex-analysis/default.checked.memory.bin').read_bytes()
     assert hashlib.sha256(data).hexdigest() == IMAGE_SHA256
@@ -26,7 +32,7 @@ def main():
                 word = struct.unpack_from('>I', data, address - 0x82000000)[0]
                 opcode = word & VX128_1_MASK
                 if opcode not in (LVX128, STVX128):
-                    other += word >> 26 == 4
+                    other += int(word >> 26 == 4)
                     continue
                 # VD128: the VD field is the low five bits, the word's 0xc bits the high two
                 vector = ((word >> 21) & 31) | ((word << 3) & 96)
@@ -41,7 +47,8 @@ def main():
     report = dict(image_sha256=hashlib.sha256(data).hexdigest(),
                   counts=dict(collections.Counter(row['mnemonic'] for row in rows)),
                   containing_functions=len({row['function'] for row in rows}), other_primary_opcode4_words=other,
-                  scope='Two supported opcodes only, aligned scan of mapped function bodies. May include embedded data; not execution or full VMX128 coverage.',
+                  scope='Two supported opcodes only, aligned scan of mapped function bodies. May include embedded '
+                        'data; not execution or full VMX128 coverage.',
                   inventory_sha256=hashlib.sha256((root / 'work/vmx128/inventory.tsv').read_bytes()).hexdigest())
     (root / 'research/evidence/vmx128-inventory.json').write_text(json.dumps(report, indent=2) + '\n',
                                                                   encoding='utf-8', newline='\n')

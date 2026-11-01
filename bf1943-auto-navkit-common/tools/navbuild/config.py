@@ -213,14 +213,14 @@ class Grid:
         return abs(self.pitch - DETAILED_PITCH) < 1e-6
 
 
-def grid_at(p: float, settings: Settings = BFBC2) -> Grid:
-    """The Grid of a stage at pitch p: 0.8 (normal sectors) or 0.2 (detailed zones). (set_pitch until 2026-10-31,
+def grid_at(pitch: float, settings: Settings = BFBC2) -> Grid:
+    """The Grid of a stage at the given pitch: 0.8 (normal sectors) or 0.2 (detailed zones). (set_pitch until 2026-10-31,
     which rewrote this module's PITCH, WINDOW, TILE ... for whatever ran next.)"""
-    detailed = abs(p - DETAILED_PITCH) < 1e-6
-    sector_samples = int(round(100 / p))                  # 125 / 500
-    return Grid(pitch=p, sector_samples=sector_samples,
+    detailed = abs(pitch - DETAILED_PITCH) < 1e-6
+    sector_samples = int(round(100 / pitch))                  # 125 / 500
+    return Grid(pitch=pitch, sector_samples=sector_samples,
                 window=range(-1, sector_samples + 2),     # two samples of overlap with each neighbour
-                tile=int(round((20 if detailed else 40) / p)),        # 100 / 50 samples
+                tile=int(round((20 if detailed else 40) / pitch)),        # 100 / 50 samples
                 tiles=6 if detailed else 3,
                 resolution=0.05 if detailed else 0.025,
                 link_step=settings.detailed_link_step if detailed else LINK_STEP)

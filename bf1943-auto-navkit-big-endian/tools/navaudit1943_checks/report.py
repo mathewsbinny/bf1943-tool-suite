@@ -1,176 +1,216 @@
-"""navaudit1943_checks: the report - audit.md from audit.json's content, and the JSON encoder."""
+"""navaudit1943_checks: the report - audit.md from audit.json's content, and the JSON encoder.
+
+markdown() turns the report run() builds (as audit.json holds it: plain JSON values) into audit.md, one section per
+check; _json encodes the numpy values and sets the report holds for json.dump.
+"""
 import collections
 import json
+from typing import Any
 
 import numpy as np
 
+type Record = dict[str, Any]
 
-def _cols(col):
+
+def _cols(col: Record | None) -> list[str]:
     """A sample column as one line per surface."""
     if not col:
         return []
     out = [f"    column {col['grid']} at ({col['column'][0]}, {col['column'][1]}): terrain {col['terrain_y']}, "
            f"water {col['water_top']}"]
-    for s in col['surfaces']:
-        extra = [f"slope {s['slope_deg']}", f"clearance {s['clearance']}"]
-        if s.get('material'):
-            extra.append(s['material'])
-        if s['water_depth']:
-            extra.append(f"{s['water_depth']} m under water")
-        if s['below_terrain']:
-            extra.append(f"{s['below_terrain']} m under the terrain")
-        if s['blocked']:
+    for surface in col['surfaces']:
+        extra = [f"slope {surface['slope_deg']}", f"clearance {surface['clearance']}"]
+        if surface.get('material'):
+            extra.append(surface['material'])
+        if surface['water_depth']:
+            extra.append(f"{surface['water_depth']} m under water")
+        if surface['below_terrain']:
+            extra.append(f"{surface['below_terrain']} m under the terrain")
+        if surface['blocked']:
             extra.append('capsule blocked')
-        if s.get('rules'):
-            extra.append('; '.join(f'{k} rule {v}' for k, v in s['rules'].items()))
-        verdict = 'kept' if s['kept'] else 'not kept: ' + '; '.join(s['why_not'])
-        out.append(f"      y {s['y']:8.2f}  {', '.join(extra)}  -> {verdict}")
+        if surface.get('rules'):
+            extra.append('; '.join(f'{k} rule {v}' for k, v in surface['rules'].items()))
+        verdict = 'kept' if surface['kept'] else 'not kept: ' + '; '.join(surface['why_not'])
+        out.append(f"      y {surface['y']:8.2f}  {', '.join(extra)}  -> {verdict}")
     return out
 
 
-def _fmt(p):
+def _fmt(p: list[float]) -> str:
+    """A point (x, y, z) or (x, z) to 0.1 m."""
     return f"({p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f})" if len(p) == 3 else f"({p[0]:.1f}, {p[1]:.1f})"
 
 
-def markdown(R):
-    L = [f"# Navigation audit: {R['level']}", '', f"{R['date']}. Settings: {json.dumps(R['settings'])}.",
-         f"Masks: {json.dumps(R['masks'])}.", '', '## Inputs', '']
-    for k, v in R['inputs'].items():
-        L.append(f"- {k}: `{v.get('sha256', '')[:16]}...` {v.get('path') or v.get('name')}")
-    P = R['1 positions']
-    L += ['', '## 1. Required positions', '']
-    cnt = collections.Counter((p['kind'], p.get('class') or '', p['status']) for p in P)
-    L += ['| kind | class | status | count |', '|---|---|---|---|']
-    L += [f'| {a} | {b} | {c} | {n} |' for (a, b, c), n in sorted(cnt.items())]
-    ph = R.get('placeholders at the origin (not checked)') or []
-    if ph:
-        L += ['', f"Placeholders at the origin, not checked: {len(ph)} ("
-              + ', '.join(f'{k}: {n}' for k, n in collections.Counter(p['kind'] for p in ph).items()) + ').']
-    L += ['', '### Failures', '']
-    for p in P:
-        if p['status'] != 'fail':
+def markdown(report: Record) -> str:
+    """audit.md: the report's sections as markdown."""
+    lines = [f"# Navigation audit: {report['level']}", '',
+             f"{report['date']}. Settings: {json.dumps(report['settings'])}.",
+             f"Masks: {json.dumps(report['masks'])}.", '', '## Inputs', '']
+    for k, v in report['inputs'].items():
+        lines.append(f"- {k}: `{v.get('sha256', '')[:16]}...` {v.get('path') or v.get('name')}")
+    positions = report['1 positions']
+    lines += ['', '## 1. Required positions', '']
+    counts = collections.Counter((position['kind'], position.get('class') or '', position['status'])
+                                 for position in positions)
+    lines += ['| kind | class | status | count |', '|---|---|---|---|']
+    lines += [f'| {kind} | {class_} | {status} | {n} |' for (kind, class_, status), n in sorted(counts.items())]
+    placeholders = report.get('placeholders at the origin (not checked)') or []
+    if placeholders:
+        kinds = collections.Counter(position['kind'] for position in placeholders)
+        lines += ['', f"Placeholders at the origin, not checked: {len(placeholders)} ("
+                  + ', '.join(f'{k}: {n}' for k, n in kinds.items()) + ').']
+    lines += ['', '### Failures', '']
+    for position in positions:
+        if position['status'] != 'fail':
             continue
-        ns, na = p.get('nearest_same_floor'), p.get('nearest_any_floor')
-        L.append(f"- **{p['kind']} {p.get('class') or ''} {p['name']}** at {_fmt(p['position'])}, floor {p.get('floor_y')} "
-                 f"({p.get('grid')}): {p.get('reason')}")
-        if ns:
-            L.append(f"    nearest area on its floor: {ns['distance']} m, layer {ns['layer']}, sector {ns['sector']}, "
-                     f"island {ns['island']} ({ns['island_nodes']} nodes{', main' if ns['main'] else ''})")
-        if na:
-            L.append(f"    nearest area on any floor: {na['distance']} m, {na['dy']:+} m, layer {na['layer']}, "
-                     f"island {na['island']} ({na['island_nodes']} nodes)")
-        if p.get('objects'):
-            L.append(f"    objects: {', '.join(p['objects'])}")
-        L += _cols(p.get('column'))
-    L += ['', '### Capture areas and repair stations', '', '| position | source | area m2 | land m2 | main m2 | share | of | status |',
-          '|---|---|---|---|---|---|---|---|']
-    for p in P:
-        c = p.get('capture_share')
-        if c:
-            L.append(f"| {p['kind']} {p['name']} | {c['source']} | {c['area_m2']} | {c['land_m2']} | {c['main_network_m2']} | "
-                     f"{c['share']} | {c['share_of']} | {c['status']} |")
-    rs = R['2 reachability']
-    L += ['', '## 2. Reachability', '', f"Capture-area target nodes: {json.dumps(rs['targets'])}.", '']
-    bad = [s for s in rs['spawns'] if not s.get('joined') or not all(s['to'].values()) or not all(s['back'].values())]
-    L.append(f"{len(rs['spawns'])} infantry spawn points; {len(bad)} without a route to and from every capture area:")
-    for s in bad:
-        miss = [k for k, v in s.get('to', {}).items() if not v or not s['back'].get(k)]
-        L.append(f"- {s['spawn']}: island {s.get('island')}, main {s.get('main')}; {s.get('reason') or 'no route: ' + ', '.join(miss)}")
-    I = R['2 islands']
-    L += ['', '### Islands', '']
-    L.append(', '.join(f'{k}: {n}' for k, n in collections.Counter(i['kind'] for i in I).items()))
-    for title, kinds in (('Gap candidates', ('gap candidate',)), ('Vehicle-only zones and separate landmasses',
-                                                                  ('vehicle-only zone', 'separate landmass (reef or islet: boat, or swimming)')),
-                         ('Raised surfaces without access', ('raised surface, no access',))):
-        L += ['', f'#### {title}', '']
-        for i in I:
-            if i['kind'] in kinds:
-                L.append(f"- island {i['island']}: {i['nodes']} nodes, {i['area_m2']} m2, centre {_fmt(i['centre'])}, "
-                         f"{i['mean_height_above_terrain']} m above the terrain; objects {', '.join(i['objects'][:4]) or '-'}"
-                         + (f"; required: {', '.join(i['required'])}" if i['required'] else '')
-                         + (f"; linked by: {', '.join(i['linked_by'])}" if i.get('linked_by') else ''))
-    c = R['3 consistency']
-    L += ['', '## 3. File consistency', '']
-    for k, v in c['hpdcheck'].items():
-        L.append(f"- hpdcheck {k}: {len(v)}" + (f" (e.g. {v[0]})" if v else ''))
+        same, any_floor = position.get('nearest_same_floor'), position.get('nearest_any_floor')
+        lines.append(f"- **{position['kind']} {position.get('class') or ''} {position['name']}** "
+                     f"at {_fmt(position['position'])}, "
+                     f"floor {position.get('floor_y')} ({position.get('grid')}): {position.get('reason')}")
+        if same:
+            lines.append(f"    nearest area on its floor: {same['distance']} m, layer {same['layer']}, "
+                         f"sector {same['sector']}, island {same['island']} "
+                         f"({same['island_nodes']} nodes{', main' if same['main'] else ''})")
+        if any_floor:
+            lines.append(f"    nearest area on any floor: {any_floor['distance']} m, {any_floor['dy']:+} m, "
+                         f"layer {any_floor['layer']}, island {any_floor['island']} "
+                         f"({any_floor['island_nodes']} nodes)")
+        if position.get('objects'):
+            lines.append(f"    objects: {', '.join(position['objects'])}")
+        lines += _cols(position.get('column'))
+    lines += ['', '### Capture areas and repair stations', '',
+              '| position | source | area m2 | land m2 | main m2 | share | of | status |',
+              '|---|---|---|---|---|---|---|---|']
+    for position in positions:
+        share = position.get('capture_share')
+        if share:
+            lines.append(f"| {position['kind']} {position['name']} | {share['source']} | {share['area_m2']} | "
+                         f"{share['land_m2']} | "
+                         f"{share['main_network_m2']} | {share['share']} | {share['share_of']} | {share['status']} |")
+    reach = report['2 reachability']
+    lines += ['', '## 2. Reachability', '', f"Capture-area target nodes: {json.dumps(reach['targets'])}.", '']
+    bad = [spawn for spawn in reach['spawns']
+           if not spawn.get('joined') or not all(spawn['to'].values()) or not all(spawn['back'].values())]
+    lines.append(f"{len(reach['spawns'])} infantry spawn points; {len(bad)} without a route to and from every "
+                 f"capture area:")
+    for spawn in bad:
+        missing = [k for k, v in spawn.get('to', {}).items() if not v or not spawn['back'].get(k)]
+        lines.append(f"- {spawn['spawn']}: island {spawn.get('island')}, main {spawn.get('main')}; "
+                     f"{spawn.get('reason') or 'no route: ' + ', '.join(missing)}")
+    islands = report['2 islands']
+    lines += ['', '### Islands', '']
+    lines.append(', '.join(f'{k}: {n}' for k, n in collections.Counter(isl['kind'] for isl in islands).items()))
+    island_groups = (('Gap candidates', ('gap candidate',)),
+                     ('Vehicle-only zones and separate landmasses',
+                      ('vehicle-only zone', 'separate landmass (reef or islet: boat, or swimming)')),
+                     ('Raised surfaces without access', ('raised surface, no access',)))
+    for title, kinds in island_groups:
+        lines += ['', f'#### {title}', '']
+        for isl in islands:
+            if isl['kind'] in kinds:
+                lines.append(f"- island {isl['island']}: {isl['nodes']} nodes, {isl['area_m2']} m2, "
+                             f"centre {_fmt(isl['centre'])}, {isl['mean_height_above_terrain']} m above the terrain; "
+                             f"objects {', '.join(isl['objects'][:4]) or '-'}"
+                             + (f"; required: {', '.join(isl['required'])}" if isl['required'] else '')
+                             + (f"; linked by: {', '.join(isl['linked_by'])}" if isl.get('linked_by') else ''))
+    consistency = report['3 consistency']
+    lines += ['', '## 3. File consistency', '']
+    for k, v in consistency['hpdcheck'].items():
+        lines.append(f"- hpdcheck {k}: {len(v)}" + (f" (e.g. {v[0]})" if v else ''))
     for k in ('portals one-way', 'nodes sharing a position', 'self-loop edges'):
-        L.append(f"- {k}: {len(c[k])}" + ''.join(f'\n    {x}' for x in c[k][:10]))
-    L.append(f"- border nodes: {c['border nodes']}; owners per border id: {json.dumps(c['border node owners (copies without bit 16, per border id)'])}")
-    cr = c.get('crossings') or []
-    real = [d for d in cr if d['verdict'] == 'real break']
-    L += ['', f"### Crossings: {len(cr)} places where touching ground of one floor lies on two islands; "
-          f"{len(real)} real breaks (kept ground joins them under the build's step)", '']
-    for d in cr:
-        L.append(f"- {d['verdict']}: {_fmt(d['centre'])}, {d['cell_pairs']} cell pairs, "
-                 f"{'across a sector seam' if d['across_a_seam'] else 'inside a sector'} ({d['grid']}), islands of "
-                 f"{' and '.join(str(n) for n in d['island_nodes'])} nodes{' (one is the main network)' if d['main'] else ''}")
-    r4 = R['4 resolution']
-    L += ['', '## 4. Resolution (0.8 m against 0.2 m, detailed sectors)', '']
-    if 'skipped' in r4:
-        L.append(r4['skipped'])
+        lines.append(f"- {k}: {len(consistency[k])}" + ''.join(f'\n    {x}' for x in consistency[k][:10]))
+    owners = consistency['border node owners (copies without bit 16, per border id)']
+    lines.append(f"- border nodes: {consistency['border nodes']}; owners per border id: {json.dumps(owners)}")
+    crossings = consistency.get('crossings') or []
+    real = [place for place in crossings if place['verdict'] == 'real break']
+    lines += ['', f"### Crossings: {len(crossings)} places where touching ground of one floor lies on two islands; "
+              f"{len(real)} real breaks (kept ground joins them under the build's step)", '']
+    for place in crossings:
+        lines.append(f"- {place['verdict']}: {_fmt(place['centre'])}, {place['cell_pairs']} cell pairs, "
+                     f"{'across a sector seam' if place['across_a_seam'] else 'inside a sector'} ({place['grid']}), "
+                     f"islands of {' and '.join(str(n) for n in place['island_nodes'])} nodes"
+                     f"{' (one is the main network)' if place['main'] else ''}")
+    resolution = report['4 resolution']
+    lines += ['', '## 4. Resolution (0.8 m against 0.2 m, detailed sectors)', '']
+    if 'skipped' in resolution:
+        lines.append(resolution['skipped'])
     else:
         for k in ('walkable at 0.8 m, not at 0.2 m', 'walkable at 0.2 m, not at 0.8 m'):
-            L += ['', f'### {k}: {len(r4[k])} places wider than a cell row', '']
-            for d in r4[k][:40]:
-                L.append(f"- sector {d['sector']} at ({d['centre'][0]}, {d['terrain_y']}, {d['centre'][1]}): {d['core_m2']} m2 core; "
-                         f"objects {', '.join(d['objects'][:4]) or '-'}")
-                L += _cols({'grid': '0.8 m', 'column': d['centre'], 'terrain_y': d['terrain_y'], 'water_top': None,
-                            'surfaces': d['column_08'] or []})[1:]
-        L += ['', f"### Connectivity: {len(r4['connectivity'])} places", '']
-        L += [f"- sector {d['sector']} at {_fmt(d['centre'])}: {d['kind']} ({d['pieces']} pieces)" for d in r4['connectivity'][:40]]
-    L += ['', '## 5. Layers at required positions', '']
-    for p in P:
-        col = p.get('column')
-        if col and sum(1 for s in col['surfaces']) > 1:
-            L.append(f"- {p['kind']} {p['name']} at {_fmt(p['position'])}: {p['status']}; area used: "
-                     + (f"layer {p['nearest_same_floor']['layer']} at {p['nearest_same_floor']['ground_y']}" if p.get('nearest_same_floor') else 'none'))
-            L += _cols(col)
-    w = R['6 water']
-    L += ['', '## 6. Water and shore', '', f"Sea level {w['sea_level']}. Walkable cells under more than 1.5 m of water: "
-          f"{w['walkable cells under more than 1.5 m of water']}; in the wading band: {w['walkable cells in the wading band (0-1.5 m)']}."]
-    for c_ in w['deep walkable clusters']:
-        L.append(f"- deep: {c_['points']} cells around {_fmt(c_['centre'])}")
-    for g, v in w['wading band'].items():
-        L.append(f"- {g}: band surfaces {v['band surfaces (terrain, 0-1.4 m deep)']}, flat and clear {v['flat and clear']}, kept "
-                 f"{v['kept']}, not kept {v['not kept']}; kept deeper than 1.4 m: {v['kept surfaces deeper than 1.4 m']}")
-        for c_ in v['not kept clusters'][:10]:
-            L.append(f"    not kept: {c_['points']} surfaces around {_fmt(c_['centre'])}")
-    L.append('')
-    for pz in w['piers, jetties, bridges']:
-        L.append(f"- {pz['object']} at {_fmt(pz['centre'])}: {pz['cells']} cells, {pz['on_main']} on the main network, other islands {pz['other_islands']}")
-    rl = R['7 rules']
-    L += ['', '## 7. Rules', '', f"- objective floor: {rl['objective floor']}"]
-    for k, v in rl.items():
+            lines += ['', f'### {k}: {len(resolution[k])} places wider than a cell row', '']
+            for place in resolution[k][:40]:
+                lines.append(f"- sector {place['sector']} at ({place['centre'][0]}, {place['terrain_y']}, "
+                             f"{place['centre'][1]}): {place['core_m2']} m2 core; "
+                             f"objects {', '.join(place['objects'][:4]) or '-'}")
+                lines += _cols({'grid': '0.8 m', 'column': place['centre'], 'terrain_y': place['terrain_y'],
+                                'water_top': None, 'surfaces': place['column_08'] or []})[1:]
+        lines += ['', f"### Connectivity: {len(resolution['connectivity'])} places", '']
+        lines += [f"- sector {place['sector']} at {_fmt(place['centre'])}: {place['kind']} ({place['pieces']} pieces)"
+                  for place in resolution['connectivity'][:40]]
+    lines += ['', '## 5. Layers at required positions', '']
+    for position in positions:
+        col = position.get('column')
+        if col and sum(1 for _surface in col['surfaces']) > 1:
+            same = position.get('nearest_same_floor')
+            used = f"layer {same['layer']} at {same['ground_y']}" if same else 'none'
+            lines.append(f"- {position['kind']} {position['name']} at {_fmt(position['position'])}: "
+                         f"{position['status']}; area used: " + used)
+            lines += _cols(col)
+    water = report['6 water']
+    lines += ['', '## 6. Water and shore', '',
+              f"Sea level {water['sea_level']}. Walkable cells under more than 1.5 m of water: "
+              f"{water['walkable cells under more than 1.5 m of water']}; in the wading band: "
+              f"{water['walkable cells in the wading band (0-1.5 m)']}."]
+    for cluster in water['deep walkable clusters']:
+        lines.append(f"- deep: {cluster['points']} cells around {_fmt(cluster['centre'])}")
+    for grid, band in water['wading band'].items():
+        lines.append(f"- {grid}: band surfaces {band['band surfaces (terrain, 0-1.4 m deep)']}, "
+                     f"flat and clear {band['flat and clear']}, kept {band['kept']}, not kept {band['not kept']}; "
+                     f"kept deeper than 1.4 m: {band['kept surfaces deeper than 1.4 m']}")
+        for cluster in band['not kept clusters'][:10]:
+            lines.append(f"    not kept: {cluster['points']} surfaces around {_fmt(cluster['centre'])}")
+    lines.append('')
+    for pier in water['piers, jetties, bridges']:
+        lines.append(f"- {pier['object']} at {_fmt(pier['centre'])}: {pier['cells']} cells, {pier['on_main']} on the "
+                     f"main network, other islands {pier['other_islands']}")
+    rules = report['7 rules']
+    lines += ['', '## 7. Rules', '', f"- objective floor: {rules['objective floor']}"]
+    for k, v in rules.items():
         if k in ('objective floor', 'near-misses', 'ladders'):
             continue
-        L.append(f"- {k}: removed {v['removed']}, added {v['added']}")
-        for nm in ('removed', 'added'):
-            for c_ in v.get(nm + ' clusters', [])[:6]:
-                L.append(f"    {nm}: {c_['points']} surfaces around {_fmt(c_['centre'])} - {c_.get('nearest_required', '')}")
-            for x in v.get(nm + ' near required positions', [])[:12]:
-                L.append(f"    {nm} near {x}")
-    L += ['', '### Near-misses (within 20 % of a threshold)', '']
-    for g, rec in rl['near-misses'].items():
-        for k, v in rec.items():
-            L.append(f"- {g} {k}: {json.dumps({a: b for a, b in v.items() if 'clusters' not in a})}")
-            for a, b in v.items():
-                if 'clusters' in a:
-                    for c_ in b[:5]:
-                        L.append(f"    {c_['points']} around {_fmt(c_['centre'])}")
-    L += ['', '### Ladders', '']
-    for d in rl['ladders']:
-        L.append(f"- {d['ladder']} at {_fmt(d['centre'])} to {d['top']}: foot area {d['foot_area'] and d['foot_area']['distance']}, "
-                 f"top area {d['top_area'] and d['top_area']['distance']}, ladder edges near {d['ladder_edges_near']}"
-                 + (', ends in two sectors' if d['ends_in_two_sectors'] else '') + (', near-miss' if d['near_miss'] else ''))
-    pa = R['8 playable area']
-    L += ['', '## 8. Playable area', '']
-    L += [f"- {k}: {v}" for k, v in pa.items() if k != 'walkable outside, clusters']
-    for c_ in pa.get('walkable outside, clusters', []):
-        L.append(f"    outside: {c_['points']} cells around {_fmt(c_['centre'])}; islands {c_.get('islands')}; {', '.join(c_.get('objects', [])[:4])}")
-    return '\n'.join(L) + '\n'
+        lines.append(f"- {k}: removed {v['removed']}, added {v['added']}")
+        for change in ('removed', 'added'):
+            for cluster in v.get(change + ' clusters', [])[:6]:
+                lines.append(f"    {change}: {cluster['points']} surfaces around {_fmt(cluster['centre'])} - "
+                             f"{cluster.get('nearest_required', '')}")
+            for x in v.get(change + ' near required positions', [])[:12]:
+                lines.append(f"    {change} near {x}")
+    lines += ['', '### Near-misses (within 20 % of a threshold)', '']
+    for grid, record in rules['near-misses'].items():
+        for k, v in record.items():
+            counts_only = {name: value for name, value in v.items() if 'clusters' not in name}
+            lines.append(f"- {grid} {k}: {json.dumps(counts_only)}")
+            for name, value in v.items():
+                if 'clusters' in name:
+                    for cluster in value[:5]:
+                        lines.append(f"    {cluster['points']} around {_fmt(cluster['centre'])}")
+    lines += ['', '### Ladders', '']
+    for ladder in rules['ladders']:
+        foot_area, top_area = ladder['foot_area'], ladder['top_area']
+        lines.append(f"- {ladder['ladder']} at {_fmt(ladder['centre'])} to {ladder['top']}: "
+                     f"foot area {foot_area and foot_area['distance']}, top area {top_area and top_area['distance']}, "
+                     f"ladder edges near {ladder['ladder_edges_near']}"
+                     + (', ends in two sectors' if ladder['ends_in_two_sectors'] else '')
+                     + (', near-miss' if ladder['near_miss'] else ''))
+    playable = report['8 playable area']
+    lines += ['', '## 8. Playable area', '']
+    lines += [f"- {k}: {v}" for k, v in playable.items() if k != 'walkable outside, clusters']
+    for cluster in playable.get('walkable outside, clusters', []):
+        lines.append(f"    outside: {cluster['points']} cells around {_fmt(cluster['centre'])}; "
+                     f"islands {cluster.get('islands')}; {', '.join(cluster.get('objects', [])[:4])}")
+    return '\n'.join(lines) + '\n'
 
 
-def _json(o):
+def _json(o: object) -> object:
+    """json.dump's default: numpy numbers and arrays, sets and tuples as plain JSON values."""
     if isinstance(o, (np.integer,)):
         return int(o)
     if isinstance(o, (np.floating,)):

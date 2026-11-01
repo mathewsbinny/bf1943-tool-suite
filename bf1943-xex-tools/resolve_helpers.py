@@ -1,5 +1,13 @@
-"""Verify entire BF1943 register helper bodies, not merely their first instruction."""
+"""Verify entire BF1943 register helper bodies, not merely their first instruction.
+
+  python -B resolve_helpers.py      (from the research workspace, or with BF1943_RESEARCH set)
+
+Reads the checked image, research/evidence/xex-functions.json (map_functions.py) and XenonRecomp's reference files
+(xenonrecomp_reference.py); writes research/evidence/xex-helper-resolution.json and work/xex-analysis/helpers.tsv,
+helper-entries.tsv and helper-branches.tsv, all CRLF as recorded. map_functions.py imports verified_blocks.
+"""
 from pathlib import Path
+from typing import Any
 import hashlib
 import json
 import struct
@@ -18,19 +26,22 @@ HELPER_BLOCKS = [(0x827be800, 'gprlr', False), (0x827be850, 'gprlr', True),
                  (0x827bef70, 'vmx', False), (0x827bf208, 'vmx', True)]
 
 
-def helper_words(kind, restore, first, last):
+def helper_words(kind: str, restore: bool, first: int, last: int) -> list[int]:
     """The instruction words of one helper block that saves (or restores) registers first..last, ending in blr."""
-    words = []
+    words: list[int] = []
     for reg in range(first, last + 1):
-        if kind == 'gprlr':                     # std / ld reg, -152 + 8 * (reg - 14)(r1)
+        if kind == 'gprlr':
+            # std / ld reg, -152 + 8 * (reg - 14)(r1)
             op = 58 if restore else 62
             displacement = -152 + (reg - 14) * 8
             words.append((op << 26) | (reg << 21) | (1 << 16) | (displacement & 65535))
-        elif kind == 'fpr':                     # stfd / lfd reg, -144 + 8 * (reg - 14)(r12)
+        elif kind == 'fpr':
+            # stfd / lfd reg, -144 + 8 * (reg - 14)(r12)
             op = 50 if restore else 54
             displacement = -144 + (reg - 14) * 8
             words.append((op << 26) | (reg << 21) | (12 << 16) | (displacement & 65535))
-        else:                                   # li r11, offset; then stvx / lvx (v0-v31) or stvx128 / lvx128 reg, r11, r12
+        else:
+            # li r11, offset; then stvx / lvx (v0-v31) or stvx128 / lvx128 reg, r11, r12
             offset = -(last - first + 1) * 16 + (reg - first) * 16
             words.append(0x39600000 | (offset & 65535))
             if first == 14:
@@ -44,7 +55,9 @@ def helper_words(kind, restore, first, last):
     return words
 
 
-def verified_blocks(data):
+def verified_blocks(data: bytes) -> list[dict[str, Any]]:
+    """The helper blocks (HELPER_BLOCKS), each checked word for word against helper_words(), with their entries;
+    ValueError for another image or a block that differs."""
     if hashlib.sha256(data).hexdigest() != IMAGE_HASH:
         raise ValueError('Unexpected image')
     blocks = []
@@ -66,32 +79,33 @@ def verified_blocks(data):
     return blocks
 
 
-def branch_target(instruction, at):
-    """The target of an I-form branch (b, bl, ba, bla) at address `at`."""
+def branch_target(instruction: int, address: int) -> int:
+    """The target of an I-form branch (b, bl, ba, bla) at address."""
     displacement = instruction & 0x3fffffc
     if displacement & 0x2000000:
         displacement -= 0x4000000
     absolute = instruction & 2
-    return (displacement if absolute else at + displacement) & 0xffffffff
+    return (displacement if absolute else address + displacement) & 0xffffffff
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     data = (root / 'work/xex-analysis/default.checked.memory.bin').read_bytes()
     blocks = verified_blocks(data)
     old = json.loads((root / 'research/evidence/xex-functions.json').read_text())
     targets = {entry['address']: entry for block in blocks for entry in block['entries']}
-    calls = []
+    calls: list[dict[str, Any]] = []
     for section in old['sections']:
         if not section['execute']:
             continue
-        for at in range(section['start'], section['start'] + section['available_size'] - 3, 4):
-            instruction = struct.unpack_from('>I', data, at - BASE)[0]
+        for address in range(section['start'], section['start'] + section['available_size'] - 3, 4):
+            instruction = struct.unpack_from('>I', data, address - BASE)[0]
             if instruction >> 26 != 18:
                 continue
-            target = branch_target(instruction, at)
+            target = branch_target(instruction, address)
             if target in targets:
-                calls.append(dict(address=at, target=target, link=bool(instruction & 1), name=targets[target]['name']))
+                calls.append(dict(address=address, target=target, link=bool(instruction & 1),
+                                  name=targets[target]['name']))
     for entry in targets.values():
         matches = [call for call in calls if call['target'] == entry['address']]
         entry['branch_candidates'] = len(matches)
@@ -107,8 +121,10 @@ def main():
         summary=dict(resolved_pdata_records=6, helper_blocks=len(blocks), suffix_entries=len(targets),
                      direct_branch_candidates=len(calls)),
         limitations=['Helper identities are analyst-assigned conventional names, not recovered symbols.',
-                     'Bit 30/31 Xbox unwind semantics remain unresolved; full-body verification overrides only these exact records.',
-                     'Branch scan is static aligned opcode matching; candidate counts are not observed execution or complete xrefs.',
+                     'Bit 30/31 Xbox unwind semantics remain unresolved; full-body verification overrides only these '
+                     'exact records.',
+                     'Branch scan is static aligned opcode matching; candidate counts are not observed execution or '
+                     'complete xrefs.',
                      'VMX128 words are validated by explicit encoding patterns, not proof of Ghidra semantic support.'])
     # CRLF, as recorded: evidence pins the bytes of the resolution, helpers.tsv and helper-entries.tsv
     (root / 'research/evidence/xex-helper-resolution.json').write_text(json.dumps(result, indent=2) + '\n',

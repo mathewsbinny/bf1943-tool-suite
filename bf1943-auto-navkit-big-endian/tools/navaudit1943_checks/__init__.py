@@ -36,8 +36,9 @@ navaudit1943_checks.<name>, and run() stays here, so a test that replaces navaud
 import json
 import os
 import time
+from typing import TYPE_CHECKING, Any, cast
 
-import navaudit1943 as A  # noqa: E402
+import navaudit1943  # noqa: E402
 import soldier1943  # noqa: E402
 
 # the package's modules, re-exported: every name the module had
@@ -57,58 +58,68 @@ from .rulemasks import _near, ladder_report, rules, step_near  # noqa: F401
 from .combatarea import playable  # noqa: F401
 from .report import _cols, _fmt, _json, markdown  # noqa: F401
 
+if TYPE_CHECKING:
+    from navaudit1943 import Log
+
 
 # ------------------------------------------------------------------------------------------------ run
 
-def run(lv, json_out=None, log=print):
+def run(lv: str, json_out: str | None = None, log: 'Log' = print) -> dict[str, Any]:
+    """Every check on a level's checked build: writes audit.json (json_out, else the level's audit folder) and
+    audit.md beside it, and returns the report."""
     t0 = time.time()
-    C = load(lv, log)
-    positions = required_positions(C)
-    for r in positions:
-        if r.get('capture_area') is not None:
-            r['_poly'] = r['capture_area']
+    ctx = load(lv, log)
+    positions = required_positions(ctx)
+    for position in positions:
+        if position.get('capture_area') is not None:
+            position['_poly'] = position['capture_area']
     checked = []
-    for r in positions:
-        res = check_position(C, r)
-        if r['kind'] in ('flag', 'base', 'repair station', 'hot zone without a flag'):
-            res['capture_share'] = capture_share(C, r)
-        if r['kind'] == 'repair station' and res.get('capture_share'):
+    for position in positions:
+        res = check_position(ctx, position)
+        if position['kind'] in ('flag', 'base', 'repair station', 'hot zone without a flag'):
+            res['capture_share'] = capture_share(ctx, position)
+        if position['kind'] == 'repair station' and res.get('capture_share'):
             # a repair station is its outline (vehicles are repaired inside it); its entity's point can sit above the
             # ground (Guadalcanal: 4.4 m) - reported, not the test
+            share = cast('dict[str, Any]', res['capture_share'])     # checked just above
             res['marker_status'], res['marker_reason'] = res['status'], res.get('reason')
-            res['status'] = res['capture_share']['status']
-            res['reason'] = (f"outline {res['capture_share']['share']:.0%} walkable ({res['capture_share']['share_of']})"
-                             if res['capture_share']['share'] is not None else 'outline: no ground')
-        res['_poly'] = r.get('_poly')
+            res['status'] = share['status']
+            res['reason'] = (f"outline {share['share']:.0%} walkable ({share['share_of']})"
+                             if share['share'] is not None else 'outline: no ground')
+        res['_poly'] = position.get('_poly')
         checked.append(res)
     log(f'{lv}: 1 positions ({time.time() - t0:.0f} s)')
-    LM = landmass(C)
-    islands = classify_islands(C, LM, checked)
-    reach = reachability(C, checked)
+    land = landmass(ctx)
+    islands = classify_islands(ctx, land, checked)
+    reach = reachability(ctx, checked)
     log(f'{lv}: 2 reachability ({time.time() - t0:.0f} s)')
-    cons = consistency(C)
-    cons['crossings'] = crossings(C)
+    file_consistency = consistency(ctx)
+    file_consistency['crossings'] = crossings(ctx)
     log(f'{lv}: 3 consistency ({time.time() - t0:.0f} s)')
-    resol = resolution(C)
+    pitch_comparison = resolution(ctx)
     log(f'{lv}: 4 resolution ({time.time() - t0:.0f} s)')
-    water = water_checks(C)
+    water = water_checks(ctx)
     log(f'{lv}: 6 water ({time.time() - t0:.0f} s)')
-    rl = rules(C, checked)
+    rule_report = rules(ctx, checked)
     log(f'{lv}: 7 rules ({time.time() - t0:.0f} s)')
-    play = playable(C)
+    play = playable(ctx)
     log(f'{lv}: 8 playable area ({time.time() - t0:.0f} s)')
-    for r in checked:
-        r.pop('_poly', None)
-    report = {'level': lv, 'date': time.strftime('%Y-%m-%d %I:%M %p'), 'inputs': C['inputs'],
-              'settings': {'OBJECTIVE_REACH': A.OBJECTIVE_REACH, 'FLOOR_DY': A.FLOOR_DY, 'LAYER_WINDOW': A.LAYER_WINDOW,
-                           'BOAT_REACH': BOAT_REACH, 'USABLE_SHARE': USABLE_SHARE, 'soldier': {
-                               'radius': soldier1943.RADIUS, 'step': soldier1943.STEP, 'height': soldier1943.HEIGHT,
-                               'slope_max': soldier1943.SLOPE_MAX, 'water_depth': soldier1943.WATER_DEPTH}},
-              'masks': {w: sorted(G.variants) for w, G in C['grids'].items()},
-              'placeholders at the origin (not checked)': C['placeholders'],
-              '1 positions': checked, '2 reachability': reach, '2 islands': islands, '3 consistency': cons,
-              '4 resolution': resol, '6 water': water, '7 rules': rl, '8 playable area': play}
-    path = json_out or os.path.join(C['p']['audit'], 'audit.json')
+    for res in checked:
+        res.pop('_poly', None)
+    soldier = {'radius': soldier1943.RADIUS, 'step': soldier1943.STEP, 'height': soldier1943.HEIGHT,
+               'slope_max': soldier1943.SLOPE_MAX, 'water_depth': soldier1943.WATER_DEPTH}
+    settings = {'OBJECTIVE_REACH': navaudit1943.OBJECTIVE_REACH, 'FLOOR_DY': navaudit1943.FLOOR_DY,
+                'LAYER_WINDOW': navaudit1943.LAYER_WINDOW, 'BOAT_REACH': BOAT_REACH, 'USABLE_SHARE': USABLE_SHARE,
+                'soldier': soldier}
+    # the positions at the origin: required_positions (above) set them
+    placeholders = ctx['placeholders']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    report = {'level': lv, 'date': time.strftime('%Y-%m-%d %I:%M %p'), 'inputs': ctx['inputs'],
+              'settings': settings,
+              'masks': {which: sorted(grid.variants) for which, grid in ctx['grids'].items()},
+              'placeholders at the origin (not checked)': placeholders,
+              '1 positions': checked, '2 reachability': reach, '2 islands': islands, '3 consistency': file_consistency,
+              '4 resolution': pitch_comparison, '6 water': water, '7 rules': rule_report, '8 playable area': play}
+    path = json_out or os.path.join(ctx['p']['audit'], 'audit.json')
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(report, f, indent=1, default=_json)

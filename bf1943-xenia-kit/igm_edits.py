@@ -1,5 +1,8 @@
 """Edits to BF1943's in-game menu movie (Menu/igm_mp_cq.res in menu/hud/hud_multiplayer_cq-00.fbrb).
 
+build() takes the original hud_multiplayer_cq-00.fbrb (and, for the experiment, a team) and gives the edited bundle,
+its new igm_mp_cq.res and a change log (xeniakit.py checks the result against known.json).
+
 The deploy screen ("ENLIST NOW") is the movie's frame 6 ('spawn', block 0x2be50): kit choice, spawn map and
 A to deploy (onSelect -> getURL "FSCommand:doSpawn"). The native command selectTeam (0x8, handler 8246c870
 case 2) asks the server for a team (1 = USMC, 2 = Imperial Japan) once the local player exists; the deploy
@@ -17,10 +20,12 @@ force_team(): experiment only; requests one team every time the deploy screen op
 """
 import struct
 import sys
+from typing import Any
 
 sys.dont_write_bytecode = True
-from apt import Apt, Rewriter, op, be32  # noqa: E402
+from apt import Apt, Ins, Rewriter, op, be32  # noqa: E402
 from fbrb1943 import Bundle  # noqa: E402
+from menu_edits import ActionItem, constant_namer, retarget  # noqa: E402
 
 BUNDLE = 'dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb'
 ENTRY = 'Menu/igm_mp_cq.res'
@@ -70,29 +75,43 @@ KIT_TICKS = 10
 FACTION_ARRAYS = [('factionSIDs', 'factionNames'), ('factionSIDsWIN', 'factionNamesWIN'),
                   ('factionSIDsLOSE', 'factionNamesLOSE')]
 
+type Code = list[Ins]       # a run of AS2 instructions
 
-def deploy_block(apt):
-    hits = [(i, f, s) for o, i, f, s in apt.action_items() if o == 'char movie frame 6 action' and s == DEPLOY_BLOCK]
+
+def action_block(apt: Apt, owner: str, start: int, what: str) -> ActionItem:
+    """(item, field, block start) of owner's one action block at start; ValueError naming what otherwise."""
+    hits = [(item, field, block) for block_owner, item, field, block in apt.action_items()
+            if block_owner == owner and block == start]
     if len(hits) != 1:
-        raise ValueError('the deploy screen block is not where expected (a different game version?)')
+        raise ValueError(f'{what} is not where expected (a different game version?)')
     return hits[0]
+
+
+def deploy_block(apt: Apt) -> ActionItem:
+    return action_block(apt, 'char movie frame 6 action', DEPLOY_BLOCK, 'the deploy screen block')
+
+
+def instance_name(apt: Apt, placement: int) -> str | None:
+    """A PlaceObject's instance name (its string pointer at +0x34); None when it has none."""
+    pointer = apt.u(placement + 0x34)
+    return apt.s(pointer) if pointer else None
 
 
 # --- small AS2 builders (stack order as the game's own code uses it); every call makes fresh instructions
 
-def s(text):
+def push_string(text: str) -> Ins:
     return op('PushString', string=text)
 
 
-def var(name):
-    return [s(name), op('GetVariable')]
+def var(name: str) -> Code:
+    return [push_string(name), op('GetVariable')]
 
 
-def member(obj, name):
-    return obj + [s(name), op('GetMember')]
+def member(obj: Code, name: str) -> Code:
+    return obj + [push_string(name), op('GetMember')]
 
 
-def path(*names):
+def path(*names: str) -> Code:
     """this.a.b.c"""
     out = [op('PushThis')]
     for name in names:
@@ -100,66 +119,78 @@ def path(*names):
     return out
 
 
-def call(obj, method, *args):
-    out = []
-    for a in reversed(args):
-        out += a
-    return out + [op('PushByte', value=len(args))] + obj + [s(method), op('CallMethodPop')]
+def call(obj: Code, method: str, *args: Code) -> Code:
+    out: Code = []
+    for argument in reversed(args):
+        out += argument
+    return out + [op('PushByte', value=len(args))] + obj + [push_string(method), op('CallMethodPop')]
 
 
-def set_member(obj, name, value):
-    return obj + [s(name)] + value + [op('SetMember')]
+def set_member(obj: Code, name: str, value: Code) -> Code:
+    return obj + [push_string(name)] + value + [op('SetMember')]
 
 
-def set_this(name, value):
+def set_this(name: str, value: Code) -> Code:
     return set_member([op('PushThis')], name, value)
 
 
-def visible(names, on):
-    out = []
+def visible(names: list[str], on: bool) -> Code:
+    out: Code = []
     for name in names:
         out += set_member(path(name), '_visible', [op('PushTrue' if on else 'PushFalse')])
     return out
 
 
-def hidden_hard(names, on):
+def hidden_hard(names: list[str], on: bool) -> Code:
     """Hidden by _alpha only. The screen's updates set _visible again but leave _alpha alone; and a clip hidden by
     _visible does not apply frame changes to its children (the kit cards' kitInfo.gotoAndPlay("kit_N") in init()
     would be lost, leaving every card on kit_1)."""
-    out = []
+    out: Code = []
     for name in names:
         out += set_member(path(name), '_alpha', [op('PushByte', value=0 if on else 100)])
     return out
 
 
-def sound(name):
-    def ui():
+def sound(name: str) -> Code:
+    def ui() -> Code:
         return member(var('dice'), 'UISound')
     return call(ui(), 'play', member(ui(), name))
 
 
-def menu_common():
+def menu_common() -> Code:
     return member(var('_root'), 'menuCommon')
 
 
-def button(name):
+def button(name: str) -> Code:
     return member(member(var('dice'), 'MenuCommon'), name)
 
 
-def fscommand(command, arg):
+def fscommand(command: str, arg: str) -> Code:
     return [op('GetURL', strings=(f'FSCommand:{command}', arg))]
 
 
-def if_else(condition, then, otherwise):
+def set_interval(milliseconds: int, function: str) -> Code:
+    """setInterval(this, function, milliseconds), its timer id left on the stack."""
+    return [op('PushByte', value=milliseconds), push_string(function), op('PushThis'), op('PushByte', value=3),
+            push_string('setInterval'), op('CallFunction')]
+
+
+def clear_interval(timer: str) -> Code:
+    """clearInterval(this.<timer>)"""
+    return path(timer) + [op('PushByte', value=1), push_string('clearInterval'), op('CallFunctionPop')]
+
+
+def if_else(condition: Code, then: Code, otherwise: Code) -> Code:
     """condition; Not; BranchIfTrue else; then; BranchAlways end; else: otherwise; end (no-op targets)."""
     end, other = op('PushUndefined'), op('PushUndefined')
     return (condition + [op('Not'), op('BranchIfTrue', target=other)] + then + [op('BranchAlways', target=end)]
             + [other, op('Pop')] + otherwise + [end, op('Pop')])
 
 
-def sprite(apt, rw, frames):
+def sprite(apt: Apt, rw: Rewriter, frames: list[list[int]]) -> int:
     """A sprite structure (laid out as the kit card's, char 290) with the given frame item lists."""
-    header = bytearray(apt.apt[apt.characters()[290]:apt.characters()[290] + 24])  # type 5, signature, frames, table, 0, ...
+    card = apt.characters()[290]
+    header = bytearray(apt.apt[card:card + 24])  # type 5, signature, frames, table, 0, ...
     if be32(header, 0) != 5:
         raise ValueError('char 290 is not a sprite')
     table = rw.alloc(b''.join(struct.pack('>II', len(items), rw.words(items)) for items in frames))
@@ -167,126 +198,129 @@ def sprite(apt, rw, frames):
     return rw.alloc(bytes(header))
 
 
-def panel_sprite(apt, rw):
+def panel_sprite(apt: Apt, rw: Rewriter) -> int:
     """The window panel: the PANEL shapes, placed as the card places its face."""
-    template = next(it for f, items in apt.frames(apt.characters()[290]) for it, k in items if k == 3 and apt.u(it + 12) == 267)
+    template = next(placement for _frame, items in apt.frames(apt.characters()[290]) for placement, kind in items
+                    if kind == 3 and apt.u(placement + 12) == 267)
     records = []
-    for depth, (shape, sx, sy, x, y) in enumerate(PANEL, start=1):
-        r = bytearray(apt.apt[template:template + 0x40])
-        if be32(r, 4) != 0x6 or be32(r, 0x34) != 0 or be32(r, 0x3C) != 0:
+    for depth, (shape, scale_x, scale_y, x, y) in enumerate(PANEL, start=1):
+        record = bytearray(apt.apt[template:template + 0x40])
+        if be32(record, 4) != 0x6 or be32(record, 0x34) != 0 or be32(record, 0x3C) != 0:
             raise ValueError('the card face placement differs from the expected shape')
-        struct.pack_into('>II', r, 8, depth, shape)
-        struct.pack_into('>6f', r, 16, sx, 0.0, 0.0, sy, x, y)
-        records.append(rw.alloc(bytes(r)))
+        struct.pack_into('>II', record, 8, depth, shape)
+        struct.pack_into('>6f', record, 16, scale_x, 0.0, 0.0, scale_y, x, y)
+        records.append(rw.alloc(bytes(record)))
     return sprite(apt, rw, [records])
 
 
-def add_characters(apt, rw, sprites):
+def add_characters(apt: Apt, rw: Rewriter, sprites: list[int]) -> list[int]:
     """Append sprites to the movie's character table; returns their character ids."""
-    m = apt.movie
-    count, table = apt.u(m + 20), apt.u(m + 24)
+    movie = apt.movie
+    count, table = apt.u(movie + 20), apt.u(movie + 24)
     chars = apt.characters()
-    rw.patch(m + 20, struct.pack('>II', count, table), struct.pack('>II', count + len(sprites), rw.words(chars + sprites)),
+    rw.patch(movie + 20, struct.pack('>II', count, table),
+             struct.pack('>II', count + len(sprites), rw.words(chars + sprites)),
              f'character {count}: the CHOOSE YOUR SIDE window panel')
     return list(range(count, count + len(sprites)))
 
 
-def add_window(apt, rw):
+def add_window(apt: Apt, rw: Rewriter) -> None:
     """The window's parts as new placements on the deploy frame, copied from named template placements."""
     records = {}
-    for _f, items in apt.frames(apt.movie):
-        for it, k in items:
-            name = apt.s(apt.u(it + 0x34)) if k == 3 and apt.u(it + 0x34) else None
+    for _frame, items in apt.frames(apt.movie):
+        for placement, kind in items:
+            name = instance_name(apt, placement) if kind == 3 else None
             if name and name not in records:
-                records[name] = it
+                records[name] = placement
     table = apt.u(apt.movie + 12) + 8 * DEPLOY_FRAME
     count, items = apt.u(table), apt.u(table + 4)
     used = {apt.u(apt.u(items + 4 * k) + 8) for k in range(count)}
     new = []
     panel, = add_characters(apt, rw, [panel_sprite(apt, rw)])
-    for name, template, depth, sx, sy, x, y in WINDOW:
+    for name, template, depth, scale_x, scale_y, x, y in WINDOW:
         source = records['RIFLEMAN' if template == 'PANEL' else template]
-        r = bytearray(apt.apt[source:source + 0x40])
-        if be32(r, 0) != 3 or be32(r, 0x3C) != 0 or depth in used:
+        record = bytearray(apt.apt[source:source + 0x40])
+        if be32(record, 0) != 3 or be32(record, 0x3C) != 0 or depth in used:
             raise ValueError(f'{name}: template {template} or depth {depth} differs from the expected shape')
-        struct.pack_into('>I', r, 8, depth)
+        struct.pack_into('>I', record, 8, depth)
         if template == 'PANEL':
-            struct.pack_into('>I', r, 12, panel)
-        struct.pack_into('>6f', r, 16, sx, 0.0, 0.0, sy, x, y)
-        struct.pack_into('>I', r, 0x34, rw.string(name))  # name: relocated by the loader (8298a3a0, +0x34)
-        new.append(rw.alloc(bytes(r)))
+            struct.pack_into('>I', record, 12, panel)
+        struct.pack_into('>6f', record, 16, scale_x, 0.0, 0.0, scale_y, x, y)
+        struct.pack_into('>I', record, 0x34, rw.string(name))  # name: relocated by the loader (8298a3a0, +0x34)
+        new.append(rw.alloc(bytes(record)))
     pointers = [apt.u(items + 4 * k) for k in range(count)] + new
     rw.patch(table, struct.pack('>II', count, items), struct.pack('>II', len(pointers), rw.words(pointers)),
              'deploy frame: the CHOOSE YOUR SIDE window (panel, caption, two side cards, two flags)')
 
 
-def selector_code():
+def selector_code() -> tuple[list[tuple[str, Code]], Code, Code]:
     """([(function name, body)] for the deploy timeline, code for the start of init(), code for its end).
     All state lives on the deploy timeline (this), so it starts afresh with each match's in-game menu."""
     parts = [name for name, *_ in WINDOW]
 
-    def texts():  # the cards' text components fill themselves in from their instance names: set ours again
-        out = []
+    def texts() -> Code:  # the cards' text components fill themselves in from their instance names: set ours again
+        out: Code = []
         for _team, card, _flag, _frame, _portrait, heading, sub1, sub2 in SIDES:
             for text in ('text1', 'text2'):
-                out += call(path(card, 'kitInfo', 'kitHeading', text), 'setValue', [s(heading)])
-            out += call(path(card, 'kitInfo', 'kitSubHeading1'), 'setValue', [s(sub1)])
-            out += call(path(card, 'kitInfo', 'kitSubHeading2'), 'setValue', [s(sub2)])
+                out += call(path(card, 'kitInfo', 'kitHeading', text), 'setValue', [push_string(heading)])
+            out += call(path(card, 'kitInfo', 'kitSubHeading1'), 'setValue', [push_string(sub1)])
+            out += call(path(card, 'kitInfo', 'kitSubHeading2'), 'setValue', [push_string(sub2)])
         # the heading's own setValue: sets the text and sizes its brush tape (char 351 picks a frame per width)
-        out += call(path('rsCaption'), 'setValue', [s('CHOOSE YOUR SIDE')])
+        out += call(path('rsCaption'), 'setValue', [push_string('CHOOSE YOUR SIDE')])
         return out
 
-    def cards():  # draw both side cards; the chosen one in the game's 'selected' (green) state
-        out = []
+    def cards() -> Code:  # draw both side cards; the chosen one in the game's 'selected' (green) state
+        out: Code = []
         for team, card, flag, frame, portrait, _heading, _sub1, _sub2 in SIDES:
             out += if_else(path('rsSel') + [op('PushByte', value=team), op('Equals2')],
-                           call(path(card), 'gotoAndStop', [s('selected')]),
-                           call(path(card), 'gotoAndStop', [s('unselected')]))
-            out += call(path(card, 'kitInfo'), 'gotoAndStop', [s('kit_1')])
-            out += call(path(card, 'kitInfo'), 'setTeam', [s(portrait)])
-            out += call(path(flag), 'gotoAndStop', [s(frame)])
+                           call(path(card), 'gotoAndStop', [push_string('selected')]),
+                           call(path(card), 'gotoAndStop', [push_string('unselected')]))
+            out += call(path(card, 'kitInfo'), 'gotoAndStop', [push_string('kit_1')])
+            out += call(path(card, 'kitInfo'), 'setTeam', [push_string(portrait)])
+            out += call(path(flag), 'gotoAndStop', [push_string(frame)])
         return out + texts()
 
-    def choose(team, sound_name):
+    def choose(team: int, sound_name: str) -> Code:
         return set_this('rsSel', [op('PushByte', value=team)]) + sound(sound_name) + cards()
 
-    stop_hold = path('rsHold') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
     # the class menu stays transparent until the deploy screen is redrawn for the chosen side (rsCheckTeam): shown
     # earlier, it flickers with the team it had before (USMC, or with no team yet, the same USMC art)
-    confirm = (stop_hold + sound('SND_MENU_SELECT') + visible(parts, False)
+    confirm = (clear_interval('rsHold') + sound('SND_MENU_SELECT') + visible(parts, False)
                + if_else(path('rsSel') + [op('PushByte', value=1), op('Equals2')],
                          fscommand('selectTeam', '1'), fscommand('selectTeam', '2'))
                + set_this('rsSideChosen', [op('PushTrue')]) + set_this('rsWantTeam', path('rsSel'))
                + set_this('rsChecks', [op('PushZero')]) + set_this('rsSettled', [op('PushZero')])
                + call(menu_common(), 'removeAllActions')   # nothing to press until the screen is redrawn
-               + set_this('rsTimer', [op('PushByte', value=CHECK_MS), s('rsCheckTeam'), op('PushThis'),
-                                      op('PushByte', value=3), s('setInterval'), op('CallFunction')]))
-    def factions():  # _root.factionSIDs = [factionNames[my team], factionNames[3 - my team]] (and the WIN/LOSE pairs)
-        out = []
+               + set_this('rsTimer', set_interval(CHECK_MS, 'rsCheckTeam')))
+
+    def factions() -> Code:  # _root.factionSIDs = [factionNames[my team], factionNames[3 - my team]] (and WIN/LOSE)
+        out: Code = []
         for sids, names in FACTION_ARRAYS:
             mine = member(var('_root'), names) + member(var('extern'), 'playerTeam') + [op('GetMember')]
             other = (member(var('_root'), names) + [op('PushByte', value=3)] + member(var('extern'), 'playerTeam')
                      + [op('Subtract'), op('GetMember')])
-            out += var('_root') + [s(sids)] + other + mine + [op('PushByte', value=2), op('InitArray'), op('SetMember')]
+            out += (var('_root') + [push_string(sids)] + other + mine
+                    + [op('PushByte', value=2), op('InitArray'), op('SetMember')])
         return out
 
-    def kit_art():  # each class card on its own kit frame, in the new team's colour (chosen) or black portrait
-        out = []
+    def kit_art() -> Code:  # each class card on its own kit frame, in the new team's colour (chosen) or black portrait
+        out: Code = []
         for i in range(KIT_CARDS):
-            def kit_info():
-                return member(var('m_kits') + [op('PushByte', value=i), op('GetMember'), op('PushByte', value=2),
-                                               op('GetMember')], 'kitInfo')
-            out += call(kit_info(), 'gotoAndStop', [s(f'kit_{i}')])
+            def kit_info() -> Code:
+                card = var('m_kits') + [op('PushByte', value=i), op('GetMember'), op('PushByte', value=2),
+                                        op('GetMember')]
+                return member(card, 'kitInfo')
+            out += call(kit_info(), 'gotoAndStop', [push_string(f'kit_{i}')])
             out += if_else(path('m_currentKitIdx') + [op('PushByte', value=i), op('Equals2')],
                            call(kit_info(), 'setTeam', var('m_teamStr')),
-                           call(kit_info(), 'setTeam', var('m_teamStr') + [s('_black'), op('Add2')]))
+                           call(kit_info(), 'setTeam', var('m_teamStr') + [push_string('_black'), op('Add2')]))
         return out
 
     kits_done = op('PushUndefined')
     kits = (kit_art() + set_this('rsKitTicks', path('rsKitTicks') + [op('Increment')])
             + path('rsKitTicks') + [op('PushByte', value=KIT_TICKS - 1), op('Greater'), op('Not'),
                                     op('BranchIfTrue', target=kits_done)]
-            + path('rsKitTimer') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
+            + clear_interval('rsKitTimer')
             + [kits_done, op('Pop')])
 
     not_yet = op('PushUndefined')
@@ -297,59 +331,66 @@ def selector_code():
              + path('rsSettled') + [op('PushByte', value=SETTLE_CHECKS - 1), op('Greater')]
              + path('rsChecks') + [op('PushByte', value=CHECK_LIMIT), op('Greater'), op('Or'),
                                    op('Not'), op('BranchIfTrue', target=not_yet)]
-             + path('rsTimer') + [op('PushByte', value=1), s('clearInterval'), op('CallFunctionPop')]
+             + clear_interval('rsTimer')
              + factions()
              + call([op('PushThis')], 'init')    # the deploy screen's own setup, now for the new team
              + kit_art() + hidden_hard(CLASS_MENU, False) + set_this('rsKitTicks', [op('PushZero')])
-             + set_this('rsKitTimer', [op('PushByte', value=CHECK_MS), s('rsKitArt'), op('PushThis'),
-                                       op('PushByte', value=3), s('setInterval'), op('CallFunction')])
+             + set_this('rsKitTimer', set_interval(CHECK_MS, 'rsKitArt'))
              + [not_yet, op('Pop')])
     functions = [('rsLeft', choose(1, 'SND_NAV_UP')), ('rsRight', choose(2, 'SND_NAV_DOWN')),
-                 ('rsConfirm', confirm), ('rsCheckTeam', check), ('rsHoldHidden', hidden_hard(CLASS_MENU, True) + texts()),
+                 ('rsConfirm', confirm), ('rsCheckTeam', check),
+                 ('rsHoldHidden', hidden_hard(CLASS_MENU, True) + texts()),
                  ('rsKitArt', kits)]
 
     ask = (hidden_hard(CLASS_MENU, True) + visible(parts, True)
            + set_member(path('rsPanel', 'kitInfo'), '_visible', [op('PushFalse')])
-           + call(path('rsPanel'), 'gotoAndStop', [s('unselected')])
-           + set_this('rsHold', [op('PushByte', value=HOLD_MS), s('rsHoldHidden'), op('PushThis'),
-                                 op('PushByte', value=3), s('setInterval'), op('CallFunction')])
+           + call(path('rsPanel'), 'gotoAndStop', [push_string('unselected')])
+           + set_this('rsHold', set_interval(HOLD_MS, 'rsHoldHidden'))
            + set_this('rsSel', [op('PushByte', value=1)]) + cards()
            # this screen's controls while choosing: left/right on the stick and the D-pad, and A
            + call(menu_common(), 'removeAllActions')
-           + call(menu_common(), 'setAction', button('BUTTON_DOWN'), [s('BUTTON_SELECT')], [op('PushThis')], [s('rsConfirm')])
-           + call(menu_common(), 'setLanalogAction', [op('PushThis')], [s('rsLeft')], [op('PushUndefined')],
-                  [s('rsRight')], [op('PushUndefined')])
-           + call(menu_common(), 'setDpadHAction', [op('PushThis')], [s('rsLeft')], [s('rsRight')]))
+           + call(menu_common(), 'setAction', button('BUTTON_DOWN'), [push_string('BUTTON_SELECT')],
+                  [op('PushThis')], [push_string('rsConfirm')])
+           + call(menu_common(), 'setLanalogAction', [op('PushThis')], [push_string('rsLeft')],
+                  [op('PushUndefined')], [push_string('rsRight')], [op('PushUndefined')])
+           + call(menu_common(), 'setDpadHAction', [op('PushThis')], [push_string('rsLeft')],
+                  [push_string('rsRight')]))
     after = op('PushUndefined')
     init_start = visible(parts, False)
     init_end = path('rsSideChosen') + [op('BranchIfTrue', target=after)] + ask + [after, op('Pop')]
     return functions, init_start, init_end
 
 
-def team_selector(apt, rw):
+def deploy_init(ins: list[Ins]) -> int:
+    """The index of the deploy screen's one init() definition."""
+    inits = [k for k, instruction in enumerate(ins) if instruction.op == 0x8E and instruction.args['name'] == 'init']
+    if len(inits) != 1:
+        raise ValueError(f'expected one init() on the deploy screen, found {len(inits)}')
+    return inits[0]
+
+
+def team_selector(apt: Apt, rw: Rewriter) -> None:
     add_window(apt, rw)
     item, field, start = deploy_block(apt)
     ins = rw.block(start)
-    inits = [k for k, i in enumerate(ins) if i.op == 0x8E and i.args['name'] == 'init']
-    if len(inits) != 1:
-        raise ValueError(f'expected one init() on the deploy screen, found {len(inits)}')
+    init_at = deploy_init(ins)
     functions, init_start, init_end = selector_code()
-    define = ins[inits[0]]
-    body = ins[inits[0] + 1:ins.index(define.args['end'])]
+    define = ins[init_at]
+    body = ins[init_at + 1:ins.index(define.args['end'])]
     if any(i.op == 0x3E for i in body) or body[-1].op in (0x99, 0x9D, 0xB8):
         raise ValueError('init() returns early or ends in a branch: the end code would not always run')
     end_at = ins.index(define.args['end'])
     ins[end_at:end_at] = init_end
     define.args['end'] = ins[end_at + len(init_end)]
-    ins[inits[0] + 1:inits[0] + 1] = init_start
+    ins[init_at + 1:init_at + 1] = init_start
     head = []
-    for fname, fbody in functions:
-        head += [op('DefineFunction', name=fname, params=[])] + fbody
+    for function_name, function_body in functions:
+        head += [op('DefineFunction', name=function_name, params=[])] + function_body
     k = next(k for k, i in enumerate(ins) if i.op != 0x88)  # right after the ConstantPool
     ins[k:k] = head
-    for fname, fbody in functions:  # each new function ends at the instruction after its body
-        d = next(k for k, i in enumerate(ins) if i.op == 0x9B and i.args.get('name') == fname)
-        ins[d].args['end'] = ins[d + 1 + len(fbody)]
+    for function_name, function_body in functions:  # each new function ends at the instruction after its body
+        define_at = next(k for k, i in enumerate(ins) if i.op == 0x9B and i.args.get('name') == function_name)
+        ins[define_at].args['end'] = ins[define_at + 1 + len(function_body)]
     rw.repoint(item, field, start, rw.assemble(ins),
                'deploy screen: CHOOSE YOUR SIDE window (two side cards, left/right and A; class menu hidden), '
                'refreshed for the chosen team once the server confirms')
@@ -359,36 +400,31 @@ FRONTLINE_BLOCK = 0x2B048   # the in-game menu page "FRONTLINE REPORT" (movie fr
 ROW_STEP = 31.0             # its rows menuitem_0..6 stand 31 px apart
 
 
-def frontline_without_leaderboards(apt, rw):
+def frontline_without_leaderboards(apt: Apt, rw: Rewriter) -> None:
     """FRONTLINE REPORT lists My Squad, Scoreboard, Help & Options, Leaderboards, Achievements, Exit Game and
     Respawn/Suicide, one fixed row clip each (menuitem_0..6). Leaderboards (menuitem_3) is dropped from menuItems,
     its row is never shown (getMenuTxt's table sets each row's _visible), and the three rows below move up a row."""
-    hits = [(i, f, s) for o, i, f, s in apt.action_items() if o == 'char movie frame 5 action' and s == FRONTLINE_BLOCK]
-    if len(hits) != 1:
-        raise ValueError('the FRONTLINE REPORT block is not where expected (a different game version?)')
-    item, field, start = hits[0]
+    item, field, start = action_block(apt, 'char movie frame 5 action', FRONTLINE_BLOCK, 'the FRONTLINE REPORT block')
     ins = rw.block(start)
-    pool = next(i.args['items'] for i in ins if i.op == 0x88)
-    name = lambda i: apt.constants[pool[i.args['value']]] if i.op in (0xA2, 0xAE, 0xAF, 0xB2) else None
+    name = constant_namer(apt, ins, ops=(0xA2, 0xAE, 0xAF, 0xB2))
     done = set()
     k = 0
     while k < len(ins):
         i = ins[k]
         # menuItems: [... [menuitem_3, 'leaderboard', true] ...] (6 instructions), then the list's count 7
-        if (i.op == 0x73 and name(ins[k + 1]) == 'leaderboard' and ins[k + 2].op == 0x70 and name(ins[k + 3]) == 'menuitem_3'
+        if (i.op == 0x73 and name(ins[k + 1]) == 'leaderboard' and ins[k + 2].op == 0x70
+                and name(ins[k + 3]) == 'menuitem_3'
                 and ins[k + 4].op == 0xB5 and ins[k + 4].args['value'] == 3 and ins[k + 5].op == 0x42):
             removed = ins[k:k + 6]
             if any(j.args.get(key) is r for j in ins for key in ('target', 'end') for r in removed):
                 raise ValueError('a branch or function ends inside the Leaderboards item')
             del ins[k:k + 6]
-            count = next(c for c in range(k, len(ins)) if ins[c].op == 0xB5 and ins[c + 1].op == 0x42 and ins[c + 2].op == 0x1D)
+            count = next(c for c in range(k, len(ins))
+                         if ins[c].op == 0xB5 and ins[c + 1].op == 0x42 and ins[c + 2].op == 0x1D)
             if ins[count].args['value'] != 7:
                 raise ValueError('the in-game menu list is not 7 items long')
             new = op('PushByte', value=6)
-            for j in ins:
-                for key in ('target', 'end'):
-                    if j.args.get(key) is ins[count]:
-                        j.args[key] = new
+            retarget(ins, [ins[count]], new)
             ins[count] = new
             done.add('item')
             continue
@@ -396,10 +432,7 @@ def frontline_without_leaderboards(apt, rw):
         if (i.op == 0xA2 and name(i) == 'menuitem_3' and name(ins[k + 1]) == 'm_isTutorial' and ins[k + 2].op == 0x12
                 and name(ins[k + 3]) == 'MENU_TITLE_LEADERBOARD'):
             new = op('PushFalse')
-            for j in ins:
-                for key in ('target', 'end'):
-                    if any(j.args.get(key) is r for r in ins[k + 1:k + 3]):
-                        j.args[key] = new
+            retarget(ins, ins[k + 1:k + 3], new)
             ins[k + 1:k + 3] = [new]
             done.add('row')
         k += 1
@@ -407,17 +440,20 @@ def frontline_without_leaderboards(apt, rw):
         raise ValueError(f'the FRONTLINE REPORT block differs from the expected shape: {sorted(done)}')
     rw.repoint(item, field, start, rw.assemble(ins), 'FRONTLINE REPORT: Leaderboards removed')
     rows = {}
-    for f, items in apt.frames(apt.movie):
-        for it, kind in items:
-            if f == 5 and kind == 3 and apt.u(it + 0x34) and (apt.s(apt.u(it + 0x34)) or '').startswith('menuitem_'):
-                rows[apt.s(apt.u(it + 0x34))] = it
-    at = rows['menuitem_3'] + 16 + 16  # its own row, never shown: also placed off-screen in case it draws before getMenuTxt
+    for frame, items in apt.frames(apt.movie):
+        for placement, kind in items:
+            row = instance_name(apt, placement) if frame == 5 and kind == 3 else None
+            if (row or '').startswith('menuitem_'):
+                rows[row] = placement
+    # its own row, never shown: also placed off-screen in case it draws before getMenuTxt
+    at = rows['menuitem_3'] + 16 + 16
     x = struct.unpack('>f', apt.apt[at:at + 4])[0]
     rw.patch(at, struct.pack('>f', x), struct.pack('>f', -2000.0), 'FRONTLINE REPORT: Leaderboards row off-screen')
     for n in (4, 5, 6):
         at = rows[f'menuitem_{n}'] + 16 + 20
         y = struct.unpack('>f', apt.apt[at:at + 4])[0]
-        rw.patch(at, struct.pack('>f', y), struct.pack('>f', y - ROW_STEP), f'FRONTLINE REPORT: row menuitem_{n} up one row')
+        rw.patch(at, struct.pack('>f', y), struct.pack('>f', y - ROW_STEP),
+                 f'FRONTLINE REPORT: row menuitem_{n} up one row')
 
 
 # Every offer of SEE GAMER CARD (Y; FSCommand:showGamerCard, an Xbox LIVE overlay with nothing to show offline):
@@ -430,30 +466,26 @@ GAMER_CARD = [
 ]
 
 
-def remove(ins, a, b):
-    """Delete ins[a:b]; branches and function ends that pointed into it point to the instruction after it."""
-    after = ins[b]
-    for j in ins:
-        for key in ('target', 'end'):
-            if any(j.args.get(key) is r for r in ins[a:b]):
-                j.args[key] = after
-    del ins[a:b]
+def remove(ins: list[Ins], start: int, end: int) -> None:
+    """Delete ins[start:end]; branches and function ends that pointed into it point to the instruction after it."""
+    retarget(ins, ins[start:end], ins[end])
+    del ins[start:end]
 
 
-def no_gamer_card(apt, rw):
-    items = {(o, s): (i, f) for o, i, f, s in apt.action_items()}
+def no_gamer_card(apt: Apt, rw: Rewriter) -> None:
+    items = {(owner, block): (item, field) for owner, item, field, block in apt.action_items()}
     for owner, start, calls, hints in GAMER_CARD:
         if (owner, start) not in items:
             raise ValueError(f'{owner}: the block is not where expected (a different game version?)')
         item, field = items[(owner, start)]
         ins = rw.block(start)
-        pool = next(i.args['items'] for i in ins if i.op == 0x88)
-        name = lambda i: apt.constants[pool[i.args['value']]] if i.op in (0xA2, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3) else None
+        name = constant_namer(apt, ins)
         found = [0, 0]
         k = 0
         while k < len(ins) - 10:
             # setAction(BUTTON_UP, 'BUTTON_SEE_GAMERCARD', this, 'seeGamerCard'): 10 instructions, args pushed last first
-            if name(ins[k]) == 'seeGamerCard' and name(ins[k + 2]) == 'BUTTON_SEE_GAMERCARD' and name(ins[k + 9]) == 'setAction':
+            if (name(ins[k]) == 'seeGamerCard' and name(ins[k + 2]) == 'BUTTON_SEE_GAMERCARD'
+                    and name(ins[k + 9]) == 'setAction'):
                 remove(ins, k, k + 10)
                 found[0] += 1
                 continue
@@ -476,29 +508,26 @@ def no_gamer_card(apt, rw):
         rw.repoint(item, field, start, rw.assemble(ins), f'{owner}: SEE GAMER CARD removed')
 
 
-def force_team(apt, rw, team):
+def force_team(apt: Apt, rw: Rewriter, team: int) -> None:
     item, field, start = deploy_block(apt)
     ins = rw.block(start)
-    inits = [k for k, i in enumerate(ins) if i.op == 0x8E and i.args['name'] == 'init']
-    if len(inits) != 1:
-        raise ValueError(f'expected one init() on the deploy screen, found {len(inits)}')
-    k = inits[0] + 1
+    k = deploy_init(ins) + 1
     ins[k:k] = [op('GetURL', strings=('FSCommand:selectTeam', str(team)))]
-    spawns = [k for k, i in enumerate(ins) if i.op == 0x83 and i.args.get('strings', (None,))[0] == 'FSCommand:doSpawn']
+    spawns = [k for k, i in enumerate(ins)
+              if i.op == 0x83 and i.args.get('strings', (None,))[0] == 'FSCommand:doSpawn']
     if len(spawns) != 1:
         raise ValueError(f'expected one doSpawn on the deploy screen, found {len(spawns)}')
     k = spawns[0]
     request = op('GetURL', strings=('FSCommand:selectTeam', str(team)))
-    for j in ins:
-        for key in ('target', 'end'):
-            if j.args.get(key) is ins[k]:
-                j.args[key] = request
+    retarget(ins, [ins[k]], request)
     ins[k:k] = [request]
-    rw.repoint(item, field, start, rw.assemble(ins), f'experiment: deploy screen sends selectTeam({team}) on init() and before doSpawn')
+    rw.repoint(item, field, start, rw.assemble(ins),
+               f'experiment: deploy screen sends selectTeam({team}) on init() and before doSpawn')
 
 
-def build(bundle_bytes, team=None):
-    """The in-game menu with the team selector; with team=1 or 2, the force_team experiment instead."""
+def build(bundle_bytes: bytes, team: int | None = None) -> tuple[bytes, bytes, list[Any]]:
+    """(new bundle bytes, new igm_mp_cq.res bytes, change log): the in-game menu with the team selector; with team=1
+    or 2, the force_team experiment instead."""
     bundle = Bundle(bundle_bytes)
     res = bundle.data(ENTRY)
     apt = Apt(res)

@@ -35,7 +35,7 @@ def f32(mesh: bytes, offset: int) -> float:
 
 def points_between(mesh: bytes, start: int, end: int) -> list[tuple[float, ...]]:
     """The 3-D points (12 bytes each) from start up to end."""
-    return [struct.unpack_from('<3f', mesh, q) for q in range(start, end - 11, 12)]
+    return [struct.unpack_from('<3f', mesh, at) for at in range(start, end - 11, 12)]
 
 
 def segs_from_lists(mesh: bytes, obj: int, count_off: int, table_off: int) -> list[list[tuple[float, ...]]]:
@@ -53,13 +53,13 @@ def segs_from_lists(mesh: bytes, obj: int, count_off: int, table_off: int) -> li
 
 
 def main() -> int | None:
-    if len(sys.argv) < 4 or any(a in ('-h', '--help') for a in sys.argv[1:]):
+    if len(sys.argv) < 4 or any(arg in ('-h', '--help') for arg in sys.argv[1:]):
         print(__doc__)
         return 0 if len(sys.argv) > 1 else 1
     path, which, out = sys.argv[1], sys.argv[2], sys.argv[3]
     hpd = hpdtool.parse(open(path, 'rb').read())
     if which.startswith('0x'):
-        sector = next(s for s in hpd.sectors if s.id == int(which, 16))
+        sector = next(candidate for candidate in hpd.sectors if candidate.id == int(which, 16))
     else:
         sector = hpd.sectors[int(which)]
     mesh = sector.mesh
@@ -75,10 +75,10 @@ def main() -> int | None:
         z = z0 + (z1 - z0) * i / nz
         ax.plot([x0, x1], [z, z], color='0.85', lw=0.8)
     for obj in objects:                                  # each area object
-        for pts in segs_from_lists(mesh, obj, 0x40, 0x44):
-            ax.plot([p[0] for p in pts], [p[2] for p in pts], color='black', lw=0.6)
-        for pts in segs_from_lists(mesh, obj, 0x38, 0x3C):
-            ax.plot([p[0] for p in pts], [p[2] for p in pts], color='tab:purple', lw=1.6)
+        for points in segs_from_lists(mesh, obj, 0x40, 0x44):
+            ax.plot([point[0] for point in points], [point[2] for point in points], color='black', lw=0.6)
+        for points in segs_from_lists(mesh, obj, 0x38, 0x3C):
+            ax.plot([point[0] for point in points], [point[2] for point in points], color='tab:purple', lw=1.6)
         # F cells: 16-byte table entries (point offset, row direction), the points up to the next entry's offset
         cell_count = u32(mesh, obj + 0x48)
         if cell_count:
@@ -86,12 +86,14 @@ def main() -> int | None:
             for j in range(cell_count):
                 start = obj + u32(mesh, table + j * 16)
                 end = obj + u32(mesh, table + (j + 1) * 16)
-                pts = points_between(mesh, start, end)
-                ax.fill([p[0] for p in pts], [p[2] for p in pts], color='tab:cyan', alpha=0.6, lw=0)
+                points = points_between(mesh, start, end)
+                ax.fill([point[0] for point in points], [point[2] for point in points], color='tab:cyan', alpha=0.6,
+                        lw=0)
                 direction = struct.unpack_from('<3f', mesh, table + j * 16 + 4)
-                cx = sum(p[0] for p in pts) / len(pts)
-                cz = sum(p[2] for p in pts) / len(pts)
-                ax.arrow(cx, cz, direction[0] * 0.6, direction[2] * 0.6, head_width=0.2, color='teal', lw=0.5)
+                centre_x = sum(point[0] for point in points) / len(points)
+                centre_z = sum(point[2] for point in points) / len(points)
+                ax.arrow(centre_x, centre_z, direction[0] * 0.6, direction[2] * 0.6, head_width=0.2, color='teal',
+                         lw=0.5)
         # B segments (0x20 bytes each), then C segments (0x2C bytes each): ends (x, z) at +0, +8 and +12, +20
         b_count = u32(mesh, obj + 0x28)
         records = obj + 0x50
@@ -106,19 +108,21 @@ def main() -> int | None:
             ax.plot([f32(mesh, rec), f32(mesh, rec + 12)], [f32(mesh, rec + 8), f32(mesh, rec + 20)],
                     color='tab:red' if not up else 'magenta', lw=2)
             if not up:
-                mx = (f32(mesh, rec) + f32(mesh, rec + 12)) / 2
-                mz = (f32(mesh, rec + 8) + f32(mesh, rec + 20)) / 2
-                ax.arrow(mx, mz, f32(mesh, rec + 0x20) * 0.8, f32(mesh, rec + 0x28) * 0.8, head_width=0.25,
+                mid_x = (f32(mesh, rec) + f32(mesh, rec + 12)) / 2
+                mid_z = (f32(mesh, rec + 8) + f32(mesh, rec + 20)) / 2
+                ax.arrow(mid_x, mid_z, f32(mesh, rec + 0x20) * 0.8, f32(mesh, rec + 0x28) * 0.8, head_width=0.25,
                          color='tab:red', lw=0.5)
-    for e in sector.edges:
-        a, b = sector.nodes[e.src].pos, sector.nodes[e.dst].pos
-        ax.plot([a[0], b[0]], [a[2], b[2]], color='moccasin', lw=0.8, zorder=1)
-    ax.scatter([n.pos[0] for n in sector.nodes], [n.pos[2] for n in sector.nodes], s=6, color='tab:orange', zorder=3)
+    for edge in sector.edges:
+        src, dst = sector.nodes[edge.src].pos, sector.nodes[edge.dst].pos
+        ax.plot([src[0], dst[0]], [src[2], dst[2]], color='moccasin', lw=0.8, zorder=1)
+    ax.scatter([node.pos[0] for node in sector.nodes], [node.pos[2] for node in sector.nodes], s=6,
+               color='tab:orange', zorder=3)
     if len(sys.argv) >= 8:
         ax.set_xlim(float(sys.argv[4]), float(sys.argv[5]))
         ax.set_ylim(float(sys.argv[6]), float(sys.argv[7]))
     ax.set_aspect('equal')
-    ax.set_title(f'sector {sector.id:#06x}: {len(objects)} areas, {len(sector.nodes)} nodes, {len(sector.edges)} edges')
+    ax.set_title(f'sector {sector.id:#06x}: {len(objects)} areas, {len(sector.nodes)} nodes, '
+                 f'{len(sector.edges)} edges')
     fig.savefig(out, dpi=110, bbox_inches='tight')
     print(f'wrote {out}')
 

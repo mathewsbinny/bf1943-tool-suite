@@ -1,5 +1,9 @@
 """Reader, disassembler and block rewriter for BF1943's EA APT menu movies (big-endian, Xbox 360).
 
+Reads a menu .res (Apt): its characters, frames, action blocks and their instructions (walk, listing, validate).
+Rewriter edits one movie (in-place patches, relocated blocks) and writes the .res again (Rewriter.res). The command
+line validates a movie and prints its problems.
+
 A menu .res is a BIGF archive of <name>.apt (movie, characters, bytecode), <name>.const (constant table)
 and <name>.geo. Pointers inside .apt are offsets from its start.
 
@@ -27,19 +31,26 @@ crafted movie cannot make validation read for hours).
 """
 import struct
 import sys
+from collections.abc import Sequence
+from typing import Any, cast
 
 sys.dont_write_bytecode = True
 SIGNATURE = 0x09876543
 FUNCTION_MARKERS = (0x98765432, 0x12345678)
 
-
-def be32(b, o):
-    if o < 0 or o + 4 > len(b):
-        raise ValueError(f'damaged movie: a word at 0x{o:x} lies past the end ({len(b)} bytes)')
-    return struct.unpack_from('>I', b, o)[0]
+type Buffer = bytes | bytearray
+# a .const entry: a string, or (kind, value) for the others (kind 4: a register)
+type Constant = str | tuple[int, int]
 
 
-def bigf(raw):
+def be32(data: Buffer, offset: int) -> int:
+    """The big-endian u32 at offset; ValueError past the end."""
+    if offset < 0 or offset + 4 > len(data):
+        raise ValueError(f'damaged movie: a word at 0x{offset:x} lies past the end ({len(data)} bytes)')
+    return struct.unpack_from('>I', data, offset)[0]
+
+
+def bigf(raw: bytes) -> list[tuple[str, bytes]]:
     """[(name, bytes)] from a BIGF archive (total size little-endian, the rest big-endian), in order. ValueError for
     a header or file past the archive's end."""
     if len(raw) < 16 or raw[:4] != b'BIGF' or struct.unpack_from('<I', raw, 4)[0] != len(raw):
@@ -47,41 +58,44 @@ def bigf(raw):
     count = be32(raw, 8)
     if count > (len(raw) - 16) // 10:
         raise ValueError(f'damaged BIGF archive: {count} files in {len(raw)} bytes')
-    out, p = [], 16
+    out: list[tuple[str, bytes]] = []
+    pos = 16
     for _ in range(count):
-        off, size = struct.unpack_from('>II', raw, p) if p + 8 <= len(raw) else (None, None)
-        end = raw.find(0, p + 8)
-        if off is None or end < 0:
+        end = raw.find(0, pos + 8)
+        if pos + 8 > len(raw) or end < 0:
             raise ValueError('damaged BIGF archive: its file list runs past the end')
-        if off + size > len(raw):
-            raise ValueError(f'damaged BIGF archive: a file at 0x{off:x} of {size} bytes runs past the end')
-        out.append((raw[p + 8:end].decode('ascii', 'replace'), raw[off:off + size]))
-        p = end + 1
+        offset, size = struct.unpack_from('>II', raw, pos)
+        if offset + size > len(raw):
+            raise ValueError(f'damaged BIGF archive: a file at 0x{offset:x} of {size} bytes runs past the end')
+        out.append((raw[pos + 8:end].decode('ascii', 'replace'), raw[offset:offset + size]))
+        pos = end + 1
     return out
 
 
-def write_bigf(files, template):
+def write_bigf(files: Sequence[tuple[str, bytes]], template: bytes) -> bytes:
     """A BIGF archive with the given (name, bytes) in order, laid out as `template` is: the same header
     words and header padding, each file 4-byte aligned. Rebuilding the template's own files reproduces it. The
     names must be the template's, in its order (only the offsets and sizes are written)."""
-    names = [n for n, _ in bigf(template)]
-    if [n for n, _ in files] != names:
-        raise ValueError(f'file names differ from the template ({[n for n, _ in files]} against {names})')
-    head = 16 + sum(8 + len(n) + 1 for n in names)
-    first = min((be32(template, 16 + sum(8 + len(n) + 1 for n in names[:k])) for k in range(len(names))),
-                default=head)
+    names = [name for name, _ in bigf(template)]
+    if [name for name, _ in files] != names:
+        raise ValueError(f'file names differ from the template ({[name for name, _ in files]} against {names})')
+    head = 16 + sum(8 + len(name) + 1 for name in names)
+    # each file's (offset, size) row: after the 16-byte header and the rows (8 bytes and a NUL-ended name) before it
+    rows = [16 + sum(8 + len(name) + 1 for name in names[:k]) for k in range(len(names))]
+    first = min((be32(template, row) for row in rows), default=head)
     if first < head:
         raise ValueError('damaged BIGF template: a file starts inside its header')
     out = bytearray(template[:first])
-    p, offsets = 16, []
+    pos = 16
+    offsets: list[tuple[int, int]] = []
     for _name, data in files:
         while len(out) % 4:
             out.append(0)
         offsets.append((len(out), len(data)))
         out += data
-    for (off, size), (name, _) in zip(offsets, files):
-        struct.pack_into('>II', out, p, off, size)
-        p += 8 + len(name) + 1
+    for (offset, size), (name, _) in zip(offsets, files):
+        struct.pack_into('>II', out, pos, offset, size)
+        pos += 8 + len(name) + 1
     struct.pack_into('<I', out, 4, len(out))
     return bytes(out)
 
@@ -138,46 +152,51 @@ class Ins:
     """One instruction. `args` holds decoded operands; for rewriting, `target`/`end` may name other Ins."""
     __slots__ = ('op', 'args', 'pc')
 
-    def __init__(self, op, args=None, pc=None):
+    def __init__(self, op: int, args: dict[str, Any] | None = None, pc: int | None = None) -> None:
         self.op, self.args, self.pc = op, dict(args or {}), pc
 
     @property
-    def label(self):
+    def label(self) -> str:
         return OPS[self.op][0]
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'Ins({self.label}, {self.args})'
 
 
-def op(label, **args):
+def op(label: str, **args: Any) -> Ins:
+    """A new instruction by its label (OPS), with its operands."""
     return Ins(BY_LABEL[label], args)
 
 
 class Apt:
-    def __init__(self, raw_res):
+    """One menu movie: its archive's files, the .apt and .const bytes, the movie character and the constants."""
+
+    def __init__(self, raw_res: bytes) -> None:
         self.files = bigf(raw_res)
-        names = [n for n, _ in self.files]
-        self.name = next((n[:-4] for n in names if n.endswith('.apt')), None)
-        if self.name is None or self.name + '.const' not in names:
+        names = [name for name, _ in self.files]
+        name = next((name[:-4] for name in names if name.endswith('.apt')), None)
+        if name is None or name + '.const' not in names:
             raise ValueError(f'not a menu movie: the archive holds {names}, no <name>.apt and <name>.const')
+        self.name: str = name
         self.apt = dict(self.files)[self.name + '.apt']
         self.const = dict(self.files)[self.name + '.const']
-        c = self.const
-        if c[:17] != b'Apt constant file':
+        const = self.const
+        if const[:17] != b'Apt constant file':
             raise ValueError('bad .const header')
-        self.movie, count, first = be32(c, 20), be32(c, 24), be32(c, 28)
-        self.constants = []
-        for k in range(self.counted(count, 8, 'constants', c)):
-            kind, value = be32(c, first + 8 * k), be32(c, first + 8 * k + 4)
-            self.constants.append(self.cstr(value, c) if kind == 1 else (kind, value))
-        m = self.movie
-        if be32(self.apt, m) != 9 or be32(self.apt, m + 4) != SIGNATURE:
+        self.movie, count, first = be32(const, 20), be32(const, 24), be32(const, 28)
+        self.constants: list[Constant] = []
+        for k in range(self.counted(count, 8, 'constants', const)):
+            kind, value = be32(const, first + 8 * k), be32(const, first + 8 * k + 4)
+            self.constants.append(self.cstr(value, const) if kind == 1 else (kind, value))
+        movie = self.movie
+        if be32(self.apt, movie) != 9 or be32(self.apt, movie + 4) != SIGNATURE:
             raise ValueError('movie character not found')
 
-    def u(self, o):
-        return be32(self.apt, o)
+    def u(self, offset: int) -> int:
+        """The .apt's big-endian u32 at offset."""
+        return be32(self.apt, offset)
 
-    def counted(self, n, size, what, data=None):
+    def counted(self, n: int, size: int, what: str, data: bytes | None = None) -> int:
         """n, when n records of size bytes could fit in the file (the .apt unless data); ValueError otherwise."""
         limit = len(self.apt if data is None else data) // size
         if n > limit:
@@ -185,133 +204,149 @@ class Apt:
         return n
 
     @staticmethod
-    def cstr(o, b):
-        end = b.find(0, o)
-        if o >= len(b) or end < 0:
-            raise ValueError(f'damaged movie: a string at 0x{o:x} does not end inside its file')
-        return b[o:end].decode('latin1')
+    def cstr(offset: int, data: Buffer) -> str:
+        """The NUL-ended Latin-1 string at offset of data."""
+        end = data.find(0, offset)
+        if offset >= len(data) or end < 0:
+            raise ValueError(f'damaged movie: a string at 0x{offset:x} does not end inside its file')
+        return data[offset:end].decode('latin1')
 
-    def s(self, o):
-        return self.cstr(o, self.apt) if o else None
+    def s(self, offset: int) -> str | None:
+        """The .apt's string at offset; None for offset 0 (no string)."""
+        return self.cstr(offset, self.apt) if offset else None
 
-    def characters(self):
-        m = self.movie
-        return [self.u(self.u(m + 24) + 4 * i) for i in range(self.counted(self.u(m + 20), 4, 'characters'))]
+    def characters(self) -> list[int]:
+        """Each character's address (0: an empty slot)."""
+        movie = self.movie
+        count = self.counted(self.u(movie + 20), 4, 'characters')
+        return [self.u(self.u(movie + 24) + 4 * i) for i in range(count)]
 
-    def imports(self):
+    def imports(self) -> list[tuple[str | None, str | None, int]]:
         """(movie, symbol, character id) for each import (count at movie +40, table at +44, 16-byte rows)."""
-        m, out = self.movie, []
-        for i in range(self.counted(self.u(m + 40), 16, 'imports')):
-            row = self.u(m + 44) + 16 * i
+        movie = self.movie
+        out: list[tuple[str | None, str | None, int]] = []
+        for i in range(self.counted(self.u(movie + 40), 16, 'imports')):
+            row = self.u(movie + 44) + 16 * i
             out.append((self.s(self.u(row)), self.s(self.u(row + 4)), self.u(row + 8)))
         return out
 
-    def exports(self):
+    def exports(self) -> list[tuple[str | None, int]]:
         """(symbol, character id) for each export (count at movie +48, table at +52, 8-byte rows)."""
-        m = self.movie
-        return [(self.s(self.u(self.u(m + 52) + 8 * i)), self.u(self.u(m + 52) + 8 * i + 4)) for i in range(self.counted(self.u(m + 48), 8, 'exports'))]
+        movie = self.movie
+        rows = [self.u(movie + 52) + 8 * i for i in range(self.counted(self.u(movie + 48), 8, 'exports'))]
+        return [(self.s(self.u(row)), self.u(row + 4)) for row in rows]
 
-    def frames(self, char, budget=None):
+    def frames(self, char: int, budget: list[int] | None = None) -> list[tuple[int, list[tuple[int, int]]]]:
         """[(frame index, [(item address, item type)])] of a Movie or Sprite character. budget: a one-item list of the
         frame items still allowed (action_items shares one over all characters: at most one item per word of the .apt;
         2026-10-30 second review: a crafted movie made validation read count x items words, hours for 1 MB)."""
         budget = budget if budget is not None else [len(self.apt) // 4]
         count, table = self.counted(self.u(char + 8), 8, 'frames'), self.u(char + 12)
-        out = []
+        out: list[tuple[int, list[tuple[int, int]]]] = []
         for f in range(count):
-            n, lst = self.counted(self.u(table + 8 * f), 4, 'frame items'), self.u(table + 8 * f + 4)
+            n, items_at = self.counted(self.u(table + 8 * f), 4, 'frame items'), self.u(table + 8 * f + 4)
             budget[0] -= n
             if budget[0] < 0:
                 raise ValueError(f'damaged movie: more frame items than words in the .apt ({len(self.apt) // 4})')
             items = []
             for k in range(n):
-                item = self.u(lst + 4 * k)
+                item = self.u(items_at + 4 * k)
                 items.append((item, self.u(item)))
             out.append((f, items))
         return out
 
-    def action_items(self):
+    def action_items(self) -> list[tuple[str, int, int, int]]:
         """(owner description, frame item address, offset of its bytecode pointer, bytecode address)."""
-        out, budget = [], [len(self.apt) // 4]
-        for ci, c in [(None, self.movie)] + [(i, c) for i, c in enumerate(self.characters()) if c and self.u(c) == 5]:
-            who = 'movie' if ci is None else ci
-            for f, items in self.frames(c, budget):
+        out: list[tuple[str, int, int, int]] = []
+        budget = [len(self.apt) // 4]
+        sprites = [(i, char) for i, char in enumerate(self.characters()) if char and self.u(char) == 5]
+        owners: list[tuple[int | None, int]] = [(None, self.movie), *sprites]
+        for char_index, char in owners:
+            who = 'movie' if char_index is None else char_index
+            for f, items in self.frames(char, budget):
                 for item, kind in items:
                     if kind == 1:
                         out.append((f'char {who} frame {f} action', item, 4, self.u(item + 4)))
                     elif kind == 8:
-                        out.append((f'char {who} frame {f} initaction sprite {self.u(item + 4)}', item, 8, self.u(item + 8)))
+                        owner = f'char {who} frame {f} initaction sprite {self.u(item + 4)}'
+                        out.append((owner, item, 8, self.u(item + 8)))
         return out
 
-    def action_blocks(self):
+    def action_blocks(self) -> list[tuple[str, int]]:
+        """(owner description, bytecode address) of each action block a frame item names."""
         return [(owner, start) for owner, _, _, start in self.action_items()]
 
-    def frame_action(self, char, frame):
+    def frame_action(self, char: int, frame: int) -> tuple[int, int, int]:
         """(frame item, pointer field offset, bytecode address) of the single Action on a sprite frame."""
-        c = self.characters()[char]
-        hits = [(it, 4, self.u(it + 4)) for f, items in self.frames(c) if f == frame for it, k in items if k == 1]
+        address = self.characters()[char]
+        hits = [(item, 4, self.u(item + 4))
+                for f, items in self.frames(address) if f == frame
+                for item, kind in items if kind == 1]
         if len(hits) != 1:
             raise ValueError(f'char {char} frame {frame} has {len(hits)} actions')
         return hits[0]
 
-    def decode(self, pc):
+    def decode(self, pc: int) -> tuple[Ins, int]:
         """The instruction at pc and the pc after it."""
         if not 0 <= pc < len(self.apt):
             raise ValueError(f'damaged movie: an instruction at 0x{pc:x}, past the end of the .apt')
-        a, code = self.apt, self.apt[pc]
+        apt, code = self.apt, self.apt[pc]
         if code not in OPS:
             raise ValueError(f'unknown opcode 0x{code:02x} at 0x{pc:x}')
         layout = OPS[code][1]
-        p, args = pc + 1, {}
+        pos = pc + 1                    # the operands' address
+        args: dict[str, Any] = {}
         if layout.startswith('A'):
-            p = (p + 3) & ~3
+            pos = (pos + 3) & ~3
             layout = layout[1:]
-        if p + OPERAND_BYTES[layout] > len(a):
+        if pos + OPERAND_BYTES[layout] > len(apt):
             raise ValueError(f'damaged movie: the operands of 0x{code:02x} at 0x{pc:x} run past the end of the .apt')
         if layout == 'I':
-            args['value'] = struct.unpack_from('>i', a, p)[0]
+            args['value'] = struct.unpack_from('>i', apt, pos)[0]
         elif layout == 'J':
-            args['offset'] = struct.unpack_from('>i', a, p)[0]
-            args['target'] = p + 4 + args['offset']
+            args['offset'] = struct.unpack_from('>i', apt, pos)[0]
+            args['target'] = pos + 4 + args['offset']
         elif layout == 'P':
-            args['ptr'] = self.u(p)
+            args['ptr'] = self.u(pos)
             args['string'] = self.s(args['ptr'])
         elif layout == 'PP':
-            args['ptrs'] = (self.u(p), self.u(p + 4))
-            args['strings'] = tuple(self.s(x) for x in args['ptrs'])
+            args['ptrs'] = (self.u(pos), self.u(pos + 4))
+            args['strings'] = tuple(self.s(ptr) for ptr in args['ptrs'])
         elif layout == 'F':
-            args['value'] = struct.unpack_from('>f', a, p)[0]
-            args['raw'] = a[p:p + 4]
+            args['value'] = struct.unpack_from('>f', apt, pos)[0]
+            args['raw'] = apt[pos:pos + 4]
         elif layout == 'B':
-            args['value'] = a[p]
+            args['value'] = apt[pos]
         elif layout == 'H':
-            args['value'] = struct.unpack_from('>H', a, p)[0]
+            args['value'] = struct.unpack_from('>H', apt, pos)[0]
         elif layout == 'L':
-            n, lst = self.u(p), self.u(p + 4)
-            args['items'] = [self.u(lst + 4 * k) for k in range(self.counted(n, 4, 'list items'))]
+            n, items_at = self.u(pos), self.u(pos + 4)
+            args['items'] = [self.u(items_at + 4 * k) for k in range(self.counted(n, 4, 'list items'))]
         elif layout in ('F1', 'F2'):
-            name_ptr, nparams, third = self.u(p), self.u(p + 4), self.u(p + 8)
+            name_ptr, nparams, third = self.u(pos), self.u(pos + 4), self.u(pos + 8)
             if layout == 'F2':
                 # name, parameter count, register count and flags (one word), parameter list, body size
-                params, size = self.u(p + 12), self.u(p + 16)
-                args['params'] = [(self.u(params + 8 * k), self.u(params + 8 * k + 4)) for k in range(self.counted(nparams, 8, 'parameters'))]
+                params, size = self.u(pos + 12), self.u(pos + 16)
+                args['params'] = [(self.u(params + 8 * k), self.u(params + 8 * k + 4))
+                                  for k in range(self.counted(nparams, 8, 'parameters'))]
                 args['regflags'] = third
-                markers = p + 20
+                markers = pos + 20
             else:
-                params, size = third, self.u(p + 12)
+                params, size = third, self.u(pos + 12)
                 args['params'] = [self.u(params + 4 * k) for k in range(self.counted(nparams, 4, 'parameters'))]
-                markers = p + 16
+                markers = pos + 16
             if (self.u(markers), self.u(markers + 4)) != FUNCTION_MARKERS:
                 raise ValueError(f'function header markers missing at 0x{pc:x}')
             args.update(name_ptr=name_ptr, name=self.s(name_ptr), size=size, body=markers + 8)
         elif layout == 'TRY':
-            args['raw'] = a[p:p + 20]
-        return Ins(code, args, pc), p + OPERAND_BYTES[layout]
+            args['raw'] = apt[pos:pos + 20]
+        return Ins(code, args, pc), pos + OPERAND_BYTES[layout]
 
-    def walk(self, start, budget=None):
+    def walk(self, start: int, budget: list[int] | None = None) -> list[Ins]:
         """Instructions of one action block, linearly, to its End (the fixup walker's extent). budget: a one-item list
         of the instructions still allowed (validate shares one over all blocks); ValueError when it runs out."""
-        pc, out = start, []
+        pc = start
+        out: list[Ins] = []
         while True:
             ins, nxt = self.decode(pc)
             out.append(ins)
@@ -324,7 +359,7 @@ class Apt:
                 return out
             pc = nxt
 
-    def validate(self):
+    def validate(self) -> tuple[int, int, list[str]]:
         """Every block decodes to an End with no End inside a function; branches and With bodies land on the
         block's instruction starts (2026-10-30 second review: the byte after the End passed, and Rewriter.block then
         failed on it); function ends on an instruction start up to the End. ValueError when the movie's characters or
@@ -332,59 +367,66 @@ class Apt:
         of the .apt, as blocks that neither overlap nor are shared do (every block of the game's movies; the fixup walker
         would fix a shared block's pointers twice); past that each block is a problem (2026-10-31: a 0.9 MB movie of
         60,000 frame items naming one long block took hours)."""
-        problems, blocks, count = [], self.action_blocks(), 0
+        problems: list[str] = []
+        blocks, count = self.action_blocks(), 0
         budget = [len(self.apt)]
         for owner, start in blocks:
             try:
-                ins = self.walk(start, budget)
+                block = self.walk(start, budget)
             except Exception as e:
                 problems.append(f'{owner} @0x{start:x}: {e}')
                 continue
-            count += len(ins)
-            starts = {i.pc for i in ins}
-            for i in ins:
+            count += len(block)
+            starts = {cast(int, i.pc) for i in block}     # decoded: every instruction has its pc
+            for i in block:
                 if 'body' in i.args:
                     end = i.args['body'] + i.args['size']
-                    if end not in starts or end > ins[-1].pc:
-                        problems.append(f'{owner}: {i.label} {i.args["name"]} at 0x{i.pc:x} body end 0x{end:x} not inside the block')
+                    if end not in starts or end > cast(int, block[-1].pc):
+                        problems.append(f'{owner}: {i.label} {i.args["name"]} at 0x{i.pc:x} body end 0x{end:x} '
+                                        f'not inside the block')
                 if 'target' in i.args and i.args['target'] not in starts:
                     problems.append(f'{owner}: {i.label} at 0x{i.pc:x} -> 0x{i.args["target"]:x} not an instruction')
         return len(blocks), count, problems
 
     # ---- listing
 
-    def operand_text(self, i, pool):
-        a = i.args
+    def operand_text(self, i: Ins, pool: list[int] | None) -> str:
+        """The operands of instruction i as listing text; pool: the ConstantPool in force (its .const indices)."""
+        args = i.args
         if i.op == 0x96:  # PushData lists index the .const table directly
-            return ', '.join(repr(self.constant(k)) for k in a['items'])
+            return ', '.join(repr(self.constant(k)) for k in args['items'])
         if i.op == 0x88:
-            return f'{len(a["items"])} constants'
+            return f'{len(args["items"])} constants'
         if i.op in POOL_INDEX_OPS or i.op == 0xA3:
-            v = pool[a['value']] if pool is not None and a['value'] < len(pool) else None
-            return repr(self.constant(v)) if v is not None else f'<pool {a["value"]}>'
-        if 'name' in a:
-            names = [self.s(x[1]) if isinstance(x, tuple) else self.s(x) for x in a['params']]
-            return f'{a["name"]!r} params={names} size={a["size"]}'
-        if 'target' in a:
-            return f'-> 0x{a["target"]:x}'
-        if 'string' in a:
-            return repr(a['string'])
-        if 'strings' in a:
-            return repr(a['strings'])
-        if 'value' in a:
-            return repr(a['value'])
+            index = pool[args['value']] if pool is not None and args['value'] < len(pool) else None
+            return repr(self.constant(index)) if index is not None else f'<pool {args["value"]}>'
+        if 'name' in args:
+            names = [self.s(param[1]) if isinstance(param, tuple) else self.s(param) for param in args['params']]
+            return f'{args["name"]!r} params={names} size={args["size"]}'
+        if 'target' in args:
+            return f'-> 0x{args["target"]:x}'
+        if 'string' in args:
+            return repr(args['string'])
+        if 'strings' in args:
+            return repr(args['strings'])
+        if 'value' in args:
+            return repr(args['value'])
         return ''
 
-    def constant(self, k):
+    def constant(self, k: int) -> Constant:
+        """Constant k for a listing: its string, 'reg<n>' for a register, (kind, value) for the others."""
         if k >= len(self.constants):
             return f'<const {k}>'
-        c = self.constants[k]
-        return c if isinstance(c, str) else {4: f'reg{c[1]}'}.get(c[0], c)
+        value = self.constants[k]
+        return value if isinstance(value, str) else {4: f'reg{value[1]}'}.get(value[0], value)
 
-    def listing(self, start):
-        pool, ends, lines = None, [], []
+    def listing(self, start: int) -> list[str]:
+        """The block at start as text lines: address, indentation per enclosing function, label and operands."""
+        pool: list[int] | None = None
+        ends: list[int] = []
+        lines: list[str] = []
         for i in self.walk(start):
-            ends = [e for e in ends if e > i.pc]
+            ends = [e for e in ends if e > cast(int, i.pc)]     # decoded: it has its pc
             if i.op == 0x88:
                 pool = i.args['items']
             lines.append(f'{i.pc:06x} {"  " * len(ends)}{i.label} {self.operand_text(i, pool)}')
@@ -396,50 +438,55 @@ class Apt:
 class Rewriter:
     """Edits one movie: same-size patches in place, and relocated blocks appended after the original .apt."""
 
-    def __init__(self, apt):
+    def __init__(self, apt: Apt) -> None:
         self.src = apt
         self.apt = bytearray(apt.apt)
         self.base = (len(self.apt) + 15) & ~15
         self.tail = bytearray()
-        self.strings = {}
-        self.log = []
+        self.strings: dict[str, int] = {}
+        self.log: list[dict[str, Any]] = []
 
     # -- data area
 
-    def alloc(self, data, align=4):
+    def alloc(self, data: bytes, align: int = 4) -> int:
+        """data appended to the tail (aligned); its .apt offset."""
         while (self.base + len(self.tail)) % align:
             self.tail.append(0)
-        at = self.base + len(self.tail)
+        offset = self.base + len(self.tail)
         self.tail += data
-        return at
+        return offset
 
-    def string(self, s):
-        if s not in self.strings:
-            self.strings[s] = self.alloc(s.encode('latin1') + b'\0', 1)
-        return self.strings[s]
+    def string(self, text: str) -> int:
+        """The .apt offset of text in the tail, appended the first time it is asked for."""
+        if text not in self.strings:
+            self.strings[text] = self.alloc(text.encode('latin1') + b'\0', 1)
+        return self.strings[text]
 
-    def words(self, values):
-        return self.alloc(b''.join(struct.pack('>I', v) for v in values)) if values else 0
+    def words(self, values: Sequence[int]) -> int:
+        """The .apt offset of the values as big-endian u32s in the tail (0 for none)."""
+        return self.alloc(b''.join(struct.pack('>I', value) for value in values)) if values else 0
 
     # -- in-place patch
 
-    def patch(self, pc, expected, replacement, why):
+    def patch(self, pc: int, expected: bytes, replacement: bytes, why: str) -> None:
         if len(expected) != len(replacement):
             raise ValueError('in-place patches must keep the size')
-        if bytes(self.apt[pc:pc + len(expected)]) != expected:
-            raise ValueError(f'0x{pc:x}: expected {expected.hex()}, found {bytes(self.apt[pc:pc + len(expected)]).hex()}')
+        found = bytes(self.apt[pc:pc + len(expected)])
+        if found != expected:
+            raise ValueError(f'0x{pc:x}: expected {expected.hex()}, found {found.hex()}')
         self.apt[pc:pc + len(expected)] = replacement
         self.log.append(dict(kind='patch', at=pc, before=expected.hex(), after=replacement.hex(), why=why))
 
     # -- block relocation
 
-    def relink(self, ins):
+    def relink(self, ins: list[Ins]) -> list[Ins]:
         """Turn decoded pc-based targets and function ends into references to Ins objects."""
         by_pc = {i.pc: i for i in ins}
         for i in ins:
             if 'target' in i.args and isinstance(i.args['target'], int):
                 if i.args['target'] not in by_pc:
-                    raise ValueError(f'{i.label} at 0x{i.pc:x} -> 0x{i.args["target"]:x}, not an instruction of the block')
+                    raise ValueError(f'{i.label} at 0x{i.pc:x} -> 0x{i.args["target"]:x}, not an instruction of the '
+                                     f'block')
                 i.args['target'] = by_pc[i.args['target']]
             if 'body' in i.args:
                 end = i.args.pop('body') + i.args.pop('size')
@@ -448,11 +495,11 @@ class Rewriter:
                 i.args['end'] = by_pc[end]
         return ins
 
-    def block(self, start):
+    def block(self, start: int) -> list[Ins]:
         """The block at start as editable, relinked instructions."""
         return self.relink(self.src.walk(start))
 
-    def assemble(self, ins):
+    def assemble(self, ins: Sequence[Ins]) -> int:
         """Append the instruction list as a new block; returns its offset. Lists are always emitted fresh."""
         if not ins or ins[-1].op != 0x00 or any(i.op == 0x00 for i in ins[:-1]):
             raise ValueError('a block ends with its only End')
@@ -462,9 +509,10 @@ class Rewriter:
             raise ValueError('the block holds one instruction object more than once (build each use fresh)')
         # pass 1: positions (alignment depends on the absolute offset)
         start = self.alloc(b'', 4)
-        pc, at = start, {}
+        pc = start
+        address_of: dict[int, int] = {}     # id(instruction) -> its address
         for i in ins:
-            at[id(i)] = pc
+            address_of[id(i)] = pc
             layout = OPS[i.op][1]
             pc += 1
             if layout.startswith('A'):
@@ -476,7 +524,7 @@ class Rewriter:
         self.tail += bytes(code_len)
         out = bytearray()
         for i in ins:
-            if start + len(out) != at[id(i)]:
+            if start + len(out) != address_of[id(i)]:
                 raise AssertionError(f'{i.label}: emitted position differs from the layout pass')
             out.append(i.op)
             layout = OPS[i.op][1]
@@ -484,55 +532,60 @@ class Rewriter:
                 while (start + len(out)) % 4:
                     out.append(0)
                 layout = layout[1:]
-            a = i.args
+            args = i.args
             if layout == 'I':
-                out += struct.pack('>i', a['value'])
+                out += struct.pack('>i', args['value'])
             elif layout == 'J':
                 after = start + len(out) + 4
-                out += struct.pack('>i', at[id(a['target'])] - after)
+                out += struct.pack('>i', address_of[id(args['target'])] - after)
             elif layout == 'P':
-                out += struct.pack('>I', self.string(a['string']) if 'ptr' not in a else a['ptr'])
+                out += struct.pack('>I', self.string(args['string']) if 'ptr' not in args else args['ptr'])
             elif layout == 'PP':
-                out += struct.pack('>II', *(a['ptrs'] if 'ptrs' in a else [self.string(s) for s in a['strings']]))
+                ptrs = args['ptrs'] if 'ptrs' in args else [self.string(text) for text in args['strings']]
+                out += struct.pack('>II', *ptrs)
             elif layout == 'F':
-                out += a['raw'] if 'raw' in a else struct.pack('>f', a['value'])
+                out += args['raw'] if 'raw' in args else struct.pack('>f', args['value'])
             elif layout == 'B':
-                out.append(a['value'])
+                out.append(args['value'])
             elif layout == 'H':
-                out += struct.pack('>H', a['value'])
+                out += struct.pack('>H', args['value'])
             elif layout == 'L':
-                out += struct.pack('>II', len(a['items']), self.words(a['items']))
+                out += struct.pack('>II', len(args['items']), self.words(args['items']))
             elif layout in ('F1', 'F2'):
-                name = a['name_ptr'] if 'name_ptr' in a else self.string(a['name'])
+                name = args['name_ptr'] if 'name_ptr' in args else self.string(args['name'])
                 header_end = start + len(out) + (20 if layout == 'F2' else 16) + 8
-                size = at[id(a['end'])] - header_end
+                size = address_of[id(args['end'])] - header_end
                 if layout == 'F2':
-                    params = self.words([w for pair in a['params'] for w in pair])
-                    out += struct.pack('>5I', name, len(a['params']), a['regflags'], params, size)
+                    params = self.words([word for pair in args['params'] for word in pair])
+                    out += struct.pack('>5I', name, len(args['params']), args['regflags'], params, size)
                 else:
-                    out += struct.pack('>4I', name, len(a['params']), self.words(a['params']), size)
+                    out += struct.pack('>4I', name, len(args['params']), self.words(args['params']), size)
                 out += struct.pack('>2I', *FUNCTION_MARKERS)
         if len(out) != code_len:
             raise AssertionError('assembled size differs from the layout pass')
         self.tail[start - self.base:start - self.base + code_len] = out
         return start
 
-    def repoint(self, item, field, old, new, why):
+    def repoint(self, item: int, field: int, old: int, new: int, why: str) -> None:
         if be32(self.apt, item + field) != old:
             raise ValueError(f'frame item 0x{item:x} does not point at 0x{old:x}')
         struct.pack_into('>I', self.apt, item + field, new)
         self.log.append(dict(kind='relocate', item=item, old_block=old, new_block=new, why=why))
 
-    def result(self):
-        apt = bytes(self.apt) + bytes(self.base - len(self.apt)) + bytes(self.tail) if self.tail else bytes(self.apt)
-        return apt
+    def result(self) -> bytes:
+        """The edited .apt: the original bytes (patched), then the tail from base."""
+        if not self.tail:
+            return bytes(self.apt)
+        return bytes(self.apt) + bytes(self.base - len(self.apt)) + bytes(self.tail)
 
-    def res(self, template):
-        files = [(n, self.result() if n == self.src.name + '.apt' else d) for n, d in self.src.files]
+    def res(self, template: bytes) -> bytes:
+        """The menu .res with the edited .apt, laid out as template (write_bigf)."""
+        apt_name = self.src.name + '.apt'
+        files = [(name, self.result() if name == apt_name else data) for name, data in self.src.files]
         return write_bigf(files, template)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     """0: no problem, 1: problems found, 2: the movie could not be read (2026-10-30 second review: a damaged movie
     raised a traceback, exit 1 as if problems were found)."""
     if len(argv) < 2 or argv[1] in ('-h', '--help'):
@@ -541,7 +594,7 @@ def main(argv):
     try:
         with open(argv[1], 'rb') as f:
             apt = Apt(f.read())
-        blocks, n, problems = apt.validate()
+        blocks, instructions, problems = apt.validate()
     except (OSError, ValueError) as e:
         print(f'error: {argv[1]} could not be read as a menu movie: {e}', file=sys.stderr)
         try:
@@ -550,9 +603,9 @@ def main(argv):
         except ImportError:
             pass
         return 2
-    print(f'{apt.name}: {blocks} action blocks, {n} instructions, {len(problems)} problems')
-    for p in problems[:40]:
-        print('  ', p)
+    print(f'{apt.name}: {blocks} action blocks, {instructions} instructions, {len(problems)} problems')
+    for problem in problems[:40]:
+        print('  ', problem)
     return 1 if problems else 0                     # a script can tell an invalid movie from a sound one
 
 

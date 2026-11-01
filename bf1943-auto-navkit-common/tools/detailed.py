@@ -45,29 +45,33 @@ def flagged_sectors(level_dir: str, common: Iterable[str], xoff: int, zoff: int,
                     margin: float = MARGIN) -> set[tuple[int, int]]:
     """Sectors (X, Z) within margin of a NeedsDetailedPathfinding object's collision box (objects.json). ValueError on
     an objects.json from before that flag was extracted (2026-10-31): prepare the level again."""
-    bases = [b for b in [os.path.join(level_dir, 'pkg'), os.path.join(level_dir, 'dist')] + list(common) if os.path.isdir(b)]
-    hv = levelobjects.havok_index(bases)
+    folders = [os.path.join(level_dir, 'pkg'), os.path.join(level_dir, 'dist')] + list(common)
+    bases = [base for base in folders if os.path.isdir(base)]
+    havok = levelobjects.havok_index(bases)
     out, cache = set(), {}
-    k = levelobjects.FLAG_DETAILED
+    detailed_flag = levelobjects.FLAG_DETAILED
     with open(os.path.join(level_dir, 'objects.json'), encoding='utf-8') as f:
         objects = json.load(f)
-    if any(o.get('flags') and len(o['flags']) <= k for o in objects):
+    if any(obj.get('flags') and len(obj['flags']) <= detailed_flag for obj in objects):
         raise ValueError(f'{os.path.join(level_dir, "objects.json")} is from before NeedsDetailedPathfinding was '
                          f'extracted: run navkit_le.py prepare on the level again')
-    for o in objects:
-        if not (o.get('flags') and o['flags'][k]):
+    for obj in objects:
+        if not (obj.get('flags') and obj['flags'][detailed_flag]):
             continue
-        bp = o['bp'].lower()
-        if bp not in cache:
-            cache[bp] = levelobjects.triangles(hv[bp]) if bp in hv else None
-        t = np.array(o['m'][12:15])
-        if cache[bp] is None:
-            x0, z0, x1, z1 = t[0], t[2], t[0], t[2]
+        blueprint = obj['bp'].lower()
+        if blueprint not in cache:
+            cache[blueprint] = levelobjects.triangles(havok[blueprint]) if blueprint in havok else None
+        origin = np.array(obj['m'][12:15])
+        if cache[blueprint] is None:
+            x0, z0, x1, z1 = origin[0], origin[2], origin[0], origin[2]
         else:
-            V = cache[bp].reshape(-1, 3) @ np.array([o['m'][0:3], o['m'][4:7], o['m'][8:11]]) + t
-            x0, z0, x1, z1 = V[:, 0].min(), V[:, 2].min(), V[:, 0].max(), V[:, 2].max()
+            rotation = np.array([obj['m'][0:3], obj['m'][4:7], obj['m'][8:11]])
+            world = cache[blueprint].reshape(-1, 3) @ rotation + origin
+            x0, z0, x1, z1 = world[:, 0].min(), world[:, 2].min(), world[:, 0].max(), world[:, 2].max()
+        # X, Z: sector indices (100 m squares less the level's sector offsets)
         for X in range(int(math.floor((x0 - margin) / 100)) - xoff, int(math.floor((x1 + margin) / 100)) - xoff + 1):
-            for Z in range(int(math.floor((z0 - margin) / 100)) - zoff, int(math.floor((z1 + margin) / 100)) - zoff + 1):
+            for Z in range(int(math.floor((z0 - margin) / 100)) - zoff,
+                           int(math.floor((z1 + margin) / 100)) - zoff + 1):
                 out.add((X, Z))
     return out
 
@@ -81,27 +85,32 @@ def stacked_columns(samples_path: str, xoff: int, zoff: int, slope_max: float = 
     Wake Island the two put a stacked column on either side of a sector line, the chosen sectors are the same."""
     s, _ = navsample.load(samples_path)
     ok = ((s.flags & 3) == 0) & (s.normal[:, 1] >= math.cos(math.radians(slope_max)) - 0.01)
-    col = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
+    column_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
     y = np.where(ok, s.y.astype(float), np.nan)
-    lo = np.full(s.nx * s.nz, np.inf)
+    lo = np.full(s.nx * s.nz, np.inf)               # per column: the lowest and highest standable surface
     hi = np.full(s.nx * s.nz, -np.inf)
-    sel = ok
-    np.minimum.at(lo, col[sel], y[sel])
-    np.maximum.at(hi, col[sel], y[sel])
+    standable = ok
+    np.minimum.at(lo, column_of[standable], y[standable])
+    np.maximum.at(hi, column_of[standable], y[standable])
     stacked = np.nonzero(hi - lo >= STACK_GAP)[0]
     if cm_sectors:
         X, Z = navsample.column_sectors(s, stacked)     # in whole centimetres: the same sectors navbuild.stage gives
         return Counter(zip((X - xoff).tolist(), (Z - zoff).tolist()))
     x = s.min_x + (stacked % s.nx) * s.pitch
     z = s.min_z + (stacked // s.nx) * s.pitch
-    return Counter(zip((np.floor(x / 100).astype(int) - xoff).tolist(), (np.floor(z / 100).astype(int) - zoff).tolist()))
+    return Counter(zip((np.floor(x / 100).astype(int) - xoff).tolist(),
+                       (np.floor(z / 100).astype(int) - zoff).tolist()))
 
 
 def choose(level_dir: str, common: Iterable[str], samples_path: str | None, xoff: int, zoff: int,
            margin: float = MARGIN, stacked_min: int = STACKED_MIN) -> tuple[list[tuple[int, int]], dict[str, int]]:
     """(sorted [(X, Z)], {'flag': n, 'stacked': n}) - the detailed sectors of a level."""
     flag = flagged_sectors(level_dir, common, xoff, zoff, margin)
-    stacked = {k for k, n in stacked_columns(samples_path, xoff, zoff).items() if n >= stacked_min} if samples_path else set()
+    if samples_path:
+        stacked = {sector for sector, count in stacked_columns(samples_path, xoff, zoff).items()
+                   if count >= stacked_min}
+    else:
+        stacked = set()
     return sorted(flag | stacked), {'flag': len(flag), 'stacked': len(stacked), 'stacked only': len(stacked - flag)}
 
 
@@ -115,11 +124,11 @@ def write_sampled_record(p02: str, sectors: Iterable[tuple[int, int]], xoff: int
     """pending: written as a 0.2 m run starts, replaced by the covered sectors when both its runs finish - so the
     samples of a run that failed part-way are never taken for good ones."""
     tmp = sampled_record_path(p02) + '.tmp'
-    rec = {'xoff': xoff, 'zoff': zoff, 'sectors': sorted([int(i), int(j)] for i, j in sectors)}
+    record = {'xoff': xoff, 'zoff': zoff, 'sectors': sorted([int(i), int(j)] for i, j in sectors)}
     if pending:
-        rec['pending'] = True
+        record['pending'] = True
     with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(rec, f)
+        json.dump(record, f)
     os.replace(tmp, sampled_record_path(p02))
 
 
@@ -129,18 +138,20 @@ def sampled_problem(p02: str, samples08: str | None, sectors: Iterable[tuple[int
     a finished run (not "pending": one that failed part-way leaves that), the same sector offsets, and every chosen
     sector among those it covered. Without one (a run from before the record): the 0.8 m samples the choice came
     from must not be newer than the 0.2 m ones."""
-    rec = sampled_record_path(p02)
-    if os.path.isfile(rec):
+    record_path = sampled_record_path(p02)
+    if os.path.isfile(record_path):
         try:
-            with open(rec, encoding='utf-8') as f:
-                r = json.load(f)
+            with open(record_path, encoding='utf-8') as f:
+                record = json.load(f)
         except ValueError:
-            return f'its record {os.path.basename(rec)} is damaged'
-        if r.get('pending'):
+            return f'its record {os.path.basename(record_path)} is damaged'
+        if record.get('pending'):
             return 'the last 0.2 m sampling run did not finish'
-        if (r.get('xoff'), r.get('zoff')) != (xoff, zoff):
-            return f'sampled with sector offsets {r.get("xoff")},{r.get("zoff")}, the level now has {xoff},{zoff}'
-        missing = sorted({(int(i), int(j)) for i, j in sectors} - {(int(i), int(j)) for i, j in r.get('sectors', ())})
+        if (record.get('xoff'), record.get('zoff')) != (xoff, zoff):
+            return (f'sampled with sector offsets {record.get("xoff")},{record.get("zoff")}, '
+                    f'the level now has {xoff},{zoff}')
+        covered = {(int(i), int(j)) for i, j in record.get('sectors', ())}
+        missing = sorted({(int(i), int(j)) for i, j in sectors} - covered)
         if missing:
             return f'{len(missing)} detailed sector(s) are not in the 0.2 m samples, e.g. {missing[0]}'
         return None
@@ -153,31 +164,32 @@ def score(chosen: Iterable[tuple[int, int]], dice_pathdata: str) -> tuple[int, i
     """Against DICE's choice (evaluation only): (found, DICE detailed, chosen sectors DICE builds at 0.8)."""
     import hpdtool
     import kymesh
-    det, norm = set(), set()
-    for s in hpdtool.parse(open(dice_pathdata, 'rb').read()).sectors:
-        (det if abs(kymesh.parse_mesh(s.mesh).pitch - 0.2) < 1e-3 else norm).add((s.id >> 8, s.id & 0xff))
-    c = set(chosen)
-    return len(det & c), len(det), len(norm & c)
+    detailed, normal = set(), set()
+    for sector in hpdtool.parse(open(dice_pathdata, 'rb').read()).sectors:
+        is_detailed = abs(kymesh.parse_mesh(sector.mesh).pitch - 0.2) < 1e-3
+        (detailed if is_detailed else normal).add((sector.id >> 8, sector.id & 0xff))
+    chosen_set = set(chosen)
+    return len(detailed & chosen_set), len(detailed), len(normal & chosen_set)
 
 
 def offsets_of(root: str, lv: str, given: str | None = None) -> tuple[int, int]:
     """(xoff, zoff): --offsets X,Z when given, else the level's navkit.json (navkit_le.py prepare); ValueError if neither."""
     if given:
         try:
-            x, z = (int(v) for v in given.split(','))
+            x, z = (int(part) for part in given.split(','))
             return x, z
         except ValueError as e:
             raise ValueError(f'--offsets {given!r}: give X,Z (two whole numbers)') from e
-    p = os.path.join(root, 'work', 'navkit', lv, 'navkit.json')
-    if not os.path.isfile(p):
-        raise ValueError(f'{lv}: no --offsets X,Z and no {p} (run navkit_le.py prepare {lv})')
-    with open(p, encoding='utf-8') as f:
-        s = json.load(f)
-    return int(s['xoff']), int(s['zoff'])
+    path = os.path.join(root, 'work', 'navkit', lv, 'navkit.json')
+    if not os.path.isfile(path):
+        raise ValueError(f'{lv}: no --offsets X,Z and no {path} (run navkit_le.py prepare {lv})')
+    with open(path, encoding='utf-8') as f:
+        st = json.load(f)
+    return int(st['xoff']), int(st['zoff'])
 
 
 def main(argv: list[str]) -> int:
-    if any(a in ('-h', '--help') for a in argv[1:]):
+    if any(arg in ('-h', '--help') for arg in argv[1:]):
         print(__doc__)
         return 0
     if len(argv) < 2:
@@ -186,23 +198,23 @@ def main(argv: list[str]) -> int:
     lv = argv[1].lower()
     opts = dict(zip(argv[2:], argv[3:]))
     root = os.environ.get('OPFOR_ROOT') or r'C:\Games\Project OPFOR'
-    L = os.path.join(root, 'work', 'levels', lv)
-    common = [os.path.join(root, 'work', 'navkit', 'common', c) for c in ('mp_common', 'sp_common')]
+    level_dir = os.path.join(root, 'work', 'levels', lv)
+    common = [os.path.join(root, 'work', 'navkit', 'common', name) for name in ('mp_common', 'sp_common')]
     try:
         xoff, zoff = offsets_of(root, lv, opts.get('--offsets'))
     except ValueError as e:
         print('error:', e)
         return 2
-    chosen, why = choose(L, common, opts.get('--samples'), xoff, zoff)
+    chosen, why = choose(level_dir, common, opts.get('--samples'), xoff, zoff)
     print(f'{lv}: {len(chosen)} detailed sectors ({why})')
     if '--score' in argv:
         import navparity
-        p = navparity.reference_of(root, lv)     # DICE's file: never NavKit's own installed one (.opfor-none)
-        if not os.path.isfile(p):
+        reference = navparity.reference_of(root, lv)     # DICE's file: never NavKit's own installed one (.opfor-none)
+        if not os.path.isfile(reference):
             print(f'error: {lv} has no original path data to score against')
             return 1
-        f, d, x = score(chosen, p)
-        print(f'  against DICE: {f} of its {d} detailed sectors, {x} more')
+        found, dice_detailed, extra = score(chosen, reference)
+        print(f'  against DICE: {found} of its {dice_detailed} detailed sectors, {extra} more')
     return 0
 
 

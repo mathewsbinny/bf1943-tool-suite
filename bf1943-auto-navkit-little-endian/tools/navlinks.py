@@ -1,5 +1,6 @@
 """NavKit: links and route edges of a navigation side file (DESIGN.md 5.1), written into a path-data file's route
-graph (navkit apply, after the build - or on a copy of DICE's file for a DICE base).
+graph (navkit apply, after the build - or on a copy of DICE's file for a DICE base). Input: a parsed pathdata.hpd
+(hpdtool.HpdFile) and the side file's operations; output: the file changed in place and one result per operation.
 
   link-areas a b            a two-way route edge between the nodes nearest a and b (joins two areas / islands)
   route-edge a b add        the same, one-way when "two-way" is false
@@ -14,6 +15,8 @@ node's first-edge index (`a`: first outgoing edge + 1, 0 when it has none) is re
 DICE and NavKit file follows.
 """
 import math
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -22,90 +25,98 @@ import hpdtool
 JOIN_XZ, JOIN_Y, Y_OFFSET = 15.0, 4.0, 0.95
 GRAPH_OPS = ('link-areas', 'route-edge')
 
+type Operation = dict[str, Any]          # one operation of a navigation side file (core/bfbc2core/navtune.py)
+type Result = tuple[int, bool, str]      # (operation index, applied, message)
 
-def cost_tag(p, q):
+
+def cost_tag(p: Sequence[float], q: Sequence[float]) -> int:
+    """The generator's edge cost between two points: 0x80000000 | floor(3-D distance * 16)."""
     return 0x80000000 | int(math.floor(math.dist(p, q) * 16))
 
 
-def _nearest(sector, p):
-    """(local index, horizontal distance) of the sector's node nearest p within the join limits, or None."""
+def _nearest(sector: hpdtool.Sector, point: Sequence[float]) -> tuple[int, float] | None:
+    """(local index, horizontal distance) of the sector's node nearest the point within the join limits, or None."""
     if not sector.nodes:
         return None
-    pos = np.array([n.pos for n in sector.nodes], dtype=np.float64)
-    d = np.hypot(pos[:, 0] - p[0], pos[:, 2] - p[2])
-    d = np.where(np.abs(pos[:, 1] - Y_OFFSET - p[1]) <= JOIN_Y, d, np.inf)
-    k = int(np.argmin(d))
-    return (k, float(d[k])) if d[k] <= JOIN_XZ else None
+    pos = np.array([node.pos for node in sector.nodes], dtype=np.float64)
+    dist = np.hypot(pos[:, 0] - point[0], pos[:, 2] - point[2])
+    dist = np.where(np.abs(pos[:, 1] - Y_OFFSET - point[1]) <= JOIN_Y, dist, np.inf)
+    k = int(np.argmin(dist))
+    return (k, float(dist[k])) if dist[k] <= JOIN_XZ else None
 
 
-def find_pair(f, a, b):
+def find_pair(hpd: hpdtool.HpdFile, a: Sequence[float], b: Sequence[float]) -> tuple[int, int, int] | None:
     """(sector index, local node a, local node b) - the closest pair of nodes in one sector, or None."""
     best = None
-    for si, s in enumerate(f.sectors):
-        x0, x1, _, _, z0, z1 = s.bounds
+    for sector_index, sector in enumerate(hpd.sectors):
+        min_x, max_x, _, _, min_z, max_z = sector.bounds
         reach = JOIN_XZ + 1
-        if not (x0 - reach <= a[0] <= x1 + reach and z0 - reach <= a[2] <= z1 + reach):
+        if not (min_x - reach <= a[0] <= max_x + reach and min_z - reach <= a[2] <= max_z + reach):
             continue
-        na, nb = _nearest(s, a), _nearest(s, b)
-        if na and nb and na[0] != nb[0]:
-            score = na[1] + nb[1]
+        near_a, near_b = _nearest(sector, a), _nearest(sector, b)
+        if near_a and near_b and near_a[0] != near_b[0]:
+            score = near_a[1] + near_b[1]
             if best is None or score < best[0]:
-                best = (score, si, na[0], nb[0])
+                best = (score, sector_index, near_a[0], near_b[0])
     return None if best is None else best[1:]
 
 
-def recompute_first_edges(sector):
+def recompute_first_edges(sector: hpdtool.Sector) -> None:
     """Edges sorted by source node (stable: existing order kept within a source); each node's `a` set."""
-    sector.edges.sort(key=lambda e: e.src)
-    first = {}
-    for k, e in enumerate(sector.edges):
-        first.setdefault(e.src, k)
+    sector.edges.sort(key=lambda edge: edge.src)
+    first: dict[int, int] = {}
+    for k, edge in enumerate(sector.edges):
+        first.setdefault(edge.src, k)
     for n, node in enumerate(sector.nodes):
         node.a = first[n] + 1 if n in first else 0
 
 
-def apply(f, operations, log=print):
+def apply(hpd: hpdtool.HpdFile, operations: Sequence[Operation],
+          log: Callable[[str], object] = print) -> list[Result]:
     """Applies the graph operations of a side file to a parsed path-data file (hpdtool.HpdFile) in place.
     Returns one result per graph operation: (operation index, applied: bool, message)."""
-    results, touched = [], set()
-    for k, o in enumerate(operations):
-        name = o.get('op')
+    results: list[Result] = []
+    touched: set[int] = set()
+    for k, operation in enumerate(operations):
+        name = operation.get('op')
         if name not in GRAPH_OPS:
             continue
-        a, b = o['a'], o['b']
-        pair = find_pair(f, a, b)
+        pair = find_pair(hpd, operation['a'], operation['b'])
         if pair is None:
             results.append((k, False, f'{name}: no sector has route nodes near both points (within {JOIN_XZ:.0f} m) - '
                                       f'split it at the sector border, or put the points nearer the route graph'))
             continue
-        si, ia, ib = pair
-        s = f.sectors[si]
-        pa, pb = s.nodes[ia].pos, s.nodes[ib].pos
-        two_way = o.get('two-way', True)
-        dirs = [(ia, ib), (ib, ia)] if two_way else [(ia, ib)]
-        length = math.dist(pa, pb)
-        limit = next((n.value for n in s.nodes if n.value), 15.0)
-        warn = f' - longer than the file\'s DistEdgeMax ({limit:.0f} m): the game may not use it' if length > limit else ''
-        if name == 'link-areas' or o.get('action') == 'add':
+        sector_index, node_a, node_b = pair
+        sector = hpd.sectors[sector_index]
+        two_way = operation.get('two-way', True)
+        directions = [(node_a, node_b), (node_b, node_a)] if two_way else [(node_a, node_b)]
+        length = math.dist(sector.nodes[node_a].pos, sector.nodes[node_b].pos)
+        limit = next((node.value for node in sector.nodes if node.value), 15.0)
+        warn = ''
+        if length > limit:
+            warn = f' - longer than the file\'s DistEdgeMax ({limit:.0f} m): the game may not use it'
+        touched.add(sector_index)
+        if name == 'link-areas' or operation.get('action') == 'add':
             added = 0
-            have = {(e.src, e.dst) for e in s.edges}
-            for src, dst in dirs:
+            have = {(edge.src, edge.dst) for edge in sector.edges}
+            for src, dst in directions:
                 if (src, dst) not in have:
-                    s.edges.append(hpdtool.Edge(cost_tag(s.nodes[src].pos, s.nodes[dst].pos), src, dst))
+                    sector.edges.append(hpdtool.Edge(cost_tag(sector.nodes[src].pos, sector.nodes[dst].pos), src, dst))
                     added += 1
-            touched.add(si)
-            results.append((k, True, f'{name}: {added} edge(s) added in sector 0x{s.id:04X}, {length:.1f} m'
+            results.append((k, True, f'{name}: {added} edge(s) added in sector 0x{sector.id:04X}, {length:.1f} m'
                                      f'{" (already there)" if not added else ""}{warn}'))
         else:
-            before = len(s.edges)
-            drop = set(dirs)
-            s.edges[:] = [e for e in s.edges if (e.src, e.dst) not in drop]
-            removed = before - len(s.edges)
-            touched.add(si)
-            results.append((k, removed > 0, f'route-edge remove: {removed} edge(s) removed in sector 0x{s.id:04X}'
-                                            if removed else f'route-edge remove: no edge between those nodes in sector 0x{s.id:04X}'))
-    for si in touched:
-        recompute_first_edges(f.sectors[si])
-    for _, ok, msg in results:
-        log(('  ' if ok else '  NOT APPLIED: ') + msg)
+            before = len(sector.edges)
+            drop = set(directions)
+            sector.edges[:] = [edge for edge in sector.edges if (edge.src, edge.dst) not in drop]
+            removed = before - len(sector.edges)
+            if removed:
+                message = f'route-edge remove: {removed} edge(s) removed in sector 0x{sector.id:04X}'
+            else:
+                message = f'route-edge remove: no edge between those nodes in sector 0x{sector.id:04X}'
+            results.append((k, removed > 0, message))
+    for sector_index in touched:
+        recompute_first_edges(hpd.sectors[sector_index])
+    for _, applied, message in results:
+        log(('  ' if applied else '  NOT APPLIED: ') + message)
     return results

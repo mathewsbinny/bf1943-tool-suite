@@ -34,8 +34,11 @@ import math
 import os
 import sys
 import time
+from collections.abc import Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -49,6 +52,16 @@ import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 from bfbc2core import game1943, rsnv, rsnvtrip, terrain  # noqa: E402
 
+if TYPE_CHECKING:
+    from bfbc2core.level import Level
+
+type Log = Callable[[str], object]
+type Triangles = npt.NDArray[np.floating[Any]]  # (n, 3 corners, x y z)
+type CellMask = npt.NDArray[np.bool_]           # per sea-grid cell (nz, nx): bool
+type Edge = tuple[int, int, int, float | None, bool]    # rsnvgrid1943.write_world's: (a, b, kind, cost m, both ways)
+type Point = Sequence[float] | npt.NDArray[np.float64]     # (x, y, z)
+type Edges = set[tuple[int, int]]               # undirected sea-graph edges (a, b) between cells, a < b
+
 MARGIN = 250.0               # m of sea around the land, carriers and craft spawns
 BAND_BELOW = 0.3             # m under the draft: collision there still touches the hull
 BAND_ABOVE = 2.0             # m over the sea level: collision there touches the hull
@@ -61,14 +74,15 @@ LAUNCH_GAP = 2.0             # m past the deck end + half the craft's length: wh
 OFFM_ALIGHT_ZONE, OFFM_LCVP_LAUNCH = rsnvgrid1943.OFFM_ALIGHT_ZONE, 3      # design 1.3's OFFM kinds
 
 
+def paths(lv: str) -> dict[str, str]:
+    work = game1943.level_work(lv)
+    return {'work': work, 'objects': os.path.join(work, 'objects'), 'navkit': os.path.join(work, 'navkit'),
+            'rsnv': os.path.join(work, 'navkit', f'{lv}.lcvp.rsnv'),
+            'soldier': os.path.join(work, 'navkit', f'{lv}.rsnv')}
 
-def paths(lv):
-    W = game1943.level_work(lv)
-    return {'work': W, 'objects': os.path.join(W, 'objects'), 'navkit': os.path.join(W, 'navkit'),
-            'rsnv': os.path.join(W, 'navkit', f'{lv}.lcvp.rsnv'), 'soldier': os.path.join(W, 'navkit', f'{lv}.rsnv')}
 
-
-def craft_spawns(lv, game=None):
+def craft_spawns(lv: str, game: str | None = None) -> tuple[list[dict[str, Any]], 'Level']:
+    """The level's landing craft spawns (vehicle name, team, position, heading, entry points) and the level."""
     from bfbc2core import level1943, vehicles1943
     level = level1943.load(lv, game=game, log=lambda *a: None)
     game_level = game1943.Game(game1943.find_game(game), lv)
@@ -89,7 +103,8 @@ def craft_spawns(lv, game=None):
     return out, level
 
 
-def rasterise_band(T, lo, hi, x0, z0, nx, nz, pitch):
+def rasterise_band(T: Triangles, lo: float, hi: float, x0: float, z0: float, nx: int, nz: int,
+                   pitch: float) -> tuple[CellMask, int]:
     """Bool (nz, nx): cells whose centre lies under a triangle crossing the height band [lo, hi] (a triangle smaller
     than a cell marks the cell of its centroid). T: triangles (n, 3 corners, xyz)."""
     import navsample1943
@@ -109,19 +124,19 @@ def rasterise_band(T, lo, hi, x0, z0, nx, nz, pitch):
     lo_j = np.floor((T[:, :, 2].min(1) - z0) / pitch).astype(np.int64)
     hi_j = np.ceil((T[:, :, 2].max(1) - z0) / pitch).astype(np.int64)
     big = np.nonzero((hi_i - lo_i >= 2) | (hi_j - lo_j >= 2))[0]
-    for t in big.tolist():
-        i0, i1 = max(lo_i[t], 0), min(hi_i[t], nx - 1)
-        j0, j1 = max(lo_j[t], 0), min(hi_j[t], nz - 1)
+    for tri in big.tolist():
+        i0, i1 = max(lo_i[tri], 0), min(hi_i[tri], nx - 1)
+        j0, j1 = max(lo_j[tri], 0), min(hi_j[tri], nz - 1)
         if i1 < i0 or j1 < j0:
             continue
-        ii, jj = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))
-        ii, jj = ii.ravel(), jj.ravel()
-        _u, _v, _w, under = navsample1943.inside(T[t:t + 1, :, [0, 2]], x0 + ii * pitch, z0 + jj * pitch)
-        out[jj[under[0]], ii[under[0]]] = True
+        cols_i, cols_j = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))     # the cells under its box
+        cols_i, cols_j = cols_i.ravel(), cols_j.ravel()
+        _u, _v, _w, under = navsample1943.inside(T[tri:tri + 1, :, [0, 2]], x0 + cols_i * pitch, z0 + cols_j * pitch)
+        out[cols_j[under[0]], cols_i[under[0]]] = True
     return out, len(T)
 
 
-def dilate(mask, cells):
+def dilate(mask: CellMask, cells: float) -> CellMask:
     """Bool mask grown by a disc of `cells` radius."""
     out = mask.copy()
     reach = int(math.ceil(cells))
@@ -129,30 +144,31 @@ def dilate(mask, cells):
     for dj in range(-reach, reach + 1):
         for di in range(-reach, reach + 1):
             if (di or dj) and di * di + dj * dj <= cells * cells + 1e-9:
+                # the grid shifted by (di, dj): out[r, c] takes src[r, c]
                 src = mask[max(0, -dj):nz - max(0, dj), max(0, -di):nx - max(0, di)]
                 out[max(0, dj):nz + min(0, dj), max(0, di):nx + min(0, di)] |= src
     return out
 
 
-def distance_field(mask, cap):
+def distance_field(mask: CellMask, cap: int) -> npt.NDArray[np.int64]:
     """Chessboard distance (cells) from each True cell to the nearest False, capped."""
     dist = np.where(mask, cap, 0).astype(np.int64)
     inside = mask.copy()
-    for r in range(1, cap):
+    for ring in range(1, cap):
         # erode by one cell: a cell stays inside when its four neighbours are inside
         eroded = inside.copy()
         eroded[1:, :] &= inside[:-1, :]
         eroded[:-1, :] &= inside[1:, :]
         eroded[:, 1:] &= inside[:, :-1]
         eroded[:, :-1] &= inside[:, 1:]
-        dist = np.where(inside & ~eroded, np.minimum(dist, r), dist)
+        dist = np.where(inside & ~eroded, np.minimum(dist, ring), dist)
         inside = eroded
         if not inside.any():
             break
     return dist
 
 
-def cell_line(nav, a, b):
+def cell_line(nav: CellMask, a: tuple[int, int], b: tuple[int, int]) -> bool:
     """Whether the straight line between cells a (i, j) and b crosses only navigable cells (4-connected steps)."""
     (ia, ja), (ib, jb) = a, b
     steps = max(abs(ib - ia), abs(jb - ja))
@@ -160,22 +176,23 @@ def cell_line(nav, a, b):
         return bool(nav[ja, ia])
     prev_i, prev_j = ia, ja
     for step in range(1, steps + 1):
-        ti = int(round(ia + (ib - ia) * step / steps))
-        tj = int(round(ja + (jb - ja) * step / steps))
+        to_i = int(round(ia + (ib - ia) * step / steps))
+        to_j = int(round(ja + (jb - ja) * step / steps))
         # a diagonal step passes through either side cell
-        if ti != prev_i and tj != prev_j and not (nav[prev_j, ti] or nav[tj, prev_i]):
+        if to_i != prev_i and to_j != prev_j and not (nav[prev_j, to_i] or nav[to_j, prev_i]):
             return False
-        if not nav[tj, ti]:
+        if not nav[to_j, to_i]:
             return False
-        prev_i, prev_j = ti, tj
+        prev_i, prev_j = to_i, to_j
     return True
 
 
-def build(lv, soldier_path=None, game=None, log=print):
+def build(lv: str, soldier_path: str | None = None, game: str | None = None,
+          log: Log = print) -> tuple[str | None, dict[str, Any]]:
     """The LCVP world: (rsnv path, stats), or (None, stats) when the level has none (no water, no craft spawns: stamped
     absent). Reads the level from the game copy it was prepared from (2026-10-30: game=None read the default copy)."""
     files = paths(lv)
-    t0 = time.time()
+    started = time.time()
     st = nj.read(lv)
     game = vc.prepared_game(st, game, lv)
     want = vc.inputs(st, lv, 'lcvp')
@@ -198,7 +215,7 @@ def build(lv, soldier_path=None, game=None, log=print):
     hf = terrain.read(hf_path)
     sea = soldier1943.sea_level(st, hf)
     spawns, _level = craft_spawns(lv, game)
-    S = rsnv.load(soldier_path)
+    soldier = rsnv.load(soldier_path)
     if not spawns:
         log(f'{lv}: no landing craft spawns: no LCVP world')
         vc.absent(lv, 'lcvp', want, files['rsnv'], 'no landing craft spawns on the level', log)
@@ -209,10 +226,11 @@ def build(lv, soldier_path=None, game=None, log=print):
     cell_x, cell_z = hf.cell
     lo = np.array([hf.min[0] + land_i.min() * cell_x, hf.min[2] + land_j.min() * cell_z])
     hi = np.array([hf.min[0] + (land_i.max() + 1) * cell_x, hf.min[2] + (land_j.max() + 1) * cell_z])
-    must_hold = np.array([s['pos'] for s in spawns])[:, [0, 2]]         # x, z the box must hold
-    if S.islands:
-        on_carrier = [k for k in range(len(S.node_pos)) if S.islands[int(S.node_island[k])][2] & rsnv.ISLD_CARRIER]
-        carrier_nodes = S.node_pos[on_carrier]
+    must_hold = np.array([spawn['pos'] for spawn in spawns])[:, [0, 2]]     # x, z the box must hold
+    if soldier.islands:
+        on_carrier = [node for node in range(len(soldier.node_pos))
+                      if soldier.islands[int(soldier.node_island[node])][2] & rsnv.ISLD_CARRIER]
+        carrier_nodes = soldier.node_pos[on_carrier]
     else:
         carrier_nodes = np.zeros((0, 3))
     if len(carrier_nodes):
@@ -225,8 +243,8 @@ def build(lv, soldier_path=None, game=None, log=print):
     I, J = np.meshgrid(np.arange(nx), np.arange(nz))            # the sea grid's cell indices, (nz, nx)
     X, Z = x0 + I * pitch, z0 + J * pitch                       # ... and their centres
     depth = sea - hf.height(X, Z)
-    T = np.load(os.path.join(files['objects'], 'all_tris.npy'))     # collision triangles (n, 3 corners, xyz)
-    blocked, n_band = rasterise_band(T, sea - draft - BAND_BELOW, sea + BAND_ABOVE, x0, z0, nx, nz, pitch)
+    tris = np.load(os.path.join(files['objects'], 'all_tris.npy'))      # collision triangles (n, 3 corners, xyz)
+    blocked, n_band = rasterise_band(tris, sea - draft - BAND_BELOW, sea + BAND_ABOVE, x0, z0, nx, nz, pitch)
     log(f'{lv}: sea grid {nx} x {nz} cells of {pitch} m (x {x0:.0f}..{x0 + nx * pitch:.0f}, z {z0:.0f}..'
         f'{z0 + nz * pitch:.0f}); {n_band} triangles cross the waterline band, {int(blocked.sum())} cells blocked')
     water = depth >= draft
@@ -238,41 +256,18 @@ def build(lv, soldier_path=None, game=None, log=print):
         f'beach {int(beach_cells.sum())}')
     # launch lanes
     lanes = []
-    deck_spawns = [s for s in spawns if s['pos'][1] - sea >= DECK_MIN]
+    deck_spawns = [spawn for spawn in spawns if spawn['pos'][1] - sea >= DECK_MIN]
     if deck_spawns:
-        deck_xz = np.array([s['pos'] for s in deck_spawns])[:, [0, 2]]
-        tri_centres = T[:, :, [0, 2]].mean(1)
-        near = np.zeros(len(T), bool)
+        deck_xz = np.array([spawn['pos'] for spawn in deck_spawns])[:, [0, 2]]
+        tri_centres = tris[:, :, [0, 2]].mean(1)
+        near = np.zeros(len(tris), bool)
         for spawn_xz in deck_xz:
             near |= np.hypot(tri_centres[:, 0] - spawn_xz[0], tri_centres[:, 1] - spawn_xz[1]) < 400.0
-        deck_tris = T[near & (T[:, :, 1].max(1) >= sea + DECK_MIN - 3.0)]
-    for spawn in deck_spawns:
-        fwd = np.array(spawn['fwd'], float)
-        fwd[1] = 0.0
-        fwd /= np.linalg.norm(fwd)
-        start = np.array(spawn['pos'], float)
-        deck_y = start[1]
-        end = None
-        along = 0.0
-        last_deck = 0.0
-        while along < 300.0:
-            point = start + fwd * along
-            # collision top within 1.5 m below the craft and 1 m above it, at the lane point or 1 m around it (the
-            # craft's cradle leaves holes in the deck's collision under it)
-            if any(deck_tops(deck_tris, point[0] + ox, point[2] + oz, deck_y - 1.5, deck_y + 1.0) is not None
-                   for ox, oz in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))):
-                last_deck = along
-            elif along - last_deck > DECK_GAP:
-                end = last_deck + pitch
-                break
-            along += pitch
-        if end is None:
-            log(f'  craft {spawn["index"]} at {np.round(start, 1).tolist()}: no deck end within 300 m, no launch lane')
-            continue
-        deck_end = start + fwd * max(end - pitch, 0.0)
-        land_pt = start + fwd * (end + vc.value('lcvp', 'half_length') + LAUNCH_GAP)
-        lanes.append({'spawn': spawn, 'deck_end': deck_end.tolist(),
-                      'land': [float(land_pt[0]), sea, float(land_pt[2])], 'length': round(end, 1)})
+        deck_tris = tris[near & (tris[:, :, 1].max(1) >= sea + DECK_MIN - 3.0)]
+        for spawn in deck_spawns:
+            lane = launch_lane(spawn, deck_tris, sea, pitch, log)
+            if lane is not None:
+                lanes.append(lane)
     log(f'  {len(lanes)} launch lanes (deck lengths {[lane["length"] for lane in lanes]})')
     # graph over sea cells
     nav_idx = np.full((nz, nx), -1, np.int64)
@@ -288,7 +283,7 @@ def build(lv, soldier_path=None, game=None, log=print):
     sea_i = sea_set.i
     sea_j = sea_set.j
 
-    def nearest_cell(x, z, maxd=60.0):
+    def nearest_cell(x: float, z: float, maxd: float = 60.0) -> tuple[int | None, float]:
         """(sea cell nearest (x, z), its distance), the cell None when farther than maxd."""
         dist2 = (x0 + sea_i * pitch - x) ** 2 + (z0 + sea_j * pitch - z) ** 2
         k = int(np.argmin(dist2))
@@ -337,11 +332,11 @@ def build(lv, soldier_path=None, game=None, log=print):
     first_in_block = np.ones(len(order), bool)
     first_in_block[1:] = np.any(block[1:] != block[:-1], axis=1)
     node_cells = order[first_in_block].tolist()
-    node_of_block = {(int(a), int(b)): k for (a, b), k in zip(block[first_in_block].tolist(), node_cells)}
+    node_of_block = {(int(bi), int(bj)): k for (bi, bj), k in zip(block[first_in_block].tolist(), node_cells)}
     edges = set()
-    for (a, b), k in node_of_block.items():
-        for da, db in ((1, 0), (0, 1), (1, 1), (1, -1)):
-            other = node_of_block.get((a + da, b + db))
+    for (bi, bj), k in node_of_block.items():
+        for di, dj in ((1, 0), (0, 1), (1, 1), (1, -1)):
+            other = node_of_block.get((bi + di, bj + dj))
             if other is not None and cell_line(kept_nav, (int(cell_i[k]), int(cell_j[k])),
                                                (int(cell_i[other]), int(cell_j[other]))):
                 edges.add((min(k, other), max(k, other)))
@@ -354,7 +349,7 @@ def build(lv, soldier_path=None, game=None, log=print):
     for spawn in spawns:
         if spawn.get('water_cell') is not None:
             extra.add(spawn['water_cell'])
-    zones = landing_zones(lv, sea_set, kept_nav, depth, beach_cells, S, bow, pitch, x0, z0, log)
+    zones = landing_zones(lv, sea_set, kept_nav, depth, beach_cells, soldier, bow, pitch, x0, z0, log)
     for zone in zones:
         extra.add(zone['cell'])
     node_cells, edges = connect_extra(sea_set, kept_nav, node_cells, edges, extra)
@@ -373,19 +368,20 @@ def build(lv, soldier_path=None, game=None, log=print):
         for along in np.arange(0.0, dist + 1e-6, pitch / 2):
             for offset in (-pitch, 0.0, pitch):
                 point = start + fwd * along + side * offset
-                ci = int(round((point[0] - x0) / pitch))
-                cj = int(round((point[2] - z0) / pitch))
-                cells.setdefault((ci, cj), start[1])
+                cell_i = int(round((point[0] - x0) / pitch))
+                cell_j = int(round((point[2] - z0) / pitch))
+                cells.setdefault((cell_i, cell_j), start[1])
         lane_cells = sorted(cells)
-        cell_index = {c: k for k, c in enumerate(lane_cells)}
+        cell_index = {cell: k for k, cell in enumerate(lane_cells)}
         lane_links = {}
-        for (ci, cj), k in cell_index.items():
+        for (cell_i, cell_j), k in cell_index.items():
             for di, dj in rsnvgrid1943.STRAIGHT:
-                n = cell_index.get((ci + di, cj + dj))
+                n = cell_index.get((cell_i + di, cell_j + dj))
                 if n is not None:
                     lane_links[(k, di, dj)] = n
-        lane_set = rsnvgrid1943.CellSet(pitch, x0, z0, [c[0] for c in lane_cells], [c[1] for c in lane_cells],
-                                        [cells[c] for c in lane_cells], lane_links, name=f'lane {spawn["index"]}')
+        lane_set = rsnvgrid1943.CellSet(pitch, x0, z0, [cell[0] for cell in lane_cells],
+                                        [cell[1] for cell in lane_cells], [cells[cell] for cell in lane_cells],
+                                        lane_links, name=f'lane {spawn["index"]}')
         start_cell = (int(round((start[0] - x0) / pitch)), int(round((start[2] - z0) / pitch)))
         deck_end = np.array(lane['deck_end'])
         end_cell = (int(round((deck_end[0] - x0) / pitch)), int(round((deck_end[2] - z0) / pitch)))
@@ -400,7 +396,7 @@ def build(lv, soldier_path=None, game=None, log=print):
     sets = [sea_set] + lane_sets
     node_list = [(0, k) for k in node_cells]
     node_of_cell = {k: n for n, k in enumerate(node_cells)}
-    edge_list = [(node_of_cell[a], node_of_cell[b], rsnv.EDGE_WALK, None, True) for a, b in sorted(edges)]
+    edge_list: list[Edge] = [(node_of_cell[a], node_of_cell[b], rsnv.EDGE_WALK, None, True) for a, b in sorted(edges)]
     offm = []
     lane_info = []
     for lane_no, lane in enumerate(lanes):
@@ -434,17 +430,17 @@ def build(lv, soldier_path=None, game=None, log=print):
             node = node_of_cell[spawn['water_cell']]
         else:
             node = None
-        entry = next((e for e in spawn['entries'] if e.get('order', 0) == 0), None)    # the driver's
+        entry = next((candidate for candidate in spawn['entries'] if candidate.get('order', 0) == 0), None)  # driver's
         if not entry:
             entry = {'point': spawn['pos'], 'radius': vc.value('lcvp', 'radius') + 4.0}
-        soldier_n = soldier_node(S, entry['point'], entry['radius'] + 2.0)
+        soldier_n = soldier_node(soldier, entry['point'], entry['radius'] + 2.0)
         offm.append((rsnv.OFFM_BOARD_VEHICLE, team_mask(spawn['team']), vc.CLASS_IDS['lcvp'],
                      node if node is not None else 0xFFFFFFFF, *[float(v) for v in entry['point']],
                      float(spawn['yaw']), float(entry['radius']), soldier_n if soldier_n is not None else 0xFFFFFFFF))
         board.append({'spawn': spawn['index'], 'team': spawn['team'], 'pos': [round(v, 2) for v in spawn['pos']],
                       'node': node, 'entry': [round(v, 2) for v in entry['point']], 'radius': entry['radius'],
                       'soldier node': soldier_n,
-                      'soldier island': int(S.node_island[soldier_n]) if soldier_n is not None else None,
+                      'soldier island': int(soldier.node_island[soldier_n]) if soldier_n is not None else None,
                       'on deck': lane is not None})
     # alight transfers
     for zone in zones:
@@ -458,31 +454,68 @@ def build(lv, soldier_path=None, game=None, log=print):
         flags_of_node[zone['node']] |= rsnv.NAUX_SHALLOW               # a landing node: the craft grounds here
     sources = (('soldier rsnv', soldier_path), ('all_tris.npy', os.path.join(files['objects'], 'all_tris.npy')),
                ('heightfield.res', hf_path), ('navkit.json', os.path.join(files['navkit'], 'navkit.json')))
-    meta = {'sources': {k: {'path': v, 'sha256': rsnvgrid1943.sha256(v)} for k, v in sources if os.path.isfile(v)},
-            'class parameters': {k: list(v) if isinstance(v, tuple) else v for k, v in vc.CLASSES['lcvp'].items()},
+    meta = {'sources': {name: {'path': path, 'sha256': rsnvgrid1943.sha256(path)} for name, path in sources
+                        if os.path.isfile(path)},
+            'class parameters': {key: list(entry) if isinstance(entry, tuple) else entry
+                                 for key, entry in vc.CLASSES['lcvp'].items()},
             'grid': {'pitch': pitch, 'x0': x0, 'z0': z0, 'nx': nx, 'nz': nz}, 'lanes': lane_info, 'boarding': board,
-            'landing zones': [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in zone.items() if k != 'cell'}
-                              for zone in zones]}
+            'landing zones': [{key: (round(v, 2) if isinstance(v, float) else v) for key, v in zone.items()
+                               if key != 'cell'} for zone in zones]}
     header = {'sea_level': sea, 'radius': radius, 'height': vc.value('lcvp', 'height'), 'step': 0.5,
               'water_depth': draft, 'sha256': meta['sources']['soldier rsnv']['sha256']}
     stats = rsnvgrid1943.write_world(lv, 'lcvp', sets, node_list, edge_list, offm, files['rsnv'], st['sector_offsets'],
                                      header, meta, node_flags=flags_of_node, log=log)
     vc.record(lv, 'worlds', dict(want, sha256=nj.sha256(files['rsnv'])), 'lcvp', soldier_path=soldier_path)
     stats.update({'lanes': len(lanes), 'landing zones': len(zones), 'boarding': len(board),
-                  'seconds': round(time.time() - t0, 1)})
+                  'seconds': round(time.time() - started, 1)})
     log(f'{lv}: LCVP world {files["rsnv"]}: {stats["nodes"]} nodes, {len(lanes)} lanes, {len(zones)} landing zones, '
         f'{len(board)} boarding points ({stats["seconds"]:.0f} s)')
     return files['rsnv'], stats
 
 
-def team_mask(team):
-    return {1: 1, 2: 2}.get(team, 3)
+def launch_lane(spawn: dict[str, Any], deck_tris: Triangles, sea: float, pitch: float,
+                log: Log) -> dict[str, Any] | None:
+    """The launch lane of a craft spawned on a deck: forward along its heading until the deck ends (DECK_GAP without
+    deck); its deck end, landing point and length, or None (no deck end within 300 m)."""
+    fwd = np.array(spawn['fwd'], float)
+    fwd[1] = 0.0
+    fwd /= np.linalg.norm(fwd)
+    start = np.array(spawn['pos'], float)
+    deck_y = start[1]
+    end = None
+    along = 0.0
+    last_deck = 0.0
+    while along < 300.0:
+        point = start + fwd * along
+        # collision top within 1.5 m below the craft and 1 m above it, at the lane point or 1 m around it (the
+        # craft's cradle leaves holes in the deck's collision under it)
+        if any(deck_tops(deck_tris, point[0] + ox, point[2] + oz, deck_y - 1.5, deck_y + 1.0) is not None
+               for ox, oz in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))):
+            last_deck = along
+        elif along - last_deck > DECK_GAP:
+            end = last_deck + pitch
+            break
+        along += pitch
+    if end is None:
+        log(f'  craft {spawn["index"]} at {np.round(start, 1).tolist()}: no deck end within 300 m, no launch lane')
+        return None
+    deck_end = start + fwd * max(end - pitch, 0.0)
+    land_pt = start + fwd * (end + vc.value('lcvp', 'half_length') + LAUNCH_GAP)
+    return {'spawn': spawn, 'deck_end': deck_end.tolist(),
+            'land': [float(land_pt[0]), sea, float(land_pt[2])], 'length': round(end, 1)}
 
 
-_tops_cache = {}
+def team_mask(team: int | None) -> int:
+    """The OFFM team mask of a spawn's team (1, 2; anything else: both)."""
+    masks: dict[int | None, int] = {1: 1, 2: 2}
+    return masks.get(team, 3)
 
 
-def deck_tops(T, x, z, ylo, yhi):
+# deck_tops' per-triangle boxes of the triangle array it was last given: {id(T): (box lo, box hi, y lo, y hi)}
+_tops_cache: dict[int, tuple[npt.NDArray[Any], ...]] = {}
+
+
+def deck_tops(T: Triangles, x: float, z: float, ylo: float, yhi: float) -> float | None:
     """The highest collision surface at (x, z) between ylo and yhi, or None. T: triangles (n, 3 corners, xyz)."""
     key = id(T)
     if key not in _tops_cache:
@@ -492,9 +525,9 @@ def deck_tops(T, x, z, ylo, yhi):
     candidates = np.nonzero((box_lo[:, 0] <= x) & (box_hi[:, 0] >= x) & (box_lo[:, 1] <= z) & (box_hi[:, 1] >= z)
                             & (tri_yhi >= ylo) & (tri_ylo <= yhi))[0]
     best = None
-    for t in candidates.tolist():
-        a, b, c = (T[t, 0, [0, 2]].astype(float), T[t, 1, [0, 2]].astype(float), T[t, 2, [0, 2]].astype(float))
-        # barycentric (u, w) of (x, z) in the triangle's x-z projection
+    for tri in candidates.tolist():
+        # its corners a, b, c in x-z, and the barycentric (u, w) of (x, z) in them: edges v0, v1, the point v2
+        a, b, c = (T[tri, 0, [0, 2]].astype(float), T[tri, 1, [0, 2]].astype(float), T[tri, 2, [0, 2]].astype(float))
         v0, v1, v2 = b - a, c - a, np.array([x, z]) - a
         det = v0[0] * v1[1] - v0[1] * v1[0]
         if abs(det) < 1e-9:
@@ -502,20 +535,22 @@ def deck_tops(T, x, z, ylo, yhi):
         u = (v2[0] * v1[1] - v2[1] * v1[0]) / det
         w = (v0[0] * v2[1] - v0[1] * v2[0]) / det
         if u >= -1e-6 and w >= -1e-6 and u + w <= 1 + 1e-6:
-            y = float(T[t, 0, 1] + u * (T[t, 1, 1] - T[t, 0, 1]) + w * (T[t, 2, 1] - T[t, 0, 1]))
+            y = float(T[tri, 0, 1] + u * (T[tri, 1, 1] - T[tri, 0, 1]) + w * (T[tri, 2, 1] - T[tri, 0, 1]))
             if ylo <= y <= yhi and (best is None or y > best):
                 best = y
     return best
 
 
-def soldier_node(S, p, reach, dy=3.5):
-    """rsnvgrid1943.soldier_node: the rule the runtime resolves a transfer with again."""
+def soldier_node(S: rsnv.World, p: Point, reach: float, dy: float = 3.5) -> int | None:
+    """rsnvgrid1943.soldier_node: the rule the runtime resolves a transfer with again. S: the soldier world."""
     return rsnvgrid1943.soldier_node(S, p, reach, dy)
 
 
-def landing_zones(lv, cs, nav, depth, beach_cells, S, bow, pitch, x0, z0, log):
+def landing_zones(lv: str, cs: 'rsnvgrid1943.CellSet', nav: CellMask, depth: npt.NDArray[np.float64],
+                  beach_cells: CellMask, soldier: rsnv.World, bow: float, pitch: float, x0: float, z0: float,
+                  log: Log) -> list[dict[str, Any]]:
     """Landing zones: navigable cells within the bow distance of beach ground, one per ZONE_SPACING, unloading onto
-    the soldier main island (see the module's description)."""
+    the soldier main island (see the module's description). cs: the sea cells; nav: the navigable cells."""
     near_beach = dilate(beach_cells, (bow + 0.5) / pitch)
     candidates = np.nonzero(near_beach[cs.j, cs.i])[0]
     if not len(candidates):
@@ -526,14 +561,16 @@ def landing_zones(lv, cs, nav, depth, beach_cells, S, bow, pitch, x0, z0, log):
     beach_j, beach_i = np.nonzero(beach_cells)
     beach_x, beach_z = x0 + beach_i * pitch, z0 + beach_j * pitch
     main = 0
-    carrier_islands = {k for k, r in enumerate(S.islands) if r[2] & rsnv.ISLD_CARRIER}
-    zones, rejected = [], collections.Counter()
-    taken = []
+    carrier_islands = {island_no for island_no, island in enumerate(soldier.islands)
+                       if island[2] & rsnv.ISLD_CARRIER}
+    zones: list[dict[str, Any]] = []
+    rejected: collections.Counter[str] = collections.Counter()
+    taken: list[tuple[float, float]] = []            # the zones' cell centres (x, z)
     # nearest first to the shore: shallower water first
     candidate_depth = depth[cs.j[candidates], cs.i[candidates]]
     for k in candidates[np.argsort(candidate_depth, kind='stable')].tolist():
         x, z = cs.xz(k)
-        if any((x - a) ** 2 + (z - b) ** 2 < ZONE_SPACING ** 2 for a, b in taken):
+        if any((x - taken_x) ** 2 + (z - taken_z) ** 2 < ZONE_SPACING ** 2 for taken_x, taken_z in taken):
             continue
         beach_dist2 = (beach_x - x) ** 2 + (beach_z - z) ** 2
         nearest_beach = int(np.argmin(beach_dist2))
@@ -543,21 +580,22 @@ def landing_zones(lv, cs, nav, depth, beach_cells, S, bow, pitch, x0, z0, log):
             continue
         dirx, dirz = dirx / length, dirz / length
         bow_xz = (x + dirx * bow, z + dirz * bow)
-        node_dist = np.hypot(S.node_pos[:, 0] - bow_xz[0], S.node_pos[:, 2] - bow_xz[1])
-        node_dist = np.where(np.abs(S.node_pos[:, 1] - cs.y[k]) <= 3.0, node_dist, np.inf)
+        node_dist = np.hypot(soldier.node_pos[:, 0] - bow_xz[0], soldier.node_pos[:, 2] - bow_xz[1])
+        node_dist = np.where(np.abs(soldier.node_pos[:, 1] - cs.y[k]) <= 3.0, node_dist, np.inf)
         soldier_n = int(np.argmin(node_dist))
         if not np.isfinite(node_dist[soldier_n]) or node_dist[soldier_n] > ALIGHT_REACH:
             rejected['no soldier ground within reach'] += 1
             continue
-        island = int(S.node_island[soldier_n])
+        island = int(soldier.node_island[soldier_n])
         if island != main or island in carrier_islands:
             rejected['nearest soldier ground not the main island'] += 1
             continue
-        soldier_pos = S.node_pos[soldier_n]
+        soldier_pos = soldier.node_pos[soldier_n]
         if len(forbid_centres):
             # ForbidPathfinding collision near the bow -> soldier node line: each triangle centre's distance to it
-            ax, az, ex, ez = bow_xz[0], bow_xz[1], float(soldier_pos[0]), float(soldier_pos[2])
-            vx, vz = ex - ax, ez - az
+            # (the line from a, the bow, along v to the soldier node; t: each centre's place along it, 0..1)
+            ax, az = bow_xz[0], bow_xz[1]
+            vx, vz = float(soldier_pos[0]) - ax, float(soldier_pos[2]) - az
             length2 = max(vx * vx + vz * vz, 1e-9)
             t = np.clip(((forbid_centres[:, 0] - ax) * vx + (forbid_centres[:, 2] - az) * vz) / length2, 0, 1)
             line_dist = np.hypot(forbid_centres[:, 0] - (ax + t * vx), forbid_centres[:, 2] - (az + t * vz))
@@ -568,14 +606,14 @@ def landing_zones(lv, cs, nav, depth, beach_cells, S, bow, pitch, x0, z0, log):
         # node is in sight (rsnvtrip.in_sight_node, the runtime's rule) - a point on the soldier world's cells, which
         # stays put when the soldier world is rebuilt; else the node's own position
         unload, unload_node = None, None
-        located = S.locate(bow_xz[0], float(soldier_pos[1]), bow_xz[1], max_dist=ALIGHT_REACH, dy=3.0)
+        located = soldier.locate(bow_xz[0], float(soldier_pos[1]), bow_xz[1], max_dist=ALIGHT_REACH, dy=3.0)
         if located is not None:
-            area = S.areas[located[0]]
-            ux, uz = area.x0 + located[1][0] * area.pitch, area.z0 + located[1][1] * area.pitch
-            uy = S.ground(area, ux, uz)
-            unload_node = rsnvtrip.in_sight_node(S, ux, uy, uz)
-            if unload_node is not None and int(S.node_island[unload_node]) == main:
-                unload = (float(ux), float(uy), float(uz))
+            area = soldier.areas[located[0]]
+            cell_x, cell_z = area.x0 + located[1][0] * area.pitch, area.z0 + located[1][1] * area.pitch
+            cell_y = soldier.ground(area, cell_x, cell_z)
+            unload_node = rsnvtrip.in_sight_node(soldier, cell_x, cell_y, cell_z)
+            if unload_node is not None and int(soldier.node_island[unload_node]) == main:
+                unload = (float(cell_x), float(cell_y), float(cell_z))
         if unload is None:
             unload, unload_node = (float(soldier_pos[0]), float(soldier_pos[1]), float(soldier_pos[2])), soldier_n
             how = 'the soldier node itself'
@@ -584,14 +622,15 @@ def landing_zones(lv, cs, nav, depth, beach_cells, S, bow, pitch, x0, z0, log):
         taken.append((x, z))
         zones.append({'cell': k, 'pos': [x, float(cs.y[k]), z], 'bow': [bow_xz[0], bow_xz[1]],
                       'yaw': math.atan2(dirx, dirz), 'soldier': unload_node,
-                      'soldier pos': [float(v) for v in S.node_pos[unload_node]], 'unload': list(unload),
+                      'soldier pos': [float(v) for v in soldier.node_pos[unload_node]], 'unload': list(unload),
                       'unload is': how, 'reach': float(math.hypot(unload[0] - x, unload[2] - z)),
                       'depth': float(depth[cs.j[k], cs.i[k]])})
     log(f'  {len(zones)} landing zones; rejected candidates: {dict(rejected)}')
     return zones
 
 
-def connect_extra(cs, nav, node_cells, edges, extra):
+def connect_extra(cs: 'rsnvgrid1943.CellSet', nav: CellMask, node_cells: Iterable[int], edges: Edges,
+                  extra: Iterable[int]) -> tuple[list[int], Edges]:
     """Adds the extra cells as nodes, each linked to every node within 2 blocks it has a straight line to."""
     node_cells = list(node_cells)
     have = set(node_cells)
@@ -602,8 +641,8 @@ def connect_extra(cs, nav, node_cells, edges, extra):
         cell = (int(cs.i[k]), int(cs.j[k]))
         dist = np.abs(node_ij - cell).max(1)
         near = np.nonzero(dist <= 10)[0]
-        for t in near[np.argsort(dist[near], kind='stable')].tolist():
-            other = node_cells[t]
+        for nearby in near[np.argsort(dist[near], kind='stable')].tolist():
+            other = node_cells[nearby]
             if cell_line(nav, cell, (int(cs.i[other]), int(cs.j[other]))):
                 edges.add((min(k, other), max(k, other)))
         node_cells.append(k)
@@ -612,22 +651,24 @@ def connect_extra(cs, nav, node_cells, edges, extra):
     return node_cells, edges
 
 
-def join_cell_pieces(cs, nav, node_cells, edges, log):
+def join_cell_pieces(cs: 'rsnvgrid1943.CellSet', nav: CellMask, node_cells: list[int], edges: Edges,
+                     log: Log) -> tuple[list[int], Edges]:
     """Pieces of the sea graph on one water body joined along the grid's shortest path (as groundnav1943)."""
     import groundnav1943
     links = cs.links
     table = {}
     for (k, di, dj), n in links.items():
         table[(k, di, dj)] = n
-    pairs = np.array([(k, n) for (k, _a, _b), n in links.items()], np.int64).reshape(-1, 2)
+    pairs = np.array([(k, n) for (k, _di, _dj), n in links.items()], np.int64).reshape(-1, 2)
     body_of_cell = groundnav1943.components(cs.n, pairs)
 
     class G:
-        pass
+        i: npt.NDArray[np.int64]
+        j: npt.NDArray[np.int64]
     grid = G()                                          # what join_pieces reads of a ground grid: i, j
     grid.i, grid.j = cs.i, cs.j
 
-    def line(ka, kb):
+    def line(ka: int, kb: int) -> list[int] | None:
         return [ka, kb] if cell_line(nav, (int(cs.i[ka]), int(cs.j[ka])), (int(cs.i[kb]), int(cs.j[kb]))) else None
     saved = groundnav1943.grid_line
     groundnav1943.grid_line = lambda _g, _t, a, b: line(a, b)
@@ -638,12 +679,12 @@ def join_cell_pieces(cs, nav, node_cells, edges, log):
     return nodes, edges
 
 
-def main(argv):
-    ap = argparse.ArgumentParser(prog='seanav1943.py', description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('level')
-    ap.add_argument('--soldier', help='the soldier world (default work\\levels\\<level>\\navkit\\<level>.rsnv)')
-    args = ap.parse_args(argv[1:])
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog='seanav1943.py', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('level')
+    parser.add_argument('--soldier', help='the soldier world (default work\\levels\\<level>\\navkit\\<level>.rsnv)')
+    args = parser.parse_args(argv[1:])
     files = paths(args.level)
     soldier = args.soldier or files['soldier']
     if not os.path.isfile(soldier):

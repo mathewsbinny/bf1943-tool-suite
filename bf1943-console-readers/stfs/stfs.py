@@ -1,5 +1,8 @@
 """stfs.py - read-only lister/extractor for Xbox 360 content packages (STFS: LIVE / PIRS / CON).
 
+Reads a package file: `info` and `list` print its header and file table, `extract` writes the chosen files under an
+output folder. Package(path) is the library form: .entries (the file table, one dict per entry) and .read(entry).
+
 Usage: python stfs.py info <package>
        python stfs.py list <package> [filter]
        python stfs.py extract <package> <outdir> [filter]      (filter = case-insensitive substring)
@@ -28,33 +31,39 @@ import os
 import struct
 import sys
 import tempfile
+from typing import Any
 
 BLOCK = 0x1000
 HEADER_MIN = 0x39D          # through the volume descriptor's allocated and unallocated block counts
 
+# a file table entry: name, dir, consecutive, count, start, parent and size as read, and path (from its parents)
+type Entry = dict[str, Any]
+
 
 class Package:
-    def __init__(self, path):
+    """An open package (its file stays open in .f until closed): its header fields and file table (.entries)."""
+
+    def __init__(self, path: str) -> None:
         self.f = open(path, 'rb')
-        h = self.f.read(0x1000)
-        if len(h) < HEADER_MIN:                     # 2026-10-30 review: an IndexError before
+        header = self.f.read(0x1000)
+        if len(header) < HEADER_MIN:                # 2026-10-30 review: an IndexError before
             self.f.close()
-            raise ValueError(f'damaged package: {len(h)} bytes, shorter than an STFS header ({HEADER_MIN:#x} bytes); '
-                             f'nothing was read')
-        self.magic = h[:4]
-        self.name = h[0x411:0x411 + 0x80].decode('utf-16-be', 'ignore').split('\0')[0]
-        self.header_size = struct.unpack_from('>I', h, 0x340)[0]
-        self.separation = h[0x37B]
-        self.ft_blocks = struct.unpack_from('<H', h, 0x37C)[0]
-        self.ft_start = int.from_bytes(h[0x37E:0x381], 'little')
-        self.allocated = struct.unpack_from('>I', h, 0x395)[0]
+            raise ValueError(f'damaged package: {len(header)} bytes, shorter than an STFS header '
+                             f'({HEADER_MIN:#x} bytes); nothing was read')
+        self.magic = header[:4]
+        self.name = header[0x411:0x411 + 0x80].decode('utf-16-be', 'ignore').split('\0')[0]
+        self.header_size: int = struct.unpack_from('>I', header, 0x340)[0]
+        self.separation = header[0x37B]
+        self.ft_blocks: int = struct.unpack_from('<H', header, 0x37C)[0]
+        self.ft_start = int.from_bytes(header[0x37E:0x381], 'little')
+        self.allocated: int = struct.unpack_from('>I', header, 0x395)[0]
         self.base = (self.header_size + 0xFFF) & ~0xFFF
         # read-only packages (separation bit 0 set) keep one hash table per level; others keep two
         self.shift = 0 if (self.separation & 1) else 1
         # an STFS package: its signature, a volume descriptor of 0x24 bytes, a header that ends past the descriptor,
         # and a file table of at least one block (2026-10-30 second review: 4,096 zero bytes read as an empty package)
         why = ('no LIVE, PIRS or CON signature' if self.magic not in (b'LIVE', b'PIRS', b'CON ') else
-               f'volume descriptor size {h[0x379]:#x}, not 0x24' if h[0x379] != 0x24 else
+               f'volume descriptor size {header[0x379]:#x}, not 0x24' if header[0x379] != 0x24 else
                f'header size {self.header_size:#x}' if not HEADER_MIN <= self.header_size <= 0x100000 else
                'a file table of no blocks' if not self.ft_blocks else None)
         if why:
@@ -73,27 +82,28 @@ class Package:
                 # block chains through the first copy only, which may then be stale (2026-10-30: refused rather
                 # than read wrong; the active-copy rules are not implemented)
                 raise ValueError(f'package not read: its volume descriptor (block separation {self.separation:#x}, '
-                                 f'bit 1 set) says its hash tables\' second copies are the current ones, and this reader '
-                                 f'reads only the first copies')
+                                 f'bit 1 set) says its hash tables\' second copies are the current ones, and this '
+                                 f'reader reads only the first copies')
             self.entries = self._file_table()
         except BaseException:
             self.f.close()
             raise
 
-    def _fix(self, block):
+    def _fix(self, block: int) -> int:
         """Data block number -> raw block number: a level-0 hash table precedes every 0xAA data blocks
         (the first one included), a level-1 table every 0x70E4, a level-2 table after that."""
-        n = (((block + 0xAA) // 0xAA) << self.shift) + block
+        with_level0 = (((block + 0xAA) // 0xAA) << self.shift) + block
         if block < 0xAA:
-            return n
+            return with_level0
+        level1_tables = ((block + 0x70E4) // 0x70E4) << self.shift
         if block < 0x70E4:
-            return n + (((block + 0x70E4) // 0x70E4) << self.shift)
-        return (1 << self.shift) + n + (((block + 0x70E4) // 0x70E4) << self.shift)
+            return with_level0 + level1_tables
+        return (1 << self.shift) + with_level0 + level1_tables
 
-    def _addr(self, block):
+    def _addr(self, block: int) -> int:
         return self.base + self._fix(block) * BLOCK
 
-    def _hash_entry(self, block):
+    def _hash_entry(self, block: int) -> bytes:
         """Level-0 hash entry of a data block (first copy of the table)."""
         if block < 0xAA:
             raw = 0
@@ -104,65 +114,71 @@ class Package:
         self.f.seek(self.base + raw * BLOCK + (block % 0xAA) * 0x18)
         return self.f.read(0x18)
 
-    def _next(self, block):
-        e = self._hash_entry(block)
-        return int.from_bytes(e[0x15:0x18], 'big')
+    def _next(self, block: int) -> int:
+        entry = self._hash_entry(block)
+        return int.from_bytes(entry[0x15:0x18], 'big')
 
-    def _blocks(self, start, count, consecutive):
+    def _blocks(self, start: int, count: int, consecutive: bool) -> list[int]:
+        """A file's data block numbers: a run from start, or the chain its hash entries name."""
         if consecutive:
             return list(range(start, start + count))
-        out, b, seen = [], start, set()
+        out: list[int] = []
+        block = start
+        seen: set[int] = set()
         for _ in range(count):
-            if b in seen:                           # a damaged chain: it loops back to a block already read
-                raise ValueError(f'damaged package: the block chain from block {start} comes back to block {b} '
+            if block in seen:                       # a damaged chain: it loops back to a block already read
+                raise ValueError(f'damaged package: the block chain from block {start} comes back to block {block} '
                                  f'after {len(out)} block(s); nothing was read')
-            seen.add(b)
-            out.append(b)
-            b = self._next(b)
+            seen.add(block)
+            out.append(block)
+            block = self._next(block)
         return out
 
-    def _file_table(self):
-        raw = bytearray()                           # joined in place (up to 65,535 blocks: bytes += copied them all)
-        for b in self._blocks(self.ft_start, self.ft_blocks, False):
-            self.f.seek(self._addr(b))
+    def _file_table(self) -> list[Entry]:
+        joined = bytearray()                        # joined in place (up to 65,535 blocks: bytes += copied them all)
+        for block in self._blocks(self.ft_start, self.ft_blocks, False):
+            self.f.seek(self._addr(block))
             chunk = self.f.read(BLOCK)
             if len(chunk) < BLOCK:                  # 2026-10-30 review: a cut table was read past its end
-                raise ValueError(f'damaged package: the file table\'s block {b} holds {len(chunk)} of {BLOCK} bytes '
-                                 f'(the package is cut short); nothing was read')
-            raw += chunk
-        raw = bytes(raw)
-        entries = []
+                raise ValueError(f'damaged package: the file table\'s block {block} holds {len(chunk)} of {BLOCK} '
+                                 f'bytes (the package is cut short); nothing was read')
+            joined += chunk
+        raw = bytes(joined)
+        entries: list[Entry] = []
         for i in range(0, len(raw), 0x40):
             e = raw[i:i + 0x40]
             flags = e[0x28]
             if not flags & 0x3F:
                 break
-            if flags & 0x3F > 0x28:                 # the name field is 0x28 bytes: a longer name reads the entry's other fields
+            # the name field is 0x28 bytes: a longer name reads the entry's other fields
+            if flags & 0x3F > 0x28:
                 raise ValueError(f'damaged package: entry {i // 0x40} has a name of {flags & 0x3F} bytes in a 40-byte '
                                  f'field; nothing was read')
             entries.append({'name': e[:flags & 0x3F].decode('latin-1'), 'dir': bool(flags & 0x80),
                             'consecutive': bool(flags & 0x40), 'count': int.from_bytes(e[0x29:0x2C], 'little'),
-                            'start': int.from_bytes(e[0x2F:0x32], 'little'), 'parent': struct.unpack_from('>H', e, 0x32)[0],
+                            'start': int.from_bytes(e[0x2F:0x32], 'little'),
+                            'parent': struct.unpack_from('>H', e, 0x32)[0],
                             'size': struct.unpack_from('>I', e, 0x34)[0]})
         for i, e in enumerate(entries):
-            p = e['parent']
-            if p != 0xFFFF and (p >= len(entries) or not entries[p]['dir']):     # before: taken as the root
-                raise ValueError(f'damaged package: entry {i} ({e["name"]!r}) names entry {p} as its parent folder, and '
-                                 f'{"there is no such entry" if p >= len(entries) else "that entry is a file"}; '
+            parent = e['parent']
+            if parent != 0xFFFF and (parent >= len(entries) or not entries[parent]['dir']):  # before: taken as the root
+                raise ValueError(f'damaged package: entry {i} ({e["name"]!r}) names entry {parent} as its parent '
+                                 f'folder, and '
+                                 f'{"there is no such entry" if parent >= len(entries) else "that entry is a file"}; '
                                  f'nothing was read')
         for i, e in enumerate(entries):
-            parts, p, seen = [e['name']], e['parent'], {i}
-            while p != 0xFFFF and p < len(entries):
-                if p in seen:                       # a damaged table: the parent chain loops
+            parts, parent, seen = [e['name']], e['parent'], {i}
+            while parent != 0xFFFF and parent < len(entries):
+                if parent in seen:                  # a damaged table: the parent chain loops
                     raise ValueError(f'damaged package: entry {i} ({e["name"]!r}) has itself among its parent '
-                                     f'folders (entry {p}); nothing was read')
-                seen.add(p)
-                parts.append(entries[p]['name'])
-                p = entries[p]['parent']
+                                     f'folders (entry {parent}); nothing was read')
+                seen.add(parent)
+                parts.append(entries[parent]['name'])
+                parent = entries[parent]['parent']
             e['path'] = '/'.join(reversed(parts))
         return entries
 
-    def read(self, e):
+    def read(self, e: Entry) -> bytes:
         """The file's bytes; ValueError when its blocks hold fewer than its declared size (a damaged or cut package)."""
         if e['size'] > e['count'] * BLOCK:
             raise ValueError(f'damaged package: {e["path"]} declares {e["size"]} bytes in {e["count"]} block(s) '
@@ -172,8 +188,8 @@ class Package:
         # a count of 2^24 blocks was read block by block, millions of reads past the end, before the size check
         # refused it)
         need = min(e['count'], -(-e['size'] // BLOCK))
-        for b in self._blocks(e['start'], need, e['consecutive']):
-            self.f.seek(self._addr(b))
+        for block in self._blocks(e['start'], need, e['consecutive']):
+            self.f.seek(self._addr(block))
             chunk = self.f.read(BLOCK)
             out += chunk
             if len(chunk) < BLOCK:
@@ -184,13 +200,13 @@ class Package:
         return bytes(out[:e['size']])
 
 
-def safe_target(dest, path):
+def safe_target(dest: str, path: str) -> str:
     """Where an archive path is extracted under dest; ValueError for a path that would leave it (a '..', '.' or
     empty part, a drive or root, a backslash or colon in a name - package names are untrusted input)."""
     parts = path.split('/')
-    for p in parts:
-        if p in ('', '.', '..') or '\\' in p or ':' in p or p != p.strip():
-            raise ValueError(f'unsafe path in the package: {path!r} (part {p!r}); nothing was extracted')
+    for part in parts:
+        if part in ('', '.', '..') or '\\' in part or ':' in part or part != part.strip():
+            raise ValueError(f'unsafe path in the package: {path!r} (part {part!r}); nothing was extracted')
     root = os.path.realpath(dest)
     target = os.path.realpath(os.path.join(root, *parts))
     if os.path.commonpath([root, target]) != root or target == root:
@@ -198,7 +214,7 @@ def safe_target(dest, path):
     return target
 
 
-def write_file(dst, data):
+def write_file(dst: str, data: bytes) -> None:
     """dst holding data, or as it was: written to a temporary file beside it, then put in its place."""
     folder = os.path.dirname(dst)
     os.makedirs(folder, exist_ok=True)
@@ -216,14 +232,16 @@ def write_file(dst, data):
 COMMANDS = {'info': (3, 3), 'list': (3, 4), 'extract': (4, 5)}      # command -> (fewest, most) arguments with argv[0]
 
 
-def extract_plan(pkg, dest, flt):
+def extract_plan(pkg: Package, dest: str, flt: str) -> list[tuple[Entry, str]]:
     """[(entry, target)] of the files extract writes, every package path checked first (safe_target); ValueError when
     two files would be one file on this system (names equal but for case, here: the second would replace the first)
     or a file would stand where another file's folder goes. Nothing is written before this passes."""
     for e in pkg.entries:
         safe_target(dest, e['path'])
     root = os.path.normcase(os.path.realpath(dest))
-    plan, owner, folders = [], {}, {}
+    plan: list[tuple[Entry, str]] = []
+    owner: dict[str, str] = {}          # target (normcased) -> package path
+    folders: dict[str, str] = {}        # folder (normcased) -> the first package path under it
     for e in pkg.entries:
         if e['dir'] or flt not in e['path'].lower():
             continue
@@ -233,10 +251,10 @@ def extract_plan(pkg, dest, flt):
             raise ValueError(f'damaged package: {owner[key]!r} and {e["path"]!r} would be one file on this system; '
                              f'nothing was extracted')
         owner[key] = e['path']
-        d = os.path.dirname(key)
-        while len(d) > len(root):
-            folders.setdefault(d, e['path'])
-            d = os.path.dirname(d)
+        folder = os.path.dirname(key)
+        while len(folder) > len(root):
+            folders.setdefault(folder, e['path'])
+            folder = os.path.dirname(folder)
         plan.append((e, target))
     for key, path in owner.items():
         if key in folders:
@@ -245,7 +263,7 @@ def extract_plan(pkg, dest, flt):
     return plan
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) < 2 or argv[1] not in COMMANDS or not COMMANDS[argv[1]][0] <= len(argv) <= COMMANDS[argv[1]][1]:
         print(__doc__)                              # an unknown command or a missing argument does nothing: exit 1
         return 1
@@ -268,6 +286,7 @@ def main(argv):
     finally:
         pkg.f.close()
     return 0
+
 
 if __name__ == '__main__':
     # the suite's bootstrap (core/suitepath.py)

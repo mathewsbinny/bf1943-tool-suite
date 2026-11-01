@@ -16,7 +16,8 @@ repos:
         entry: pyright
         language: system
         pass_filenames: false
-        files: ^(core/bfbc2core|bf1943-auto-navkit-common/tools)/.*\.py$
+        files: \.pyw?$
+        exclude: ^work/
       - id: repository-rules
         name: repository rules (tests/test_repo.py)
         entry: python -B tests/test_repo.py

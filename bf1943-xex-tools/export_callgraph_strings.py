@@ -37,6 +37,8 @@ import json
 import struct
 import sys
 import time
+from collections.abc import Iterable, Iterator, Sequence
+from typing import Any, NotRequired, TypedDict, cast
 
 sys.dont_write_bytecode = True
 from workspace import research_root  # noqa: E402
@@ -47,66 +49,100 @@ BASE = 0x82000000
 M32 = 0xffffffff
 
 
-def sha256_file(path):
+def sha256_file(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def tsv(path):
+def tsv(path: str | Path) -> list[dict[str, str]]:
     with open(path, newline='') as f:
         return list(csv.DictReader(f, delimiter='\t'))
 
 
 # --- inputs -----------------------------------------------------------------------------------------------------
+class Section(TypedDict):
+    """A row of sections.tsv: the section's name, start address, size in the image, and its write and execute flags."""
+    name: str
+    start: int
+    size: int
+    write: bool
+    execute: bool
+
+
 class Image:
     """The checked image and the section and import tables, from the workspace's work/xex-analysis folder."""
 
-    def __init__(self, work):
+    def __init__(self, work: Path) -> None:
         self.data = (work / 'default.checked.memory.bin').read_bytes()
         if hashlib.sha256(self.data).hexdigest() != IMAGE_SHA256:
             raise SystemExit('unexpected decoded image')
         self.end = BASE + len(self.data)
-        self.sections = [dict(name=row['name'], start=int(row['start'], 16), size=int(row['size']),
-                              write=row['write'] == '1', execute=row['execute'] == '1')
+        self.sections = [Section(name=row['name'], start=int(row['start'], 16), size=int(row['size']),
+                                 write=row['write'] == '1', execute=row['execute'] == '1')
                          for row in tsv(work / 'sections.tsv')]
         imports = tsv(work / 'imports.tsv')
         self.import_slots = {int(row['slot'], 16): row for row in imports}
         self.import_thunks = {int(row['thunk'], 16): row for row in imports if row['thunk']}
-        self.word_cache = {}
+        self.word_cache: dict[int, int] = {}
 
-    def section(self, address):
+    def section(self, address: int) -> Section | None:
+        """The section holding address, or None."""
         for section in self.sections:
             if section['start'] <= address < section['start'] + section['size']:
                 return section
         return None
 
-    def readonly(self, address):
+    def readonly(self, address: int) -> bool:
+        """Whether address lies in a section never written at run time (not BINKBSS, not an import slot)."""
         section = self.section(address)
         return (section is not None and not section['write'] and section['name'] != 'BINKBSS'
                 and (address & ~3) not in self.import_slots)
 
-    def word(self, address):
+    def word(self, address: int) -> int:
         return struct.unpack_from('>I', self.data, address - BASE)[0]
 
 
 # --- instruction decoding (the subset that moves addresses) -----------------------------------------------------
-def simm16(instruction):
+# A value is an int (a 32-bit constant) or a tuple (key, offset): a symbol plus a constant offset. A key is a tuple
+# naming where the value came from: ('in', register) on entry, ('def', pc, tag) written by an instruction we do not
+# follow, ('phi', block, register) at a merge point, ('ld', key, offset, size) loaded from [key + offset] (a test may
+# use a plain string).
+type Key = tuple[Any, ...]
+type Value = int | tuple[Key | str, int]
+# A remembered memory slot: ('abs', address) for a constant address, else (symbol key, offset).
+type Slot = tuple[str | Key, int]
+type Edge = tuple[int, int, int | None, str, str]      # (caller, site, callee or None, kind, detail)
+type Reference = tuple[int, int, int, str]             # (site, function start, target, kind)
+type StringRecord = dict[str, Any]                     # address, section, encoding, text, bytes (and short)
+
+
+class State(TypedDict):
+    """The data-flow state at one point of a function: the general-purpose registers, CTR, LR and the remembered
+    4-byte memory slots ({slot: (value, size)}); `unreached` marks a block seeded without a predecessor."""
+    regs: list[Value]
+    ctr: Value
+    lr: Value
+    mem: dict[Slot, tuple[Value, int]]
+    unreached: NotRequired[bool]
+
+
+def simm16(instruction: int) -> int:
     value = instruction & 0xffff
     return value - 0x10000 if value & 0x8000 else value
 
 
-def branch_target(instruction, pc):
+def branch_target(instruction: int, pc: int) -> int:
     """The target of an I-form branch (b, bl, ba, bla) at pc."""
     displacement = (instruction & 0x3fffffc) - (0x4000000 if instruction & 0x2000000 else 0)
     return (displacement + (0 if instruction & 2 else pc)) & M32
 
 
-def conditional_target(instruction, pc):
+def conditional_target(instruction: int, pc: int) -> int:
     """The target of a B-form branch (bc, bcl, bca, bcla) at pc."""
     displacement = (instruction & 0xfffc) - (0x10000 if instruction & 0x8000 else 0)
     return (displacement + (0 if instruction & 2 else pc)) & M32
 
 
-def offset_value(value, displacement):
+def offset_value(value: Value, displacement: int) -> Value:
     """A value plus a constant: a 32-bit constant stays one, a symbol keeps its key and moves its offset."""
     if isinstance(value, int):
         return (value + displacement) & M32
@@ -115,8 +151,8 @@ def offset_value(value, displacement):
 
 LOGICAL31 = {28, 60, 124, 284, 316, 412, 444, 476, 24, 536, 792, 824, 27, 539, 794, 26, 58, 954, 922, 986, 413}
 # stores (and dcbz / dcbz128, 1014, which zero a cache block): remembered slots are dropped
-STORE31 = {151, 215, 407, 149, 662, 918, 660, 150, 214, 663, 727, 983, 231, 487, 135, 167, 199, 647, 679, 903, 935, 725, 661,
-           1014}
+STORE31 = {151, 215, 407, 149, 662, 918, 660, 150, 214, 663, 727, 983, 231, 487, 135, 167, 199, 647, 679, 903, 935,
+           725, 661, 1014}
 STORE31_UPDATE = {183, 247, 439, 181, 695, 759}
 NOWRITE31 = {0, 32, 4, 68, 86, 54, 278, 246, 470, 982, 598, 854, 144, 146, 178, 467, 342, 374, 822,
              535, 599, 103, 359, 7, 39, 71, 6, 38, 519, 551, 775, 807}
@@ -132,58 +168,70 @@ DLOAD_UPDATE = (33, 35, 41, 43)
 DSTORE = {36: 4, 37: 4, 38: 1, 39: 1, 44: 2, 45: 2}
 DSTORE_UPDATE = (37, 39, 45)
 FPLOADSTORE = {48, 49, 50, 51, 52, 53, 54, 55}
-XO_ARITH = {266, 40, 8, 10, 138, 136, 200, 202, 232, 234, 104, 235, 233, 491, 459, 489, 457, 73, 9, 75, 11}  # XO-form: write rD only
+# XO-form arithmetic: write rD only
+XO_ARITH = {266, 40, 8, 10, 138, 136, 200, 202, 232, 234, 104, 235, 233, 491, 459, 489, 457, 73, 9, 75, 11}
 SPR_LR, SPR_CTR = 8, 9
 VOLATILE_GPRS = (0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
 HELPER_CLOBBERS = (0, 11, 12)
 CALL_KINDS = ('direct_call', 'conditional_call')
 
 
-def spr_field(instruction):
+def spr_field(instruction: int) -> int:
     """The SPR number of mtspr / mfspr (its two 5-bit halves are swapped in the instruction)."""
     return ((instruction >> 16) & 31) | (((instruction >> 11) & 31) << 5)
 
 
-def always_taken(bo):
+def always_taken(bo: int) -> bool:
+    """Whether a branch's BO field branches always (no condition, no counter test)."""
     return (bo & 0x14) == 0x14
 
 
 class Function:
+    """A function's extent [start, end), its name and, for an inferred function, why it was inferred (label)."""
     __slots__ = ('start', 'end', 'name', 'label')
+    start: int
+    end: int
+    name: str
+    label: str
 
-    def __init__(self, start, end, name, label=''):
+    def __init__(self, start: int, end: int, name: str, label: str = '') -> None:
         self.start, self.end, self.name, self.label = start, end, name, label
 
 
 class Analysis:
-    def __init__(self, image, functions, labels):
+    """The data-flow pass over every function: call edges, address references and vtable candidates."""
+
+    def __init__(self, image: Image, functions: list[Function], labels: dict[int, str]) -> None:
         self.image = image
         self.functions = functions
         self.starts = {f.start: f for f in functions}
         self.labels = labels                     # address -> label (helper entries)
         self.sorted_starts = sorted(self.starts)
-        self.edges = []                          # (caller, site, callee or None, kind, detail)
-        self.refs = []                           # (site, function, target, kind)
-        self.vtable_stores = collections.defaultdict(set)   # vtable candidate address -> functions storing it at offset 0
+        self.edges: list[Edge] = []              # (caller, site, callee or None, kind, detail)
+        self.refs: list[Reference] = []          # (site, function, target, kind)
+        # vtable candidate address -> functions storing it at offset 0
+        self.vtable_stores: collections.defaultdict[int, set[int]] = collections.defaultdict(set)
         self.blocks_unreached = 0
-        self.helper_targets = set()
+        self.helper_targets: set[int] = set()
         for f in functions:
             if f.name.startswith('__'):
                 self.helper_targets.update(range(f.start, f.end, 4))
         self.source = {f.start: ('helper' if f.name.startswith('__') else 'pdata') for f in functions}
 
-    def reset_results(self):
-        """Forget the edges, references, vtable stores and unreached-block count, for a rerun over a new function set."""
+    def reset_results(self) -> None:
+        """Forget the edges, references, vtable stores and unreached-block count, for a rerun over a new function
+        set."""
         self.edges, self.refs, self.vtable_stores, self.blocks_unreached = [], [], collections.defaultdict(set), 0
 
-    def add_functions(self, new):
+    def add_functions(self, new: list[Function]) -> None:
         for f in new:
             self.functions.append(f)
             self.starts[f.start] = f
             self.source[f.start] = f.label
         self.sorted_starts = sorted(self.starts)
 
-    def containing(self, address):
+    def containing(self, address: int) -> Function | None:
+        """The known function whose extent holds address, or None."""
         i = bisect.bisect_right(self.sorted_starts, address) - 1
         if i >= 0:
             function = self.starts[self.sorted_starts[i]]
@@ -191,13 +239,13 @@ class Analysis:
                 return function
         return None
 
-    def note_reference(self, site, function, address, kind):
+    def note_reference(self, site: int, function: Function, address: int, kind: str) -> None:
         """Record a reference from site (in function) to address when address is in the image."""
         if BASE <= address < self.image.end:
             self.refs.append((site, function.start, address, kind))
 
-    # A value is an int (32-bit constant) or a tuple (key, offset): a symbol plus a constant offset.
-    def load(self, state, base, displacement, size, site, function, emit=True):
+    def load(self, state: State, base: Value, displacement: int, size: int, site: int, function: Function,
+             emit: bool = True) -> Value:
         """The value a load of size bytes from base + displacement gives; with emit, a constant address is also
         recorded as a reference."""
         if isinstance(base, int):
@@ -222,7 +270,8 @@ class Analysis:
             return (('def', site, 'ld'), 0)      # cap symbolic depth at four nested loads
         return (('ld', key, offset + displacement, size), 0)
 
-    def store(self, state, base, displacement, size, value, site, function, emit=True):
+    def store(self, state: State, base: Value, displacement: int, size: int, value: Value | None, site: int,
+              function: Function, emit: bool = True) -> None:
         """Forget the remembered slots a store may overwrite, then remember a 4-byte value (None: a store whose value
         we do not follow). With emit, a constant address is recorded as a reference and a vtable-like store as a
         candidate."""
@@ -231,8 +280,9 @@ class Analysis:
             address = (base + displacement) & M32
             if emit and BASE <= address < self.image.end:
                 self.refs.append((site, function.start, address, 'write'))
-            slot = ('abs', address)
-            key, offset = 'abs', address
+            slot: Slot = ('abs', address)
+            key: str | Key = 'abs'
+            offset = address
         else:
             key, offset = base[0], base[1] + displacement
             slot = (key, offset)
@@ -245,12 +295,13 @@ class Analysis:
             memory[slot] = (value, size)
             # A constant .rdata address stored at offset 0 of an object whose first word is a function: a vtable.
             stored_at_object_start = displacement == 0 and not isinstance(base, int)
-            if (emit and isinstance(value, int) and stored_at_object_start and self.image.readonly(value)
-                    and self.image.section(value)['name'] == '.rdata'):
-                if value % 4 == 0 and self.image.word(value) in self.starts:
-                    self.vtable_stores[value].add(function.start)
+            if emit and isinstance(value, int) and stored_at_object_start and self.image.readonly(value):
+                section = self.image.section(value)         # never None: readonly() found it
+                if section is not None and section['name'] == '.rdata':
+                    if value % 4 == 0 and self.image.word(value) in self.starts:
+                        self.vtable_stores[value].add(function.start)
 
-    def classify_indirect(self, value, via):
+    def classify_indirect(self, value: Value, via: str) -> tuple[int | None, str, str]:
         """Return (callee or None, kind, detail) for an indirect call or branch through CTR/LR."""
         if isinstance(value, int):
             if value in self.starts:
@@ -268,7 +319,7 @@ class Analysis:
             return None, 'indirect_pointer_unresolved', f'{via}=[x+{offset:#x}]'
         return None, 'indirect_unknown', f'{via} not tracked'
 
-    def block_leaders(self, function, words):
+    def block_leaders(self, function: Function, words: list[int]) -> list[int]:
         """The indices of the words that start a basic block: the entry, each word after a branch and each branch
         target inside the function."""
         start, end = function.start, function.end
@@ -291,14 +342,17 @@ class Analysis:
                         leaders.add((target - start) // 4)
         return sorted(leaders)
 
-    def run_function(self, function):
+    def run_function(self, function: Function) -> None:
+        """The data flow of one function to a fixed point, then one more pass over its blocks that records their
+        edges, references and vtable stores."""
         start, end = function.start, function.end
         words = [self.image.word(address) for address in range(start, end, 4)]
         order = self.block_leaders(function, words)
         block_end = {block: (order[j + 1] if j + 1 < len(order) else len(words)) for j, block in enumerate(order)}
-        entry = dict(regs=[(('in', r), 0) for r in range(32)], ctr=(('in', 'ctr'), 0), lr=(('in', 'lr'), 0), mem={})
+        entry = State(regs=[(('in', register), 0) for register in range(32)], ctr=(('in', 'ctr'), 0),
+                      lr=(('in', 'lr'), 0), mem={})
         in_states = {0: entry}
-        visited = set()
+        visited: set[int] = set()
         work = [0]
         seeded_unreached = False
         iterations = 0
@@ -326,41 +380,43 @@ class Analysis:
             seeded_unreached = True
             block = missing[0]
             pc = start + 4 * block
-            in_states[block] = dict(regs=[(('phi', pc, r), 0) for r in range(32)], ctr=(('phi', pc, 'ctr'), 0),
-                                    lr=(('phi', pc, 'lr'), 0), mem={}, unreached=True)
+            in_states[block] = State(regs=[(('phi', pc, register), 0) for register in range(32)],
+                                     ctr=(('phi', pc, 'ctr'), 0), lr=(('phi', pc, 'lr'), 0), mem={}, unreached=True)
             work.append(block)
         for block in order:
             self.step_block(function, words, block, block_end[block], in_states[block], emit=True)
         if seeded_unreached:
             self.blocks_unreached += sum(1 for block in order if in_states[block].get('unreached'))
 
-    def merge(self, a, b, block):
+    def merge(self, left: State, right: State, block: int) -> State:
         """Two states meeting at block: registers that disagree become a merge-point symbol; only the remembered slots
         both agree on are kept."""
-        regs = [x if x == y else (('phi', block, r), 0) for r, (x, y) in enumerate(zip(a['regs'], b['regs']))]
-        memory = {slot: value for slot, value in a['mem'].items() if b['mem'].get(slot) == value}
-        out = dict(regs=regs, ctr=a['ctr'] if a['ctr'] == b['ctr'] else (('phi', block, 'ctr'), 0),
-                   lr=a['lr'] if a['lr'] == b['lr'] else (('phi', block, 'lr'), 0), mem=memory)
-        if a.get('unreached') and b.get('unreached'):
+        regs: list[Value] = [x if x == y else (('phi', block, register), 0)
+                             for register, (x, y) in enumerate(zip(left['regs'], right['regs']))]
+        memory = {slot: value for slot, value in left['mem'].items() if right['mem'].get(slot) == value}
+        out = State(regs=regs, ctr=left['ctr'] if left['ctr'] == right['ctr'] else (('phi', block, 'ctr'), 0),
+                    lr=left['lr'] if left['lr'] == right['lr'] else (('phi', block, 'lr'), 0), mem=memory)
+        if left.get('unreached') and right.get('unreached'):
             out['unreached'] = True
         return out
 
-    def clobber_call(self, state, pc, target=None):
+    def clobber_call(self, state: State, pc: int, target: int | None = None) -> None:
         """What a call does to the state: register save/restore helpers only touch r0, r11, r12 and the stack; other
         calls clobber the volatile set. CTR is clobbered, LR is the return address, remembered slots are forgotten."""
         helper = target is not None and target in self.helper_targets
-        for r in (HELPER_CLOBBERS if helper else VOLATILE_GPRS):
-            state['regs'][r] = (('def', pc, r), 0)
+        for register in (HELPER_CLOBBERS if helper else VOLATILE_GPRS):
+            state['regs'][register] = (('def', pc, register), 0)
         state['ctr'] = (('def', pc, 'ctr'), 0)
         state['lr'] = pc + 4
         state['mem'] = {}
 
-    def step_block(self, function, words, first, last, in_state, emit):
+    def step_block(self, function: Function, words: list[int], first: int, last: int, in_state: State,
+                   emit: bool) -> tuple[State, list[int]]:
         """Run words[first:last] (one basic block) from in_state: (out state, successor block indices). With emit,
         record the block's edges, references and vtable stores; without, only compute the state."""
         start, end = function.start, function.end
         regs = list(in_state['regs'])
-        state = dict(regs=regs, ctr=in_state['ctr'], lr=in_state['lr'], mem=dict(in_state['mem']))
+        state = State(regs=regs, ctr=in_state['ctr'], lr=in_state['lr'], mem=dict(in_state['mem']))
         if in_state.get('unreached'):
             state['unreached'] = True
         successors = []
@@ -373,7 +429,8 @@ class Analysis:
             ra = (instruction >> 16) & 31
             rb = (instruction >> 11) & 31
 
-            def fresh(tag='w'):
+            def fresh(tag: str | int = 'w') -> Value:
+                """A value this instruction writes that we do not follow."""
                 return (('def', pc, tag), 0)
 
             if op == 14 or op == 15:                                        # addi / addis (li / lis)
@@ -382,17 +439,19 @@ class Analysis:
                     regs[rd] = imm & M32
                 else:
                     regs[rd] = offset_value(regs[ra], imm)
-                if op == 14 and ra != 0 and isinstance(regs[rd], int) and emit:
-                    self.note_reference(pc, function, regs[rd], 'addr')
+                written = regs[rd]
+                if op == 14 and ra != 0 and isinstance(written, int) and emit:
+                    self.note_reference(pc, function, written, 'addr')
             elif op in (12, 13, 7, 8):
                 regs[rd] = fresh()
             elif op in (24, 25):                                            # ori / oris
                 value = regs[rd]
                 uimm = instruction & 0xffff
                 if isinstance(value, int):
-                    regs[ra] = (value | (uimm << (16 if op == 25 else 0))) & M32
+                    address = (value | (uimm << (16 if op == 25 else 0))) & M32
+                    regs[ra] = address
                     if op == 24 and uimm and emit:
-                        self.note_reference(pc, function, regs[ra], 'addr')
+                        self.note_reference(pc, function, address, 'addr')
                 elif uimm == 0:
                     regs[ra] = value
                 else:
@@ -414,8 +473,8 @@ class Analysis:
                 if op in DSTORE_UPDATE and ra:
                     regs[ra] = offset_value(regs[ra], simm16(instruction))
             elif op == 46:                                                  # lmw
-                for r in range(rd, 32):
-                    regs[r] = fresh(r)
+                for register in range(rd, 32):
+                    regs[register] = fresh(register)
             elif op == 47:                                                  # stmw
                 state['mem'] = {}
             elif op in FPLOADSTORE:
@@ -423,7 +482,8 @@ class Analysis:
                 if op < 52:
                     if isinstance(base, int) and emit:
                         self.note_reference(pc, function, (base + simm16(instruction)) & M32, 'read')
-                else:       # a float store: no value we follow, but it overwrites (and may alias) remembered slots
+                else:
+                    # a float store: no value we follow, but it overwrites (and may alias) remembered slots
                     size = 4 if op in (52, 53) else 8
                     self.store(state, base, simm16(instruction), size, None, pc, function, emit)
                 if op & 1 and ra:                                           # the update forms
@@ -460,7 +520,8 @@ class Analysis:
                         regs[rd] = state['lr']
                     else:
                         regs[rd] = fresh()
-                elif xo in LOGICAL31 or (xo >> 1) == 413:                  # and/or/xor/shifts/extends... write rA
+                elif xo in LOGICAL31 or (xo >> 1) == 413:
+                    # and/or/xor/shifts/extends... write rA
                     regs[ra] = fresh()
                 elif xo in STORE31:
                     state['mem'] = {}
@@ -474,7 +535,8 @@ class Analysis:
                     regs[ra] = fresh('u')
                 elif xo in LOAD31_WORD or (xo & 511) in XO_ARITH or xo in WRITES_RD31:
                     regs[rd] = fresh()
-                else:                                                       # anything else: forget both fields
+                else:
+                    # anything else: forget both fields
                     regs[rd] = fresh()
                     regs[ra] = fresh('a')
             elif op == 18:                                                  # b / bl
@@ -514,7 +576,7 @@ class Analysis:
                     if instruction & 1:
                         if emit:
                             callee, kind, detail = self.classify_indirect(state['lr'], 'LR')
-                            self.edges.append((function.start, pc, callee, kind if always else 'conditional_' + kind, detail))
+                            self.edges.append((function.start, pc, callee, conditional_kind(kind, always), detail))
                         self.clobber_call(state, pc)
                     elif always:
                         falls = False
@@ -523,7 +585,7 @@ class Analysis:
                     if instruction & 1:
                         if emit:
                             callee, kind, detail = self.classify_indirect(state['ctr'], 'CTR')
-                            self.edges.append((function.start, pc, callee, kind if always else 'conditional_' + kind, detail))
+                            self.edges.append((function.start, pc, callee, conditional_kind(kind, always), detail))
                         self.clobber_call(state, pc)
                     else:
                         if emit:
@@ -531,14 +593,15 @@ class Analysis:
                         if always:
                             falls = False
                             break
-            elif op == 4 and (instruction & VX128_STORE_MASK) in VX128_STORES:      # a VMX128 store: memory changed
+            elif op == 4 and (instruction & VX128_STORE_MASK) in VX128_STORES:
+                # a VMX128 store: memory changed
                 state['mem'] = {}
             # opcodes 4/5/6 (vector), 59/63 (FP), 17 (sc), 2/3 (traps), 10/11 (compares) write no GPR we follow.
         if falls and last < len(words):
             successors.append(last)
         return state, successors
 
-    def indirect_branch(self, function, pc, ctr):
+    def indirect_branch(self, function: Function, pc: int, ctr: Value) -> None:
         """The edge of a bcctr (no link): a resolved tail call, an import tail call, nothing for a branch inside the
         function, else an unresolved branch (a jump table or a tail call)."""
         callee, kind, detail = self.classify_indirect(ctr, 'CTR')
@@ -551,7 +614,7 @@ class Analysis:
             self.edges.append((function.start, pc, callee, 'indirect_branch_unresolved',
                                detail + ' (jump table or tail call)'))
 
-    def direct(self, function, site, target, kind):
+    def direct(self, function: Function, site: int, target: int, kind: str) -> Edge:
         """The edge of a direct call or branch leaving the function, by what its target is."""
         if target in self.image.import_thunks:
             thunk = self.image.import_thunks[target]
@@ -567,29 +630,40 @@ class Analysis:
         return (function.start, site, target, kind + '_nonentry', detail)
 
 
+def conditional_kind(kind: str, always: bool) -> str:
+    """An indirect call's edge kind: as classified, or with 'conditional_' before it when the branch is conditional."""
+    return kind if always else 'conditional_' + kind
+
+
 # --- strings ----------------------------------------------------------------------------------------------------
 PRINTABLE = set(range(0x20, 0x7f)) | {9, 10, 13}
 
 
-def latin_unit(unit):
+def latin_unit(unit: int) -> bool:
+    """Whether a UTF-16 code unit is printable Latin-script text (ASCII, Latin-1, Latin Extended-A, some
+    punctuation)."""
     return (0x20 <= unit <= 0x7e or unit in (9, 10, 13) or 0xa0 <= unit <= 0x17f or 0x2010 <= unit <= 0x2027
             or unit in (0x20ac, 0x2122))
 
 
-def latin_text(text):
+def latin_text(text: str) -> bool:
     """Printable (or tab/newline/CR) text whose non-ASCII characters are all Latin-script."""
-    return all((c.isprintable() or c in '\t\n\r') and (ord(c) < 0x80 or latin_unit(ord(c))) for c in text)
+    return all((character.isprintable() or character in '\t\n\r')
+               and (ord(character) < 0x80 or latin_unit(ord(character))) for character in text)
 
 
-def scan_strings(image):
-    strings = {}
+def scan_strings(image: Image) -> dict[int, StringRecord]:
+    """Every string in the non-code sections, by address: NUL-terminated ASCII/UTF-8 runs of at least 4 characters,
+    and UTF-16BE runs of at least 4 Latin-script units that are mostly letters, digits and spaces."""
+    strings: dict[int, StringRecord] = {}
     data = image.data
     for section in image.sections:
         if section['execute']:
             continue
         low, high = section['start'] - BASE, section['start'] - BASE + section['size']
         i = low
-        while i < high:                                 # ASCII / UTF-8 runs ending in NUL
+        # ASCII / UTF-8 runs ending in NUL
+        while i < high:
             if data[i] in PRINTABLE or data[i] >= 0xc2:
                 j = i
                 while j < high and (data[j] in PRINTABLE or data[j] >= 0x80):
@@ -601,22 +675,24 @@ def scan_strings(image):
                     except UnicodeDecodeError:
                         text = None
                     if text is None or not latin_text(text):
-                        # Binary bytes that happen to precede (or form UTF-8 before) a string: keep the ASCII tail only.
+                        # Binary bytes that happen to precede (or form UTF-8 before) a string: keep the ASCII tail
+                        # only.
                         k = max(x for x in range(i, j) if data[x] >= 0x80) + 1
                         text = data[k:j].decode('ascii')
                     if len(text) >= 4:
                         encoding = 'ascii' if max(data[k:j]) < 0x80 else 'utf-8'
-                        strings[BASE + k] = dict(address=BASE + k, section=section['name'], encoding=encoding, text=text,
-                                                 bytes=j - k + 1)
+                        strings[BASE + k] = dict(address=BASE + k, section=section['name'], encoding=encoding,
+                                                 text=text, bytes=j - k + 1)
                 i = j + 1
             else:
                 i += 1
         i = low + (low & 1)
-        while i + 1 < high:                             # UTF-16BE runs (2-aligned) ending in a zero unit
+        # UTF-16BE runs (2-aligned) ending in a zero unit
+        while i + 1 < high:
             unit = (data[i] << 8) | data[i + 1]
             if latin_unit(unit) and unit >= 0x20:
                 j = i
-                units = []
+                units: list[int] = []
                 while j + 1 < high:
                     next_unit = (data[j] << 8) | data[j + 1]
                     if not latin_unit(next_unit):
@@ -636,7 +712,7 @@ def scan_strings(image):
     return strings
 
 
-def short_string_at(image, address):
+def short_string_at(image: Image, address: int) -> StringRecord | None:
     """A NUL-terminated printable ASCII run of 1-3 characters at address (for code-referenced short strings)."""
     offset = address - BASE
     data = image.data
@@ -655,18 +731,19 @@ def short_string_at(image, address):
     return None
 
 
-def esc(text):
+def esc(text: str) -> str:
+    """text as a JSON string's contents (escapes, no quotes), for one TSV cell."""
     return json.dumps(text, ensure_ascii=False)[1:-1]
 
 
-def write_tsv(path, header, rows):
+def write_tsv(path: Path, header: list[str], rows: Iterable[Sequence[object]]) -> None:
     with open(path, 'w', newline='', encoding='utf-8') as f:
         f.write('\t'.join(header) + '\n')
         for row in rows:
             f.write('\t'.join('' if x is None else str(x) for x in row) + '\n')
 
 
-def data_words(image):
+def data_words(image: Image) -> Iterator[tuple[int, int]]:
     """(offset, word) of every aligned word of the non-code sections."""
     for section in image.sections:
         if section['execute']:
@@ -676,15 +753,15 @@ def data_words(image):
             yield offset, struct.unpack_from('>I', image.data, offset)[0]
 
 
-def in_code(address, code_sections):
+def in_code(address: int, code_sections: list[Section]) -> bool:
     return any(section['start'] <= address < section['start'] + section['size'] for section in code_sections)
 
 
-def outside_every_function(kind, detail):
+def outside_every_function(kind: str, detail: str) -> bool:
     return kind.endswith('_nonentry') and detail == 'outside every function'
 
 
-def function_graph_edges(analysis):
+def function_graph_edges(analysis: Analysis) -> set[tuple[int, int]]:
     """The distinct (caller, callee function) pairs of the call edges (unresolved branches left out)."""
     pairs = set()
     for caller, _site, callee, kind, _detail in analysis.edges:
@@ -692,17 +769,20 @@ def function_graph_edges(analysis):
             continue
         if callee in analysis.starts:
             pairs.add((caller, callee))
-        elif analysis.containing(callee) is not None:
-            pairs.add((caller, analysis.containing(callee).start))
+            continue
+        inside = analysis.containing(callee)
+        if inside is not None:
+            pairs.add((caller, inside.start))
     return pairs
 
 
-def discover_functions(analysis, image, functions):
+def discover_functions(analysis: Analysis, image: Image,
+                       functions: list[Function]) -> tuple[dict[str, Any] | None, list[dict[str, int]]]:
     """Run the analysis to a settled set of functions, inferring leaf functions (no .pdata record) from call targets
     and data words that land outside every known function. Returns (the graph before any inferred function, the
     discovery rounds)."""
     pending = list(functions)
-    rounds = []
+    rounds: list[dict[str, int]] = []
     pdata_only = None
     code_sections = [section for section in image.sections if section['execute']]
     while pending:
@@ -717,7 +797,7 @@ def discover_functions(analysis, image, functions):
                                   1 for *_, kind, detail in analysis.edges if outside_every_function(kind, detail)))
         # Entry points outside every known function: direct/tail call targets, then 4-aligned data words into code
         # gaps. Leaf functions need no .pdata record, so the exception table misses them.
-        candidates = {}
+        candidates: dict[int, str] = {}
         for _caller, _site, target, kind, detail in analysis.edges:
             if target is not None and outside_every_function(kind, detail) and in_code(target, code_sections):
                 candidates.setdefault(target, 'inferred_call_target')
@@ -756,12 +836,18 @@ def discover_functions(analysis, image, functions):
     return pdata_only, rounds
 
 
-def string_references(analysis, image, strings, code_targets):
+type Uses = list[tuple[int, int, str]]        # (site, function start, kind) of the code references to one address
+type Cells = collections.defaultdict[int, list[int]]     # address -> the data cells holding it
+type StringRow = tuple[int, int, int | str, str, str]    # (string, from, function or '', kind, detail)
+
+
+def string_references(analysis: Analysis, image: Image, strings: dict[int, StringRecord],
+                      code_targets: dict[int, Uses]) -> tuple[list[StringRow], Cells, Cells]:
     """The string reference rows (string, from, function, kind, detail) and each string's data pointer cells, plus
     the data cells that hold a function start: (rows, {string: [cells]}, {function: [cells]})."""
     starts_sorted = sorted(strings)
 
-    def string_containing(address):
+    def string_containing(address: int) -> StringRecord | None:
         i = bisect.bisect_right(starts_sorted, address) - 1
         if i >= 0:
             string = strings[starts_sorted[i]]
@@ -769,14 +855,14 @@ def string_references(analysis, image, strings, code_targets):
                 return string
         return None
 
-    pointer_cells = collections.defaultdict(list)       # string address -> data cells holding it
-    code_pointer_cells = collections.defaultdict(list)  # function start -> data cells holding it
+    pointer_cells: Cells = collections.defaultdict(list)        # string address -> data cells holding it
+    code_pointer_cells: Cells = collections.defaultdict(list)   # function start -> data cells holding it
     for offset, value in data_words(image):
         if value in strings:
             pointer_cells[value].append(BASE + offset)
         elif value in analysis.starts:
             code_pointer_cells[value].append(BASE + offset)
-    rows = []
+    rows: list[StringRow] = []
     for target, uses in code_targets.items():
         string = strings.get(target) or string_containing(target)
         if string:
@@ -788,12 +874,13 @@ def string_references(analysis, image, strings, code_targets):
             holder = analysis.containing(cell)
             rows.append((string_address, cell, holder.start if holder else '', 'data_pointer', ''))
             for site, function_start, kind in code_targets.get(cell, []):
-                rows.append((string_address, site, function_start, f'code_{kind}_via_pointer', f'cell {cell:08x}'))
+                rows.append((string_address, site, function_start, f'code_{kind}_via_pointer',
+                             f'cell {cell:08x}'))
     rows.sort(key=lambda row: (row[0], row[1]))
     return rows, pointer_cells, code_pointer_cells
 
 
-def is_unresolved(kind):
+def is_unresolved(kind: str) -> bool:
     return 'unresolved' in kind or kind == 'indirect_unknown' or kind.endswith('_indirect_unknown')
 
 
@@ -802,7 +889,7 @@ DIRECT_KINDS = ('direct_call', 'conditional_call', 'tail_call', 'conditional_tai
 GHIDRA_DIRECT_KINDS = ('direct_call', 'conditional_call', 'helper_call', 'import_call')
 
 
-def ghidra_cross_check(path, analysis):
+def ghidra_cross_check(path: Path, analysis: Analysis) -> dict[str, Any]:
     """Our direct calls against the call references Ghidra's listing holds (export_all_decompiled.java)."""
     rows = tsv(path)
     ghidra = {(int(row['instruction'], 16), int(row['target'], 16)) for row in rows
@@ -818,9 +905,9 @@ def ghidra_cross_check(path, analysis):
                 ghidra_computed_calls=sum(1 for row in rows if row['kind'] == 'computed_call'))
 
 
-def main():
+def main() -> dict[str, Any]:
     root = research_root()              # the research workspace (workspace.py), looked up before the arguments are read
-    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser = argparse.ArgumentParser(description=cast(str, __doc__).split('\n')[0])
     parser.add_argument('--ghidra-call-refs', type=Path,
                         help='ghidra-call-refs.tsv from export_all_decompiled.java, for a cross-check of direct calls')
     args = parser.parse_args()
@@ -842,7 +929,7 @@ def main():
 
     # Strings and their references.
     strings = scan_strings(image)
-    code_targets = collections.defaultdict(list)        # address -> [(site, function start, kind)]
+    code_targets: collections.defaultdict[int, Uses] = collections.defaultdict(list)   # address -> its code uses
     for site, function_start, target, kind in analysis.refs:
         code_targets[target].append((site, function_start, kind))
     for address in list(code_targets):
@@ -851,15 +938,17 @@ def main():
             if short:
                 strings[address] = short
     string_refs, pointer_cells, code_pointer_cells = string_references(analysis, image, strings, code_targets)
-    refs_by_string = collections.defaultdict(set)       # string address -> functions referencing it
+    # string address -> functions referencing it
+    refs_by_string: collections.defaultdict[int, set[int | str]] = collections.defaultdict(set)
     for string_address, _site, function_start, _kind, _ in string_refs:
         if function_start != '':
             refs_by_string[string_address].add(function_start)
 
     # Call graph tables.
-    callees = collections.defaultdict(set)
-    callers = collections.defaultdict(set)
-    kinds_by_function = collections.defaultdict(collections.Counter)
+    callees: collections.defaultdict[int, set[int]] = collections.defaultdict(set)
+    callers: collections.defaultdict[int, set[int]] = collections.defaultdict(set)
+    kinds_by_function: collections.defaultdict[int, collections.Counter[str]] = collections.defaultdict(
+        collections.Counter)
     for caller, _site, callee, kind, _detail in analysis.edges:
         kinds_by_function[caller][kind] += 1
         if callee is not None:
@@ -873,37 +962,51 @@ def main():
                 callers[callee_function].add(caller)
     out.mkdir(parents=True, exist_ok=True)
 
-    def function_name(address):
+    def section_name(address: int) -> str:
+        """The name of the section holding address, 'gap' outside every section."""
+        section = image.section(address)
+        return section['name'] if section is not None else 'gap'
+
+    def data_section_name(cell: int) -> str:
+        """The name of the section holding a data cell (data_words() found it in one)."""
+        section = image.section(cell)
+        assert section is not None
+        return section['name']
+
+    def function_name(address: int) -> str:
         if address in analysis.starts:
             return analysis.starts[address].name
         if address in image.import_thunks:
             return image.import_thunks[address]['name']
         return labels.get(address, '')
 
-    def hex_or_blank(address):
+    def hex_or_blank(address: int | None) -> str:
         return '' if address is None else f'{address:08x}'
 
-    write_tsv(out / 'callgraph-edges.tsv', ['caller', 'caller_name', 'site', 'callee', 'callee_name', 'kind', 'detail'],
+    write_tsv(out / 'callgraph-edges.tsv',
+              ['caller', 'caller_name', 'site', 'callee', 'callee_name', 'kind', 'detail'],
               [(f'{caller:08x}', function_name(caller), f'{site:08x}', hex_or_blank(callee),
                 '' if callee is None else function_name(callee), kind, detail)
                for caller, site, callee, kind, detail in analysis.edges])
     rows = []
     for f in functions:
         kind_counts = kinds_by_function[f.start]
-        direct = sum(count for kind, count in kind_counts.items() if kind in DIRECT_KINDS or kind.endswith('_nonentry'))
+        direct = sum(count for kind, count in kind_counts.items()
+                     if kind in DIRECT_KINDS or kind.endswith('_nonentry'))
         resolved = sum(count for kind, count in kind_counts.items() if 'resolved' in kind and 'unresolved' not in kind)
         unresolved = sum(count for kind, count in kind_counts.items() if is_unresolved(kind) and 'branch' not in kind)
-        rows.append((f'{f.start:08x}', f'{f.end:08x}', f.name, analysis.source[f.start], names.get(f.start, ('', ''))[1],
+        rows.append((f'{f.start:08x}', f'{f.end:08x}', f.name, analysis.source[f.start],
+                     names.get(f.start, ('', ''))[1],
                      len(callers[f.start]), len(callees[f.start]), direct, resolved, unresolved,
                      kind_counts.get('indirect_branch_unresolved', 0),
-                     ','.join(f'{c:08x}' for c in sorted(callers[f.start])),
-                     ','.join(f'{c:08x}' for c in sorted(callees[f.start]))))
+                     ','.join(f'{caller:08x}' for caller in sorted(callers[f.start])),
+                     ','.join(f'{callee:08x}' for callee in sorted(callees[f.start]))))
     write_tsv(out / 'callgraph-functions.tsv',
               ['address', 'end', 'name', 'source', 'decompiled_file', 'callers', 'callees', 'direct_call_sites',
                'indirect_resolved_sites', 'indirect_unresolved_sites', 'indirect_branches_unresolved', 'caller_list',
                'callee_list'], rows)
     write_tsv(out / 'address-refs.tsv', ['site', 'function', 'target', 'kind', 'section'],
-              [(f'{site:08x}', f'{function_start:08x}', f'{target:08x}', kind, (image.section(target) or {}).get('name', 'gap'))
+              [(f'{site:08x}', f'{function_start:08x}', f'{target:08x}', kind, section_name(target))
                for site, function_start, target, kind in sorted(analysis.refs)])
     write_tsv(out / 'strings.tsv',
               ['address', 'section', 'encoding', 'chars', 'bytes', 'referencing_functions', 'pointer_cells', 'text'],
@@ -911,20 +1014,21 @@ def main():
                 len(refs_by_string.get(address, ())), len(pointer_cells.get(address, ())), esc(string['text']))
                for address, string in sorted(strings.items())])
     write_tsv(out / 'string-refs.tsv', ['string', 'from', 'function', 'kind', 'detail'],
-              [(f'{string_address:08x}', f'{site:08x}', '' if function_start == '' else f'{function_start:08x}', kind, detail)
+              [(f'{string_address:08x}', f'{site:08x}', '' if function_start == '' else f'{function_start:08x}',
+                kind, detail)
                for string_address, site, function_start, kind, detail in string_refs])
     vtables = []
     for address in sorted(analysis.vtable_stores):
         leading = 0                                     # function pointers at the start of the table
         while image.readonly(address + 4 * leading) and image.word(address + 4 * leading) in analysis.starts:
             leading += 1
-        stored_by = ','.join(f'{x:08x}' for x in sorted(analysis.vtable_stores[address]))
+        stored_by = ','.join(f'{function:08x}' for function in sorted(analysis.vtable_stores[address]))
         vtables.append((f'{address:08x}', leading, stored_by))
     write_tsv(out / 'vtable-candidates.tsv', ['address', 'leading_function_pointers', 'stored_at_offset_0_by'], vtables)
     write_tsv(out / 'inferred-functions.tsv', ['start', 'end', 'name', 'source'],
               [(f'{f.start:08x}', f'{f.end:08x}', f.name, f.label) for f in functions if f.label])
     write_tsv(out / 'data-pointers-to-functions.tsv', ['cell', 'section', 'function'],
-              sorted((f'{cell:08x}', image.section(cell)['name'], f'{target:08x}')
+              sorted((f'{cell:08x}', data_section_name(cell), f'{target:08x}')
                      for target, cells in code_pointer_cells.items() for cell in cells))
 
     kinds = collections.Counter(kind for *_, kind, _ in analysis.edges)
@@ -936,7 +1040,8 @@ def main():
         python=sys.version.split()[0], seconds=round(time.time() - started, 1),
         seconds_dataflow=round(dataflow_done - started, 1),
         inputs={name: sha256_file(work / name) for name in inputs},
-        functions=len(functions), functions_pdata_and_helpers=pdata_count, functions_inferred=len(functions) - pdata_count,
+        functions=len(functions), functions_pdata_and_helpers=pdata_count,
+        functions_inferred=len(functions) - pdata_count,
         functions_inferred_from_calls=sum(1 for f in functions if f.label == 'inferred_call_target'),
         functions_inferred_from_data_pointers=sum(1 for f in functions if f.label == 'inferred_data_pointer'),
         inferred_code_bytes=sum(f.end - f.start for f in functions if f.label), discovery_rounds=rounds,
@@ -945,25 +1050,31 @@ def main():
         call_sites=len(analysis.edges), call_site_kinds=dict(sorted(kinds.items())),
         functions_with_callers=sum(1 for f in functions if callers[f.start]),
         functions_with_callees=sum(1 for f in functions if callees[f.start]),
-        graph_edges_function_to_function=sum(len(v) for v in callees.values()),
+        graph_edges_function_to_function=sum(len(callee_set) for callee_set in callees.values()),
         address_references=len(analysis.refs), strings=len(strings), string_encodings=dict(sorted(encodings.items())),
         strings_short_referenced=sum(1 for string in strings.values() if string.get('short')),
         strings_referenced_by_code=sum(1 for address in strings if refs_by_string.get(address)),
         string_reference_rows=len(string_refs),
-        string_pointer_cells=sum(len(v) for v in pointer_cells.values()), vtable_candidates=len(vtables),
-        data_pointers_to_functions=sum(len(v) for v in code_pointer_cells.values()))
+        string_pointer_cells=sum(len(cells) for cells in pointer_cells.values()), vtable_candidates=len(vtables),
+        data_pointers_to_functions=sum(len(cells) for cells in code_pointer_cells.values()))
     if args.ghidra_call_refs:
         summary['ghidra_cross_check'] = ghidra_cross_check(args.ghidra_call_refs, analysis)
     outputs = sorted(path.name for path in out.iterdir() if path.suffix == '.tsv')
     summary['outputs'] = {f'work/xex-analysis/callgraph/{name}': sha256_file(out / name) for name in outputs}
     (out / 'summary.json').write_bytes((json.dumps(summary, indent=2) + '\n').encode())
     # Commit-able evidence: counts, hashes and paths only (the outputs themselves derive from EA's binary).
-    evidence = dict(summary, note='Outputs are under the ignored work area; they derive from the game binary and are not committed.',
-                    limits=['Static: constants are followed within one function (no interprocedural values); loads fold only from read-only sections',
-                            'Indirect calls are resolved only when CTR/LR is a certain constant; virtual calls are classified with their vtable slot, not resolved',
-                            'Inferred leaf functions (no .pdata record) end at the next known entry or the first zero word; their extents are not proven',
-                            'Strings: ASCII/UTF-8 and Latin-script UTF-16BE only; references are exact-address code references and one level of data pointer cells'])
-    (root / 'research/evidence/xex-callgraph-strings.json').write_bytes((json.dumps(evidence, indent=2) + '\n').encode())
+    evidence = dict(summary, note='Outputs are under the ignored work area; they derive from the game binary and are '
+                                  'not committed.',
+                    limits=['Static: constants are followed within one function (no interprocedural values); loads '
+                            'fold only from read-only sections',
+                            'Indirect calls are resolved only when CTR/LR is a certain constant; virtual calls are '
+                            'classified with their vtable slot, not resolved',
+                            'Inferred leaf functions (no .pdata record) end at the next known entry or the first zero '
+                            'word; their extents are not proven',
+                            'Strings: ASCII/UTF-8 and Latin-script UTF-16BE only; references are exact-address code '
+                            'references and one level of data pointer cells'])
+    evidence_path = root / 'research/evidence/xex-callgraph-strings.json'
+    evidence_path.write_bytes((json.dumps(evidence, indent=2) + '\n').encode())
     print(json.dumps({key: value for key, value in summary.items() if key not in ('inputs', 'outputs')}, indent=1))
     return summary
 

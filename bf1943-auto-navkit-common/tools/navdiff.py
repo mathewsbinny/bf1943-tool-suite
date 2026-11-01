@@ -50,23 +50,26 @@ type Piece = tuple[tuple[int, int], tuple[int, int]]   # a grid-sized piece in h
 # ------------------------------------------------------------------------------------------------ loading
 
 class Sector:
-    def __init__(self, s: hpdtool.Sector) -> None:
-        self.id = s.id
-        self.mesh = kymesh.parse_mesh(s.mesh)
-        self.nodes = s.nodes
-        self.edges = s.edges
+    """One sector of a pathdata.hpd: its parsed mesh, route nodes and edges, and its cells (computed once)."""
+
+    def __init__(self, sector: hpdtool.Sector) -> None:
+        self.id = sector.id
+        self.mesh = kymesh.parse_mesh(sector.mesh)
+        self.nodes = sector.nodes
+        self.edges = sector.edges
         self._cells: list[Cells] | None = None
 
     def cells(self) -> list[Cells]:
         """Per area: dict (i, j) -> ground height estimate."""
         if self._cells is None:
-            self._cells = [area_cells(a) for a in self.mesh.areas]
+            self._cells = [area_cells(area) for area in self.mesh.areas]
         return self._cells
 
 
 def load(path: str) -> dict[int, Sector]:
-    f = hpdtool.parse(open(path, 'rb').read())
-    return {s.id: Sector(s) for s in f.sectors}
+    """The sectors of a pathdata.hpd by id."""
+    hpd = hpdtool.parse(open(path, 'rb').read())
+    return {sector.id: Sector(sector) for sector in hpd.sectors}
 
 
 def segments(area: kymesh.Area) -> list[Segment]:
@@ -74,8 +77,8 @@ def segments(area: kymesh.Area) -> list[Segment]:
     segs: list[Segment] = []
     for line in area.outline:
         segs.extend(zip(line[:-1], line[1:]))
-    segs.extend((p.p0, p.p1) for p in area.portals)
-    segs.extend((b.p0, b.p1) for b in area.border_portals)
+    segs.extend((portal.p0, portal.p1) for portal in area.portals)
+    segs.extend((border.p0, border.p1) for border in area.border_portals)
     return segs
 
 
@@ -88,43 +91,43 @@ def area_cells(area: kymesh.Area, y_offset: float | None = None, points: bool = 
     if not segs:
         return {}
     pitch = GRID
-    # a, b: the segments' two end points, one row each (x, y, z)
-    a = np.array([s[0] for s in segs], dtype=np.float64)
-    b = np.array([s[1] for s in segs], dtype=np.float64)
-    xs = np.concatenate([a[:, 0], b[:, 0]])
-    zs = np.concatenate([a[:, 2], b[:, 2]])
+    # the segments' two end points, one row each (x, y, z)
+    starts = np.array([seg[0] for seg in segs], dtype=np.float64)
+    ends = np.array([seg[1] for seg in segs], dtype=np.float64)
+    xs = np.concatenate([starts[:, 0], ends[:, 0]])
+    zs = np.concatenate([starts[:, 2], ends[:, 2]])
     i0 = int(math.floor(xs.min() / pitch)) - 1
     i1 = int(math.ceil(xs.max() / pitch)) + 1
     j0 = int(math.floor(zs.min() / pitch)) - 1
     j1 = int(math.ceil(zs.max() / pitch)) + 1
-    # ii, jj: the grid index of every sample in the area's bounding box
-    ii, jj = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1), indexing='ij')
-    ii, jj = ii.ravel(), jj.ravel()
-    # a tiny offset keeps sample points off the 45-degree bridges that pass through cell corners
-    px = ii * pitch + pitch * 1.37e-3
-    pz = jj * pitch + pitch * 0.71e-3
-    inside = np.zeros(len(ii), dtype=bool)
-    ax, az, bx, bz = a[:, 0], a[:, 2], b[:, 0], b[:, 2]
+    # the grid index of every sample in the area's bounding box
+    grid_i, grid_j = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1), indexing='ij')
+    grid_i, grid_j = grid_i.ravel(), grid_j.ravel()
+    # the sample points; a tiny offset keeps them off the 45-degree bridges that pass through cell corners
+    px = grid_i * pitch + pitch * 1.37e-3
+    pz = grid_j * pitch + pitch * 0.71e-3
+    inside = np.zeros(len(grid_i), dtype=bool)
+    start_x, start_z, end_x, end_z = starts[:, 0], starts[:, 2], ends[:, 0], ends[:, 2]
     # even-odd rule: a sample is inside when a ray towards +x crosses the boundary an odd number of times;
-    # segments are taken 256 at a time to bound the memory
-    for k in range(0, len(ax), 256):
-        sax, saz = ax[k:k + 256], az[k:k + 256]
-        sbx, sbz = bx[k:k + 256], bz[k:k + 256]
-        spans_z = (saz[None, :] > pz[:, None]) != (sbz[None, :] > pz[:, None])
+    # segments are taken 256 at a time to bound the memory (x0, z0 - x1, z1: this chunk's segments)
+    for k in range(0, len(start_x), 256):
+        x0, z0 = start_x[k:k + 256], start_z[k:k + 256]
+        x1, z1 = end_x[k:k + 256], end_z[k:k + 256]
+        spans_z = (z0[None, :] > pz[:, None]) != (z1[None, :] > pz[:, None])
         with np.errstate(divide='ignore', invalid='ignore'):
             # x where each segment crosses each sample's z line
-            x_cross = sax[None, :] + (pz[:, None] - saz[None, :]) * (sbx - sax)[None, :] / (sbz - saz)[None, :]
+            x_cross = x0[None, :] + (pz[:, None] - z0[None, :]) * (x1 - x0)[None, :] / (z1 - z0)[None, :]
         crosses = spans_z & (px[:, None] < x_cross)
         inside ^= (np.count_nonzero(crosses, axis=1) % 2 == 1)
     if not inside.any():
         return {}
-    boundary_points = np.concatenate([a, b])
-    sel_i, sel_j = ii[inside], jj[inside]
-    sx, sz = sel_i * pitch, sel_j * pitch
+    boundary_points = np.concatenate([starts, ends])
+    sel_i, sel_j = grid_i[inside], grid_j[inside]
+    cell_x, cell_z = sel_i * pitch, sel_j * pitch
     out: dict[IJ, Any] = {}
     for k in range(0, len(sel_i), 2048):
-        dist2 = ((sx[k:k + 2048, None] - boundary_points[None, :, 0]) ** 2
-                 + (sz[k:k + 2048, None] - boundary_points[None, :, 2]) ** 2)
+        dist2 = ((cell_x[k:k + 2048, None] - boundary_points[None, :, 0]) ** 2
+                 + (cell_z[k:k + 2048, None] - boundary_points[None, :, 2]) ** 2)
         nearest = np.argmin(dist2, axis=1)
         ground = boundary_points[nearest, 1] - y_offset
         for n in range(len(ground)):
@@ -188,45 +191,47 @@ def pieces(segs: Iterable[Segment], pitch: float) -> set[Piece]:
 
 
 def _outline_segments(area: kymesh.Area) -> list[Segment]:
-    return [s for line in area.outline for s in zip(line[:-1], line[1:])]
+    return [seg for line in area.outline for seg in zip(line[:-1], line[1:])]
 
 
 def _border_pieces(area: kymesh.Area, pitch: float) -> set[tuple[Piece, tuple[float, ...]]]:
     """The area's border portals as (grid piece, rounded direction) pairs."""
-    return {(piece, tuple(round(v, 3) for v in b.direction))
-            for b in area.border_portals for piece in pieces([(b.p0, b.p1)], pitch)}
+    return {(piece, tuple(round(component, 3) for component in border.direction))
+            for border in area.border_portals for piece in pieces([(border.p0, border.p1)], pitch)}
 
 
 def compare_sector(ref: Sector, cand: Sector) -> dict[str, Any]:
-    r: dict[str, Any] = {'cells_ref': 0, 'cells_cand': 0, 'cells_same': 0,
-         'areas_ref': len(ref.mesh.areas), 'areas_cand': len(cand.mesh.areas),
-         'areas_same': 0, 'areas_split': 0, 'areas_other': 0,
-         'outline_same': 0, 'portals_same': 0, 'borders_same': 0,
-         'nodes_ref': len(ref.nodes), 'nodes_cand': len(cand.nodes), 'nodes_same': 0,
-         'edges_ref': len(ref.edges), 'edges_same': 0, 'costs_same': 0,
-         'only_ref': [], 'only_cand': [],
-         'detailed_ref': sum(1 for a in ref.mesh.areas if a.pitch < 0.5),
-         'detailed_cand': sum(1 for a in cand.mesh.areas if a.pitch < 0.5)}
+    result: dict[str, Any] = {
+        'cells_ref': 0, 'cells_cand': 0, 'cells_same': 0,
+        'areas_ref': len(ref.mesh.areas), 'areas_cand': len(cand.mesh.areas),
+        'areas_same': 0, 'areas_split': 0, 'areas_other': 0,
+        'outline_same': 0, 'portals_same': 0, 'borders_same': 0,
+        'nodes_ref': len(ref.nodes), 'nodes_cand': len(cand.nodes), 'nodes_same': 0,
+        'edges_ref': len(ref.edges), 'edges_same': 0, 'costs_same': 0,
+        'only_ref': [], 'only_cand': [],
+        'detailed_ref': sum(1 for area in ref.mesh.areas if area.pitch < 0.5),
+        'detailed_cand': sum(1 for area in cand.mesh.areas if area.pitch < 0.5)}
     ref_cells, cand_cells = ref.cells(), cand.cells()
-    r['cells_ref'] = sum(len(c) for c in ref_cells)
-    r['cells_cand'] = sum(len(c) for c in cand_cells)
+    result['cells_ref'] = sum(len(cells) for cells in ref_cells)
+    result['cells_cand'] = sum(len(cells) for cells in cand_cells)
     ref_to_cand, cand_used = match_cells(ref_cells, cand_cells)
-    r['cells_same'] = len(ref_to_cand)
+    result['cells_same'] = len(ref_to_cand)
     for ai, cells in enumerate(ref_cells):
         for ij in cells:
             if (ai, ij) not in ref_to_cand:
-                r['only_ref'].append(ij)
-    for bi, cells in enumerate(cand_cells):
+                result['only_ref'].append(ij)
+    for bj, cells in enumerate(cand_cells):
         for ij in cells:
-            if (bi, ij) not in cand_used:
-                r['only_cand'].append(ij)
+            if (bj, ij) not in cand_used:
+                result['only_cand'].append(ij)
     # areas: a reference area is reproduced by a candidate area with exactly the same boundary (outline, portals,
     # border portals as grid pieces at its own pitch) at the same height; unmatched ones are "split" when their
     # ground is spread over several candidate areas, else "other"
     def shape(area: kymesh.Area) -> tuple[float, frozenset[Piece], int, int]:
-        segs = (_outline_segments(area) + [(p.p0, p.p1) for p in area.portals]
-                + [(b.p0, b.p1) for b in area.border_portals])
-        return (round(area.pitch, 2), frozenset(pieces(segs, area.pitch)), round(area.min_y * 2), round(area.max_y * 2))
+        segs = (_outline_segments(area) + [(portal.p0, portal.p1) for portal in area.portals]
+                + [(border.p0, border.p1) for border in area.border_portals])
+        return (round(area.pitch, 2), frozenset(pieces(segs, area.pitch)), round(area.min_y * 2),
+                round(area.max_y * 2))
     by_shape = defaultdict(list)
     for bj, area in enumerate(cand.mesh.areas):
         by_shape[shape(area)].append(bj)
@@ -235,70 +240,71 @@ def compare_sector(ref: Sector, cand: Sector) -> dict[str, Any]:
         hits = by_shape.get(shape(area))
         if hits:
             area_map[ai] = hits.pop(0)
-            r['areas_same'] += 1
+            result['areas_same'] += 1
             continue
         targets = {ref_to_cand[(ai, ij)][0] for ij in ref_cells[ai] if (ai, ij) in ref_to_cand}
         if len(targets) > 1:
-            r['areas_split'] += 1
+            result['areas_split'] += 1
         else:
-            r['areas_other'] += 1
+            result['areas_other'] += 1
     # boundaries of matched areas
     for ai, bj in area_map.items():
         ref_area, cand_area = ref.mesh.areas[ai], cand.mesh.areas[bj]
         pitch = ref_area.pitch
         ref_outline = pieces(_outline_segments(ref_area), pitch)
         cand_outline = pieces(_outline_segments(cand_area), pitch)
-        r['outline_same'] += ref_outline == cand_outline
-        ref_portals = pieces([(p.p0, p.p1) for p in ref_area.portals], pitch)
-        cand_portals = pieces([(p.p0, p.p1) for p in cand_area.portals], pitch)
+        result['outline_same'] += ref_outline == cand_outline
+        ref_portals = pieces([(portal.p0, portal.p1) for portal in ref_area.portals], pitch)
+        cand_portals = pieces([(portal.p0, portal.p1) for portal in cand_area.portals], pitch)
         if ref_portals == cand_portals:
-            targets_same = (sorted(area_map.get(p.target, -1) for p in ref_area.portals)
-                            == sorted(p.target for p in cand_area.portals))
+            targets_same = (sorted(area_map.get(portal.target, -1) for portal in ref_area.portals)
+                            == sorted(portal.target for portal in cand_area.portals))
         else:
             targets_same = False
-        r['portals_same'] += ref_portals == cand_portals and targets_same
-        r['borders_same'] += _border_pieces(ref_area, pitch) == _border_pieces(cand_area, pitch)
+        result['portals_same'] += ref_portals == cand_portals and targets_same
+        result['borders_same'] += _border_pieces(ref_area, pitch) == _border_pieces(cand_area, pitch)
     # graph: candidate nodes bucketed by 0.5 m squares
     cand_nodes = defaultdict(list)
-    for idx, node in enumerate(cand.nodes):
-        cand_nodes[(round(node.pos[0] / 0.5), round(node.pos[2] / 0.5))].append(idx)
+    for cand_index, node in enumerate(cand.nodes):
+        cand_nodes[(round(node.pos[0] / 0.5), round(node.pos[2] / 0.5))].append(cand_index)
     # one to one: each candidate node pairs with at most one reference node (the closest still free)
     node_map, used = {}, set()
-    for idx, node in enumerate(ref.nodes):
+    for ref_index, node in enumerate(ref.nodes):
         key = (round(node.pos[0] / 0.5), round(node.pos[2] / 0.5))
         best, best_dist2 = None, None
         for dx in (-1, 0, 1):
             for dz in (-1, 0, 1):
-                for c in cand_nodes.get((key[0] + dx, key[1] + dz), ()):
-                    other = cand.nodes[c]
-                    if (c in used or abs(other.pos[0] - node.pos[0]) > NODE_XZ
+                for other_index in cand_nodes.get((key[0] + dx, key[1] + dz), ()):
+                    other = cand.nodes[other_index]
+                    if (other_index in used or abs(other.pos[0] - node.pos[0]) > NODE_XZ
                             or abs(other.pos[2] - node.pos[2]) > NODE_XZ or abs(other.pos[1] - node.pos[1]) > NODE_Y):
                         continue
                     dist2 = ((other.pos[0] - node.pos[0]) ** 2 + (other.pos[1] - node.pos[1]) ** 2
                              + (other.pos[2] - node.pos[2]) ** 2)
-                    if best is None or dist2 < best_dist2 or (dist2 == best_dist2 and c == idx):
-                        best, best_dist2 = c, dist2
+                    if best is None or dist2 < best_dist2 or (dist2 == best_dist2 and other_index == ref_index):
+                        best, best_dist2 = other_index, dist2
         if best is not None:
-            node_map[idx] = best
+            node_map[ref_index] = best
             used.add(best)
-    r['nodes_same'] = len(node_map)
+    result['nodes_same'] = len(node_map)
     cand_edges = defaultdict(list)          # (src, dst) -> cost tags
-    for e in cand.edges:
-        cand_edges[(e.src, e.dst)].append(e.tag)
-    for e in ref.edges:
-        src, dst = node_map.get(e.src), node_map.get(e.dst)
+    for edge in cand.edges:
+        cand_edges[(edge.src, edge.dst)].append(edge.tag)
+    for edge in ref.edges:
+        src, dst = node_map.get(edge.src), node_map.get(edge.dst)
         if src is not None and dst is not None and cand_edges.get((src, dst)):
             tags = cand_edges[(src, dst)]
-            r['edges_same'] += 1
-            r['costs_same'] += e.tag in tags
-            tags.remove(e.tag if e.tag in tags else tags[0])
-    return r
+            result['edges_same'] += 1
+            result['costs_same'] += edge.tag in tags
+            tags.remove(edge.tag if edge.tag in tags else tags[0])
+    return result
 
 
 # ------------------------------------------------------------------------------------------------ report
 
-def pct(a: float, b: float) -> float:
-    return 100.0 * a / b if b else 100.0
+def pct(part: float, whole: float) -> float:
+    """part as a percentage of whole (100 when whole is 0)."""
+    return 100.0 * part / whole if whole else 100.0
 
 
 def diff(reference: str, candidate: str, per_sector: bool = False, log: Callable[[str], object] = print,
@@ -309,7 +315,7 @@ def diff(reference: str, candidate: str, per_sector: bool = False, log: Callable
     if clip:
         min_x, min_z, max_x, max_z = clip
         for sector in ref_sectors.values():
-            sector._cells = [{ij: h for ij, h in cells.items()
+            sector._cells = [{ij: height for ij, height in cells.items()
                               if min_x <= ij[0] * GRID <= max_x and min_z <= ij[1] * GRID <= max_z}
                              for cells in sector.cells()]
     only_ref = sorted(set(ref_sectors) - set(cand_sectors))
@@ -326,21 +332,22 @@ def diff(reference: str, candidate: str, per_sector: bool = False, log: Callable
     # sectors only in the reference count fully as missing
     for sid in only_ref:
         sector = ref_sectors[sid]
-        total['cells_ref'] += sum(len(c) for c in sector.cells())
+        total['cells_ref'] += sum(len(cells) for cells in sector.cells())
         total['areas_ref'] += len(sector.mesh.areas)
         total['nodes_ref'] += len(sector.nodes)
         total['edges_ref'] += len(sector.edges)
     for sid in only_cand:
-        total['cells_cand'] += sum(len(c) for c in cand_sectors[sid].cells())
+        total['cells_cand'] += sum(len(cells) for cells in cand_sectors[sid].cells())
 
     def share(part: str, whole: str) -> float:
         return round(pct(total[part], total[whole]), 2)
 
     worst = sorted(rows, key=lambda row: -(len(row['only_ref']) + len(row['only_cand'])))[:15]
-    res: dict[str, Any] = {
+    report: dict[str, Any] = {
         'reference': reference, 'candidate': candidate,
         'sectors': {'reference': len(ref_sectors), 'candidate': len(cand_sectors),
-                    'only_reference': [hex(s) for s in only_ref], 'only_candidate': [hex(s) for s in only_cand]},
+                    'only_reference': [hex(sid) for sid in only_ref],
+                    'only_candidate': [hex(sid) for sid in only_cand]},
         'cells': {'reference': total['cells_ref'], 'candidate': total['cells_cand'], 'same': total['cells_same'],
                   'parity': share('cells_same', 'cells_ref'),
                   'only_reference': total['cells_ref'] - total['cells_same'],
@@ -362,8 +369,8 @@ def diff(reference: str, candidate: str, per_sector: bool = False, log: Callable
                            'areas_same': f"{row['areas_same']}/{row['areas_ref']}"}
                           for row in worst],
     }
-    sectors, cells, areas = res['sectors'], res['cells'], res['areas']
-    bounds, graph = res['bounds_of_same_areas'], res['graph']
+    sectors, cells, areas = report['sectors'], report['cells'], report['areas']
+    bounds, graph = report['bounds_of_same_areas'], report['graph']
     log(f"sectors   reference {sectors['reference']}, candidate {sectors['candidate']}; "
         f"only in reference {len(sectors['only_reference'])}, only in candidate {len(sectors['only_candidate'])}")
     log(f"cells     {cells['same']}/{cells['reference']} reproduced ({cells['parity']} %); "
@@ -378,14 +385,17 @@ def diff(reference: str, candidate: str, per_sector: bool = False, log: Callable
         f"costs of matched edges {graph['costs_same_of_same_edges']} %; candidate has {graph['nodes_candidate']} nodes")
     if per_sector:
         log('worst sectors (cells only in reference / only in candidate, areas the same):')
-        for w in res['worst_sectors']:
-            log(f"  {w['id']:>8}  {w['cells_only_reference']:6d} / {w['cells_only_candidate']:6d}   "
-                f"areas {w['areas_same']}")
-    return res, rows, ref_sectors, cand_sectors
+        for worst_row in report['worst_sectors']:
+            log(f"  {worst_row['id']:>8}  {worst_row['cells_only_reference']:6d} / "
+                f"{worst_row['cells_only_candidate']:6d}   areas {worst_row['areas_same']}")
+    return report, rows, ref_sectors, cand_sectors
 
 
-def pngs(rows: list[dict[str, Any]], R: dict[int, Sector], C: dict[int, Sector], out_dir: str, top: int) -> None:
-    """R, C: the reference's and the candidate's sectors by id (diff's third and fourth results)."""
+def pngs(rows: list[dict[str, Any]], ref_sectors: dict[int, Sector], cand_sectors: dict[int, Sector], out_dir: str,
+         top: int) -> None:
+    """One picture per sector for the `top` sectors with the most cells in only one file. ref_sectors, cand_sectors:
+    the reference's and the candidate's sectors by id (diff's third and fourth results; only the reference's are
+    drawn)."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -394,36 +404,36 @@ def pngs(rows: list[dict[str, Any]], R: dict[int, Sector], C: dict[int, Sector],
     def scatter(ax, cells, pitch, size, colour, label):
         ax.scatter([i * pitch for i, _ in cells], [j * pitch for _, j in cells], s=size, c=colour, label=label)
 
-    for r in sorted(rows, key=lambda r: -(len(r['only_ref']) + len(r['only_cand'])))[:top]:
-        sid = r['id']
-        pitch = R[sid].mesh.pitch
+    for row in sorted(rows, key=lambda row: -(len(row['only_ref']) + len(row['only_cand'])))[:top]:
+        sid = row['id']
+        pitch = ref_sectors[sid].mesh.pitch
         fig, ax = plt.subplots(figsize=(8, 8))
-        same = [ij for cells in R[sid].cells() for ij in cells]
+        same = [ij for cells in ref_sectors[sid].cells() for ij in cells]
         if same:
             scatter(ax, same, pitch, 1, '#c8c8c8', 'walkable in reference')
-        if r['only_ref']:
-            scatter(ax, r['only_ref'], pitch, 3, '#d62728', 'only reference')
-        if r['only_cand']:
-            scatter(ax, r['only_cand'], pitch, 3, '#1f77b4', 'only candidate')
+        if row['only_ref']:
+            scatter(ax, row['only_ref'], pitch, 3, '#d62728', 'only reference')
+        if row['only_cand']:
+            scatter(ax, row['only_cand'], pitch, 3, '#1f77b4', 'only candidate')
         ax.set_aspect('equal')
-        ax.set_title(f'sector {sid:#06x}: {len(r["only_ref"])} only in reference, '
-                     f'{len(r["only_cand"])} only in candidate')
+        ax.set_title(f'sector {sid:#06x}: {len(row["only_ref"])} only in reference, '
+                     f'{len(row["only_cand"])} only in candidate')
         ax.legend(loc='upper right', markerscale=4, fontsize=8)
         fig.savefig(os.path.join(out_dir, f'sector_{sid:04x}.png'), dpi=110, bbox_inches='tight')
         plt.close(fig)
 
 
 def main(argv: list[str]) -> int:
-    args = [a for a in argv[1:] if not a.startswith('--')]
+    args = [arg for arg in argv[1:] if not arg.startswith('--')]
     opts = dict(zip(argv[1:], argv[2:]))
     if len(args) < 2:
         print(__doc__)
         return 1
-    res, rows, R, C = diff(args[0], args[1], per_sector='--sectors' in argv)
+    report, rows, ref_sectors, cand_sectors = diff(args[0], args[1], per_sector='--sectors' in argv)
     if '--json' in opts:
-        json.dump(res, open(opts['--json'], 'w', encoding='utf-8', newline='\n'), indent=1)
+        json.dump(report, open(opts['--json'], 'w', encoding='utf-8', newline='\n'), indent=1)
     if '--png' in opts:
-        pngs(rows, R, C, opts['--png'], int(opts.get('--top', 6)))
+        pngs(rows, ref_sectors, cand_sectors, opts['--png'], int(opts.get('--top', 6)))
     return 0
 
 

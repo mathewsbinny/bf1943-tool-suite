@@ -11,6 +11,7 @@ rule is written once.
   nj.same_file(a, b)           # whether two paths name one file (os.path.samefile; the resolved paths otherwise)
   nj.build_refusal(st, lv)     # why the build on disk is not the checked build of the current preparation (or None)
   nj.prepared_heightfield(st, lv, game_data)   # the prepared height field, checked against its stamp and the game copy
+  nj.game_heightfield(st, lv, game_data)       # the game copy's height field, refused when the copy has none
 
 update() exists because the long steps (sampling, the build, the check) ran for minutes on a copy read at their
 start and wrote that copy back whole, so they dropped what the vehicle steps stamped meanwhile (2026-10-30). The
@@ -23,6 +24,10 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, NoReturn, Self
+
+type Settings = dict[str, Any]      # navkit.json: the level's settings and every step's stamp
 
 LOCK_WAIT = 30.0          # s a step waits for another step's read-modify-write before it gives up
 LOCK_POLL = 0.01          # s between tries for the lock
@@ -46,15 +51,16 @@ class Locked(NavKitError):
     """Another step held navkit.json's lock for longer than LOCK_WAIT."""
 
 
-def paths(lv):
+def paths(lv: str) -> dict[str, str]:
+    """The level's work, objects, samples and navkit folders, its navkit.json ('settings') and its build ('hpd')."""
     from bfbc2core import game1943
-    w = game1943.level_work(lv)
-    return dict(work=w, objects=os.path.join(w, 'objects'), samples=os.path.join(w, 'samples'),
-                navkit=os.path.join(w, 'navkit'), settings=os.path.join(w, 'navkit', 'navkit.json'),
-                hpd=os.path.join(w, 'navkit', f'{lv}.hpd'))
+    work = game1943.level_work(lv)
+    return dict(work=work, objects=os.path.join(work, 'objects'), samples=os.path.join(work, 'samples'),
+                navkit=os.path.join(work, 'navkit'), settings=os.path.join(work, 'navkit', 'navkit.json'),
+                hpd=os.path.join(work, 'navkit', f'{lv}.hpd'))
 
 
-def _retrying(f):
+def _retrying[T](f: Callable[[], T]) -> T:
     """f(), retried for RETRY_WAIT on PermissionError (Windows: another process has the file open this moment)."""
     end = time.time() + RETRY_WAIT
     while True:
@@ -66,24 +72,25 @@ def _retrying(f):
             time.sleep(0.02)
 
 
-def read(lv):
-    p = paths(lv)['settings']
+def read(lv: str) -> Settings:
+    """navkit.json (NotPrepared when the level is not prepared, Unreadable when it is damaged)."""
+    path = paths(lv)['settings']
 
-    def load():
-        with open(p, encoding='utf-8') as f:
+    def load() -> str:
+        with open(path, encoding='utf-8') as f:
             return f.read()
     try:
         text = _retrying(load)
     except FileNotFoundError:
-        raise _not_prepared(lv, p) from None
+        raise _not_prepared(lv, path) from None
     except OSError as e:
-        raise Unreadable(f'{lv}: {p} cannot be read ({e})') from None
+        raise Unreadable(f'{lv}: {path} cannot be read ({e})') from None
     try:
         st = json.loads(text)
     except ValueError as e:
-        raise Unreadable(f'{lv}: {p} is damaged ({e}): prepare the level again (navkit.py prepare {lv})') from None
+        raise Unreadable(f'{lv}: {path} is damaged ({e}): prepare the level again (navkit.py prepare {lv})') from None
     if not isinstance(st, dict):
-        raise Unreadable(f'{lv}: {p} holds no settings object: prepare the level again (navkit.py prepare {lv})')
+        raise Unreadable(f'{lv}: {path} holds no settings object: prepare the level again (navkit.py prepare {lv})')
     return st
 
 
@@ -94,12 +101,12 @@ class _Lock:
     120 s was removed as left behind: two waiters could both remove it and both hold the lock, a clock jump made a live
     lock look old, and a stale lock that could not be removed (read-only) made every step spin forever."""
 
-    def __init__(self, lv, wait=None):
+    def __init__(self, lv: str, wait: float | None = None) -> None:
         self.path = paths(lv)['settings'] + '.lock'
         self.lv, self.wait = lv, LOCK_WAIT if wait is None else wait
-        self.fd = None
+        self.fd: int | None = None
 
-    def _give_up(self, why):
+    def _give_up(self, why: str | None) -> NoReturn:
         try:
             with open(self.path, 'rb', buffering=0) as f:      # only the text before the locked byte
                 holder = f.read(200).decode('utf-8', 'replace').strip() or '?'
@@ -108,7 +115,7 @@ class _Lock:
         raise Locked(f'{self.lv}: navkit.json is locked by another NavKit step ({self.path}: {holder}) for over '
                      f'{self.wait:.0f} s; run this step again when that one is done' + (f' ({why})' if why else ''))
 
-    def _open(self):
+    def _open(self) -> tuple[int, bool]:
         """The lock file's descriptor; a lock file that may not be written (read-only) is opened to read: it locks too."""
         flags = getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOINHERIT', 0)
         try:
@@ -120,7 +127,7 @@ class _Lock:
             return os.open(self.path, os.O_RDONLY | flags), False
 
     @staticmethod
-    def _try(fd):
+    def _try(fd: int) -> bool:
         """Whether the lock on fd was taken (False: another process holds it)."""
         if os.name == 'nt':
             import msvcrt
@@ -138,7 +145,7 @@ class _Lock:
         return True
 
     @staticmethod
-    def _release(fd):
+    def _release(fd: int) -> None:
         try:
             if os.name == 'nt':
                 import msvcrt
@@ -152,7 +159,7 @@ class _Lock:
         finally:
             os.close(fd)
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         end = time.time() + self.wait
         why = None
         while True:                                         # every path below checks the deadline and sleeps
@@ -179,22 +186,22 @@ class _Lock:
                 self._give_up(why)
             time.sleep(LOCK_POLL)
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> Literal[False]:
         fd, self.fd = self.fd, None
         if fd is not None:
             self._release(fd)
         return False
 
 
-def _write(lv, st):
-    p = paths(lv)['settings']
-    tmp = f'{p}.{os.getpid()}.tmp'
+def _write(lv: str, st: Settings) -> None:
+    path = paths(lv)['settings']
+    tmp = f'{path}.{os.getpid()}.tmp'
     try:
         with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
             json.dump(st, f, indent=1)
             f.flush()
             os.fsync(f.fileno())
-        _retrying(lambda: os.replace(tmp, p))
+        _retrying(lambda: os.replace(tmp, path))
     except BaseException:
         try:
             os.remove(tmp)
@@ -203,23 +210,23 @@ def _write(lv, st):
         raise
 
 
-def write(lv, st):
+def write(lv: str, st: Settings) -> None:
     """navkit.json made st, whole (navkit.py prepare: a new preparation)."""
     with _Lock(lv):
         _write(lv, st)
 
 
-def _not_prepared(lv, p):
-    return NotPrepared(f'{lv}: the level is not prepared (missing {p}): run navkit.py prepare {lv}')
+def _not_prepared(lv: str, path: str) -> 'NotPrepared':
+    return NotPrepared(f'{lv}: the level is not prepared (missing {path}): run navkit.py prepare {lv}')
 
 
-def update(lv, change):
+def update(lv: str, change: Callable[[Settings], object]) -> Settings:
     """Re-reads navkit.json, applies change(st) and writes it, holding the lock; returns st. When change raises,
     nothing is written. NotPrepared before the lock is taken when the level has no navkit.json (2026-10-30 second
     review: without its folder, the lock file's FileNotFoundError came out)."""
-    p = paths(lv)['settings']
-    if not os.path.isfile(p):
-        raise _not_prepared(lv, p)
+    path = paths(lv)['settings']
+    if not os.path.isfile(path):
+        raise _not_prepared(lv, path)
     with _Lock(lv):
         st = read(lv)
         change(st)
@@ -227,27 +234,28 @@ def update(lv, change):
     return st
 
 
-def remove(lv):
+def remove(lv: str) -> None:
     """Removes navkit.json (navkit.py prepare, before it makes the objects again), under the lock."""
-    p = paths(lv)['settings']
-    if not os.path.isdir(os.path.dirname(p)):
+    path = paths(lv)['settings']
+    if not os.path.isdir(os.path.dirname(path)):
         return                                          # nothing to remove
     with _Lock(lv):
         try:
-            _retrying(lambda: os.remove(p))
+            _retrying(lambda: os.remove(path))
         except FileNotFoundError:
             pass
 
 
-def sha256(path, block=1 << 22):
-    h = hashlib.sha256()
+def sha256(path: str, block: int = 1 << 22) -> str:
+    """A file's SHA-256 (hex), read in blocks of block bytes."""
+    digest = hashlib.sha256()
     with open(path, 'rb') as f:
-        for b in iter(lambda: f.read(block), b''):
-            h.update(b)
-    return h.hexdigest()
+        for chunk in iter(lambda: f.read(block), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def same_file(a, b):
+def same_file(a: str | None, b: str | None) -> bool:
     """Whether a and b name the same file or folder: os.path.samefile when both exist (links and other spellings of one
     file count), else their resolved, case-folded paths."""
     if not a or not b:
@@ -258,12 +266,12 @@ def same_file(a, b):
         return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
-def build_refusal(st, lv, hpd=None):
+def build_refusal(st: Mapping[str, Any], lv: str, hpd: str | None = None) -> str | None:
     """Why the build may not be read as the level's current one (None when it may): it must be of the current
     preparation (navkit.json's 'build_from'), stamped with its .hpd's SHA-256 (and, given hpd, be that file) and with its
-    jump_links.json's (and that file be unchanged), and checked. 2026-10-30: a preparation or sampling made again drops the build's stamps but leaves the old <level>.hpd,
-    and the exporter (and the audit, until that day's review), which looked only for the file, put that graph with the
-    current terrain."""
+    jump_links.json's (and that file be unchanged), and checked. 2026-10-30: a preparation or sampling made again drops
+    the build's stamps but leaves the old <level>.hpd, and the exporter (and the audit, until that day's review), which
+    looked only for the file, put that graph with the current terrain."""
     if not st.get('preparation'):
         return f'{lv}: prepared without a preparation stamp (an older NavKit): run navkit.py all {lv}'
     built = st.get('build_from') or {}
@@ -271,38 +279,40 @@ def build_refusal(st, lv, hpd=None):
         return (f'{lv}: the build on disk is not of the current preparation: build and check again (navkit.py build {lv}; '
                 f'navkit.py check {lv})')
     if hpd is not None and sha256(hpd) != built['hpd_sha256']:
-        return f'{lv}: {hpd} is not the build stamped in navkit.json: build and check again (navkit.py build {lv}; navkit.py check {lv})'
+        return (f'{lv}: {hpd} is not the build stamped in navkit.json: build and check again (navkit.py build {lv}; '
+                f'navkit.py check {lv})')
     # the jump links the export and the audit read beside the build (2026-10-30 second review: jumplinks1943.py run
     # alone replaced them, unseen)
-    jp = os.path.join(paths(lv)['navkit'], 'jump_links.json')
+    jump_links_path = os.path.join(paths(lv)['navkit'], 'jump_links.json')
     if not built.get('jump_links_sha256'):
         return (f'{lv}: the build is stamped without its jump links (an older NavKit): build and check again '
                 f'(navkit.py build {lv}; navkit.py check {lv})')
-    if not os.path.isfile(jp) or sha256(jp) != built['jump_links_sha256']:
-        return (f'{lv}: {jp} is not the one the build used (written again since, by jumplinks1943.py?): build and check '
+    if not os.path.isfile(jump_links_path) or sha256(jump_links_path) != built['jump_links_sha256']:
+        return (f'{lv}: {jump_links_path} is not the one the build used (written again since, by jumplinks1943.py?): build and check '
                 f'again (navkit.py build {lv}; navkit.py check {lv})')
     if 'checked' not in st:
         return f'{lv}: the build is not checked: navkit.py check {lv}'
     return None
 
 
-def prepared_heightfield(st, lv, game_data=None):
+def prepared_heightfield(st: Mapping[str, Any], lv: str, game_data: bytes | None = None) -> bytes:
     """The height field the level was prepared with (objects\\heightfield.res, written by navkit.py prepare), as
     bytes: refused (NavKitError) when the preparation's stamp records none, when that file is missing or not the one
     stamped ('objects_sha256'), and when game_data (the game copy's height field now) differs from it - the copy
     changed since the preparation. 2026-10-30 second review: the export reread the game's height field, so a copy
     changed after the preparation put another terrain under the prepared build."""
     want = (st.get('objects_sha256') or {}).get('heightfield.res')
-    p = os.path.join(paths(lv)['objects'], 'heightfield.res')
+    path = os.path.join(paths(lv)['objects'], 'heightfield.res')
     if not want:
         raise NavKitError(f'{lv}: the preparation records no height field: prepare again (navkit.py prepare {lv})')
     try:
-        with open(p, 'rb') as f:
+        with open(path, 'rb') as f:
             data = f.read()
     except OSError as e:
-        raise NavKitError(f'{lv}: the prepared height field cannot be read ({e}): prepare again (navkit.py prepare {lv})') from None
+        raise NavKitError(f'{lv}: the prepared height field cannot be read ({e}): prepare again '
+                          f'(navkit.py prepare {lv})') from None
     if hashlib.sha256(data).hexdigest() != want:
-        raise NavKitError(f'{lv}: {p} is not the height field the level was prepared with: prepare again '
+        raise NavKitError(f'{lv}: {path} is not the height field the level was prepared with: prepare again '
                           f'(navkit.py prepare {lv})')
     if game_data is not None and bytes(game_data) != data:
         raise NavKitError(f'{lv}: the game copy\'s height field ({st.get("game")}) changed since the level was prepared: '
@@ -310,6 +320,16 @@ def prepared_heightfield(st, lv, game_data=None):
     return data
 
 
-def check_passed(st):
+def game_heightfield(st: Mapping[str, Any], lv: str, game_data: bytes | None) -> bytes:
+    """game_data, the game copy's height field of the level (game1943.Game.data's result), refused (NavKitError) when
+    it is None: the copy navkit.json names ('game') has no such level. 2026-11-01: the export and the audit passed the
+    None on (prepared_heightfield then skips its game-copy check) and failed later with a TypeError."""
+    if game_data is None:
+        raise NavKitError(f'{lv}: the game copy ({st.get("game")}) has no height field of the level: is it the copy the '
+                          f'level was prepared from? (prepare again: navkit.py prepare {lv})')
+    return game_data
+
+
+def check_passed(st: Mapping[str, Any]) -> bool:
     """Whether navkit.json's check stamp says the check passed ('<time> ok'; '<time> FAILED' otherwise)."""
     return str(st.get('checked') or '').endswith(' ok')

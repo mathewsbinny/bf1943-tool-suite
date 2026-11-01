@@ -1,5 +1,13 @@
-"""Decode PE section layout and Xbox runtime-function records without guessing gaps."""
+"""Decode PE section layout and Xbox runtime-function records without guessing gaps.
+
+  python -B map_functions.py        (from the research workspace, or with BF1943_RESEARCH set)
+
+Reads the checked image and XenonRecomp's xbox.h (xenonrecomp_reference.py); writes
+research/evidence/xex-functions.json, work/xex-analysis/functions.tsv and sections.tsv (all in the platform's text
+mode, CRLF on Windows, as the evidence pins them).
+"""
 from pathlib import Path
+from typing import Any
 import hashlib
 import json
 import struct
@@ -13,11 +21,11 @@ IMAGE_SHA256 = 'cbb152d10bee2e9c0ed28732a1328791b5510672a83786a5daf67f7b5abff27a
 ENTRY = 0x827d78b0
 
 
-def sha(data):
+def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def read_sections(data, pe, base):
+def read_sections(data: bytes, pe: int, base: int) -> list[dict[str, Any]]:
     """The PE section table, with what of each section the image holds (available_size)."""
     count = struct.unpack_from('<H', data, pe + 6)[0]
     optional_size = struct.unpack_from('<H', data, pe + 20)[0]
@@ -35,7 +43,8 @@ def read_sections(data, pe, base):
     return sections
 
 
-def read_runtime_functions(data, pdata, sections, helpers):
+def read_runtime_functions(data: bytes, pdata: dict[str, Any], sections: list[dict[str, Any]],
+                           helpers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The .pdata records: each one's function extent, prologue, section and the errors that keep it out of
     functions.tsv. A record whose range is exactly a run of verified register helpers is resolved to them."""
     rows = []
@@ -43,16 +52,17 @@ def read_runtime_functions(data, pdata, sections, helpers):
         start, word = struct.unpack_from('>II', data, offset)
         length = ((word >> 8) & 0x3fffff) * 4
         prolog = (word & 255) * 4
-        section = next((s for s in sections if s['execute'] and s['start'] <= start
-                        and start + length <= s['start'] + s['available_size']), None)
+        section = next((candidate for candidate in sections if candidate['execute'] and candidate['start'] <= start
+                        and start + length <= candidate['start'] + candidate['available_size']), None)
         errors = []
         if start % 4 or not length:
             errors.append('alignment/length')
-        matching_helpers = [h for h in helpers if start <= h['start'] and h['end'] <= start + length]
+        matching_helpers = [helper for helper in helpers
+                            if start <= helper['start'] and helper['end'] <= start + length]
         helper_verified = (matching_helpers
                            and matching_helpers[0]['start'] == start
                            and matching_helpers[-1]['end'] == start + length
-                           and sum(h['end'] - h['start'] for h in matching_helpers) == length
+                           and sum(helper['end'] - helper['start'] for helper in matching_helpers) == length
                            and prolog == length)
         if not word & 0x40000000 and not helper_verified:
             errors.append('unresolved bit30-clear record')
@@ -62,7 +72,8 @@ def read_runtime_functions(data, pdata, sections, helpers):
             errors.append('outside available executable section')
         helper_blocks = []
         if helper_verified:
-            helper_blocks = [dict(start=h['start'], end=h['end'], name=h['name']) for h in matching_helpers]
+            helper_blocks = [dict(start=helper['start'], end=helper['end'], name=helper['name'])
+                             for helper in matching_helpers]
         rows.append(dict(record_offset=offset, start=start, end=start + length, length=length, prolog_bytes=prolog,
                          exception_flag=bool(word & 0x80000000), packed_word=word,
                          section=section['name'] if section else None,
@@ -70,7 +81,7 @@ def read_runtime_functions(data, pdata, sections, helpers):
     return rows
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     image = root / 'work/xex-analysis/default.checked.memory.bin'
     data = image.read_bytes()
@@ -80,15 +91,16 @@ def main():
     optional = pe + 24
     base = struct.unpack_from('<I', data, optional + 28)[0]
     sections = read_sections(data, pe, base)
-    pdata = next(s for s in sections if s['name'] == '.pdata')
+    pdata = next(section for section in sections if section['name'] == '.pdata')
     assert pdata['size'] % 8 == 0 and pdata['size'] == pdata['available_size']
     exception_rva, exception_size = struct.unpack_from('<II', data, optional + 96 + 3 * 8)   # data directory 3
     assert (exception_rva, exception_size) == (pdata['rva'], pdata['size'])
     rows = read_runtime_functions(data, pdata, sections, helpers)
-    ordered = sorted(rows, key=lambda r: r['start'])
-    overlaps = [(a['start'], b['start']) for a, b in zip(ordered, ordered[1:]) if a['end'] > b['start']]
+    ordered = sorted(rows, key=lambda row: row['start'])
+    overlaps = [(earlier['start'], later['start']) for earlier, later in zip(ordered, ordered[1:])
+                if earlier['end'] > later['start']]
     print('Overlaps:', overlaps[:8])
-    print('Invalid:', [r for r in rows if r['errors']][:8])
+    print('Invalid:', [row for row in rows if row['errors']][:8])
     member, content = xenonrecomp_reference.read('/XenonUtils/xbox.h', root)
     reference_sha = sha(content)
     report = dict(
@@ -97,9 +109,9 @@ def main():
         reference=dict(zip_sha256=xenonrecomp_reference.ARCHIVE_SHA256, source=xenonrecomp_reference.source(root),
                        member=member, member_sha256=reference_sha),
         exception_directory=dict(rva=exception_rva, size=exception_size), sections=sections, functions=rows,
-        summary=dict(records=len(rows), valid=sum(not r['errors'] for r in rows), overlaps=len(overlaps),
-                     sorted=rows == ordered, covered_bytes=sum(r['length'] for r in rows),
-                     entry_in_pdata=any(r['start'] == ENTRY for r in rows)),
+        summary=dict(records=len(rows), valid=sum(not row['errors'] for row in rows), overlaps=len(overlaps),
+                     sorted=rows == ordered, covered_bytes=sum(row['length'] for row in rows),
+                     entry_in_pdata=any(row['start'] == ENTRY for row in rows)),
         limitations=['Runtime-function records are not an exhaustive list of leaf functions.',
                      'Declared ranges may contain embedded data or unsupported instructions.',
                      'Only available bytes are mapped; out-of-image section tails are not synthesized.'])
@@ -107,20 +119,20 @@ def main():
     (root / 'research/evidence/xex-functions.json').write_text(json.dumps(report, indent=2) + '\n')
     with (root / 'work/xex-analysis/functions.tsv').open('w') as f:
         f.write('start\tend\tprolog_bytes\texception_flag\n')
-        for r in rows:
-            if r['errors']:
+        for row in rows:
+            if row['errors']:
                 continue
-            if r['helper_blocks']:
-                for h in r['helper_blocks']:
-                    f.write(f"{h['start']:08x}\t{h['end']:08x}\t0\t0\t{h['name']}\n")
+            if row['helper_blocks']:
+                for helper in row['helper_blocks']:
+                    f.write(f"{helper['start']:08x}\t{helper['end']:08x}\t0\t0\t{helper['name']}\n")
                 continue
-            f.write(f"{r['start']:08x}\t{r['end']:08x}\t{r['prolog_bytes']}\t{int(r['exception_flag'])}\n")
+            f.write(f"{row['start']:08x}\t{row['end']:08x}\t{row['prolog_bytes']}\t{int(row['exception_flag'])}\n")
     with (root / 'work/xex-analysis/sections.tsv').open('w') as f:
         f.write('name\tstart\tsize\tread\twrite\texecute\n')
-        for s in sections:
-            if s['available_size']:
-                f.write(f"{s['name']}\t{s['start']:08x}\t{s['available_size']}\t{int(s['read'])}\t{int(s['write'])}"
-                        f"\t{int(s['execute'])}\n")
+        for section in sections:
+            if section['available_size']:
+                f.write(f"{section['name']}\t{section['start']:08x}\t{section['available_size']}"
+                        f"\t{int(section['read'])}\t{int(section['write'])}\t{int(section['execute'])}\n")
     print(json.dumps(report['summary']))
 
 

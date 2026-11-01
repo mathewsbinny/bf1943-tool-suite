@@ -9,6 +9,8 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+from collections.abc import Callable
+from typing import IO, cast
 from tkinter import messagebox, ttk
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,16 +31,23 @@ STEPS = [('prepare', '1. Prepare', 'Unpack the level, extract its objects, choos
          ('sample', '2. Sample in game', 'Starts the game twice to sample the level\'s collision (a few minutes)'),
          ('build', '3. Build', 'Generate pathdata.hpd from the samples'),
          ('check', '4. Check', 'Score the result (against the original path data if the level has one)')]
+AREA_FIELDS = ('minx', 'minz', 'maxx', 'maxz', 'ybot', 'ytop')     # the sampling box, then its bottom and top
+
+# what the step's reader thread and the clean-up put on the window's queue: an output line, ('done', step, exit
+# code) when the step ended, or ('cleaned',) when a cancelled step's clean-up finished
+type Message = str | tuple[str, str, int] | tuple[str]
 
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.proc = None
+        self.proc: subprocess.Popen[str] | None = None
         self.cleaning = False          # a cancelled step's clean-up (game, opfor.ini) still running
-        self.after_cleanup = None
-        self.saved = []
-        self.lines = queue.Queue()
+        self.cancelled = False         # the step that ends next was cancelled (no failure message for it)
+        self.after_cleanup: Callable[[], object] | None = None
+        self.saved: list[str] = []
+        self.tail: list[str] = []      # the running step's last output lines, for its failure message
+        self.lines: queue.Queue[Message] = queue.Queue()
         root.title('BC2 NavKit')
         root.minsize(760, 520)
         try:
@@ -46,7 +55,7 @@ class App:
         except tk.TclError:
             pass
         try:
-            self.pr = navkit.Project()
+            self.project = navkit.Project()
         except navkit.NavKitError as e:
             messagebox.showerror('NavKit', str(e))
             root.destroy()
@@ -61,7 +70,7 @@ class App:
         self.level = tk.StringVar()
         self.combo = ttk.Combobox(row, textvariable=self.level, state='readonly', width=34)
         self.combo.pack(side='left', padx=(6, 6))
-        self.combo.bind('<<ComboboxSelected>>', lambda e: self.refresh())
+        self.combo.bind('<<ComboboxSelected>>', lambda event: self.refresh())
         self.only_ai = tk.BooleanVar(value=True)
         ttk.Checkbutton(row, text='Only levels with AI', variable=self.only_ai,
                         command=self.fill_levels).pack(side='left')
@@ -69,45 +78,46 @@ class App:
 
         box = ttk.LabelFrame(top, text='Sampling area (filled in by Prepare; edit to override)', padding=8)
         box.pack(fill='x', pady=(10, 0))
-        self.vars = {}
-        for i, (key, label) in enumerate((('minx', 'min X'), ('minz', 'min Z'), ('maxx', 'max X'), ('maxz', 'max Z'),
-                                          ('ybot', 'bottom Y'), ('ytop', 'top Y'))):
+        self.vars: dict[str, tk.StringVar] = {}
+        labels = ('min X', 'min Z', 'max X', 'max Z', 'bottom Y', 'top Y')
+        for i, (key, label) in enumerate(zip(AREA_FIELDS, labels)):
             ttk.Label(box, text=label).grid(row=0, column=i * 2, sticky='e', padx=(8 if i else 0, 4))
-            v = tk.StringVar()
-            ttk.Entry(box, textvariable=v, width=8).grid(row=0, column=i * 2 + 1)
-            self.vars[key] = v
+            var = tk.StringVar()
+            ttk.Entry(box, textvariable=var, width=8).grid(row=0, column=i * 2 + 1)
+            self.vars[key] = var
         self.area_note = ttk.Label(box, text='', foreground='#555')
         self.area_note.grid(row=1, column=0, columnspan=12, sticky='w', pady=(6, 0))
 
         steps = ttk.LabelFrame(top, text='Steps', padding=8)
         steps.pack(fill='x', pady=(10, 0))
-        self.buttons, self.marks = [], {}
-        for r, (cmd, label, tip) in enumerate(STEPS):
-            b = ttk.Button(steps, text=label, width=20, command=lambda c=cmd: self.run_step(c))
-            b.grid(row=r, column=0, sticky='w', pady=2)
-            self.buttons.append(b)
-            m = ttk.Label(steps, text='', width=3)
-            m.grid(row=r, column=1)
-            self.marks[cmd] = m
-            ttk.Label(steps, text=tip, foreground='#555').grid(row=r, column=2, sticky='w')
+        self.buttons: list[ttk.Button] = []
+        self.marks: dict[str, ttk.Label] = {}
+        for row_index, (cmd, label, tip) in enumerate(STEPS):
+            button = ttk.Button(steps, text=label, width=20, command=lambda step=cmd: self.run_step(step))
+            button.grid(row=row_index, column=0, sticky='w', pady=2)
+            self.buttons.append(button)
+            mark = ttk.Label(steps, text='', width=3)
+            mark.grid(row=row_index, column=1)
+            self.marks[cmd] = mark
+            ttk.Label(steps, text=tip, foreground='#555').grid(row=row_index, column=2, sticky='w')
         side = ttk.Frame(steps)
         side.grid(row=0, column=3, rowspan=4, sticky='ne', padx=(20, 0))
         steps.columnconfigure(2, weight=1)
         for label, cmd in (('Run all (1-4)', 'all'), ('Install in game', 'install'), ('Restore original', 'restore')):
-            b = ttk.Button(side, text=label, width=18, command=lambda c=cmd: self.run_step(c))
-            b.pack(pady=2)
-            self.buttons.append(b)
+            button = ttk.Button(side, text=label, width=18, command=lambda step=cmd: self.run_step(step))
+            button.pack(pady=2)
+            self.buttons.append(button)
         self.cancel = ttk.Button(side, text='Cancel', width=18, command=self.stop, state='disabled')
         self.cancel.pack(pady=(10, 2))
         self.installed = ttk.Label(steps, text='', foreground='#555')
         self.installed.grid(row=4, column=0, columnspan=3, sticky='w', pady=(6, 0))
 
-        logf = ttk.Frame(top)
-        logf.pack(fill='both', expand=True, pady=(10, 0))
-        self.log = tk.Text(logf, height=12, wrap='none', font=('Consolas', 9), state='disabled')
-        sb = ttk.Scrollbar(logf, command=self.log.yview)
-        self.log.configure(yscrollcommand=sb.set)
-        sb.pack(side='right', fill='y')
+        log_frame = ttk.Frame(top)
+        log_frame.pack(fill='both', expand=True, pady=(10, 0))
+        self.log = tk.Text(log_frame, height=12, wrap='none', font=('Consolas', 9), state='disabled')
+        scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
+        self.log.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
         self.log.pack(side='left', fill='both', expand=True)
         self.status = ttk.Label(top, text='Ready', anchor='w')
         self.status.pack(fill='x', pady=(6, 0))
@@ -117,58 +127,64 @@ class App:
         root.protocol('WM_DELETE_WINDOW', self.close)
 
     # --- levels and state ------------------------------------------------------------------------------
-    def fill_levels(self):
-        names = navkit.level_names(self.pr)
-        shown = [lv for lv, ai in names if ai or not self.only_ai.get()]
+    def fill_levels(self) -> None:
+        names = navkit.level_names(self.project)
+        shown = [lv for lv, has_ai in names if has_ai or not self.only_ai.get()]
         self.combo['values'] = shown
         if self.level.get() not in shown:
             self.level.set(shown[0] if shown else '')
         self.refresh()
 
-    def refresh(self):
+    def refresh(self) -> None:
+        """The chosen level's settings into the sampling-area fields, its steps' ticks and its installed state."""
         lv = self.level.get()
         if not lv:
             return
-        out = os.path.join(self.pr.work, 'navkit', lv)
-        s = None
+        out = os.path.join(self.project.work, 'navkit', lv)
+        settings = None
         self.saved = []
         if os.path.isfile(os.path.join(out, 'navkit.json')):
-            s = json.load(open(os.path.join(out, 'navkit.json')))
-            for k, v in zip(('minx', 'minz', 'maxx', 'maxz'), s['box']):
-                self.vars[k].set(f'{v:g}')
-            self.vars['ybot'].set(f'{s["y"][0]:g}')
-            self.vars['ytop'].set(f'{s["y"][1]:g}')
-            self.saved = [self.vars[k].get() for k in ('minx', 'minz', 'maxx', 'maxz', 'ybot', 'ytop')]
-            self.area_note['text'] = (f'Box from: {s["box_source"]}.  Sector offsets {s["xoff"]}, {s["zoff"]} '
-                                      f'({s["offsets_source"]}).')
+            settings = json.load(open(os.path.join(out, 'navkit.json')))
+            for key, value in zip(('minx', 'minz', 'maxx', 'maxz'), settings['box']):
+                self.vars[key].set(f'{value:g}')
+            self.vars['ybot'].set(f'{settings["y"][0]:g}')
+            self.vars['ytop'].set(f'{settings["y"][1]:g}')
+            self.saved = [self.vars[key].get() for key in AREA_FIELDS]
+            self.area_note['text'] = (f'Box from: {settings["box_source"]}.  '
+                                      f'Sector offsets {settings["xoff"]}, {settings["zoff"]} '
+                                      f'({settings["offsets_source"]}).')
         else:
-            for v in self.vars.values():
-                v.set('')
+            for var in self.vars.values():
+                var.set('')
             self.area_note['text'] = 'Run Prepare to fill these in (or type your own and Prepare keeps them).'
-        done = {'prepare': s is not None,
-                'sample': all(os.path.isfile(self.pr.samples(lv, a[2])) for a in navkit.AGENTS),
+        done = {'prepare': settings is not None,
+                'sample': all(os.path.isfile(self.project.samples(lv, suffix)) for _, _, suffix in navkit.AGENTS),
                 'build': os.path.isfile(os.path.join(out, 'pathdata.hpd')),
                 'check': os.path.isfile(os.path.join(out, 'check.txt'))}
-        for k, m in self.marks.items():
-            m['text'] = '✔' if done[k] else ''
-        inst = self.pr.installed(lv)
-        orig = self.pr.dice_pathdata(lv)
-        self.installed['text'] = ('NavKit\'s path data is INSTALLED in the game for this level.' if inst else
-                                  'The game uses the level\'s original path data.' if orig else
-                                  'This level has no AI path data in the game (see QUICKSTART.md: levels without AI).')
+        for step, mark in self.marks.items():
+            mark['text'] = '✔' if done[step] else ''
+        if self.project.installed(lv):
+            self.installed['text'] = 'NavKit\'s path data is INSTALLED in the game for this level.'
+        elif self.project.dice_pathdata(lv):
+            self.installed['text'] = 'The game uses the level\'s original path data.'
+        else:
+            self.installed['text'] = ('This level has no AI path data in the game '
+                                      '(see QUICKSTART.md: levels without AI).')
 
-    def area_args(self):
-        vals = [self.vars[k].get().strip() for k in ('minx', 'minz', 'maxx', 'maxz', 'ybot', 'ytop')]
-        if not all(vals) or vals == self.saved:
+    def area_args(self) -> list[str]:
+        """--box and --y for the step from the sampling-area fields; none when they are empty or as saved."""
+        values = [self.vars[key].get().strip() for key in AREA_FIELDS]
+        if not all(values) or values == self.saved:
             return []   # empty or unchanged: navkit_le.py uses its own / the saved area
         try:
-            [float(v) for v in vals]
+            [float(value) for value in values]
         except ValueError as e:
             raise ValueError('The sampling area must be numbers.') from e
-        return ['--box', ','.join(vals[:4]), '--y', ','.join(vals[4:])]
+        return ['--box', ','.join(values[:4]), '--y', ','.join(values[4:])]
 
     # --- running steps ---------------------------------------------------------------------------------
-    def run_step(self, cmd):
+    def run_step(self, cmd: str) -> None:
+        """Starts navkit_le.py <cmd> on the chosen level (after a confirmation where the step needs one)."""
         lv = self.level.get()
         if not lv or self.proc or self.cleaning:
             return
@@ -190,23 +206,27 @@ class App:
                 'NavKit', f'Install NavKit\'s path data for {lv.upper()} into the game?\n\n'
                           'The original file is kept and can be put back with "Restore original".'):
             return
-        if cmd == 'restore' and not messagebox.askokcancel('NavKit', f'Put the original path data of {lv.upper()} back?'):
+        if cmd == 'restore' and not messagebox.askokcancel(
+                'NavKit', f'Put the original path data of {lv.upper()} back?'):
             return
         self.write(f'\n> navkit_le.py {" ".join(args[3:])}\n')
         self.set_busy(True, f'Running {cmd} on {lv} ...')
-        self.proc = subprocess.Popen(args, cwd=self.pr.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.proc = subprocess.Popen(args, cwd=self.project.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True, errors='replace',
+                                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         threading.Thread(target=self.reader, args=(self.proc, cmd), daemon=True).start()
 
-    def reader(self, proc, cmd):
+    def reader(self, proc: 'subprocess.Popen[str]', cmd: str) -> None:
+        """The step's output, line by line, onto the queue (a worker thread), then its end."""
         self.tail = []
-        for line in proc.stdout:
+        for line in cast('IO[str]', proc.stdout):   # started with stdout=PIPE: never None
             self.lines.put(line)
             self.tail = (self.tail + [line.rstrip()])[-10:]
-        rc = proc.wait()
-        self.lines.put(('done', cmd, rc))
+        returncode = proc.wait()
+        self.lines.put(('done', cmd, returncode))
 
-    def pump(self):
+    def pump(self) -> None:
+        """Every 100 ms on the window's thread: the queue's output lines into the log, and a step's end handled."""
         try:
             while True:
                 item = self.lines.get_nowait()
@@ -217,28 +237,34 @@ class App:
                     if self.after_cleanup:
                         self.after_cleanup()
                         return                   # the window is gone
-                elif isinstance(item, tuple):
-                    _, cmd, rc = item
-                    cancelled, self.cancelled = getattr(self, 'cancelled', False), False
-                    self.proc = None
-                    if self.cleaning:            # stays busy until the clean-up has finished
-                        continue
-                    self.set_busy(False, f'{cmd}: ' + ('finished' if rc == 0 else 'failed - see the log above'))
-                    self.refresh()
-                    errors.logger().info(f'{cmd} {self.level.get()}: exit {rc}')
-                    if rc != 0 and not cancelled:
-                        said = '\n'.join(l for l in getattr(self, 'tail', []) if l.strip())[-1500:]
-                        errors.logger().warning(f'{cmd} failed; last lines:\n{said}')
-                        messagebox.showwarning('NavKit', f'{cmd} did not finish (exit code {rc}).\n\nIt said last:\n'
-                                                         f'{said or "(no output)"}\n\nThe whole output is above; the log:\n'
-                                                         f'{errors._state.get("path")}')
-                else:
+                elif isinstance(item, tuple) and len(item) == 3:
+                    _, cmd, returncode = item
+                    self.step_ended(cmd, returncode)
+                elif isinstance(item, str):
                     self.write(item)
         except queue.Empty:
             pass
         self.root.after(100, self.pump)
 
-    def stop(self, then=None):
+    def step_ended(self, cmd: str, returncode: int) -> None:
+        """A step's process ended: the window is free again (unless a clean-up still runs), and a failure that was not
+        a cancel is shown with the step's last lines."""
+        cancelled, self.cancelled = self.cancelled, False
+        self.proc = None
+        if self.cleaning:            # stays busy until the clean-up has finished
+            return
+        self.set_busy(False, f'{cmd}: ' + ('finished' if returncode == 0 else 'failed - see the log above'))
+        self.refresh()
+        errors.logger().info(f'{cmd} {self.level.get()}: exit {returncode}')
+        if returncode != 0 and not cancelled:
+            said = '\n'.join(line for line in self.tail if line.strip())[-1500:]
+            errors.logger().warning(f'{cmd} failed; last lines:\n{said}')
+            log_path = errors._state.get("path")     # the log's path (errors has no public name for it)
+            messagebox.showwarning('NavKit', f'{cmd} did not finish (exit code {returncode}).\n\nIt said last:\n'
+                                             f'{said or "(no output)"}\n\nThe whole output is above; the log:\n'
+                                             f'{log_path}')
+
+    def stop(self, then: Callable[[], object] | None = None) -> None:
         # Cancels the running step without blocking the window: the step and everything it started (the game
         # launcher, the game) are ended and opfor.ini restored in a worker thread; then (if given) runs after that
         if not self.proc or self.cleaning:
@@ -249,38 +275,38 @@ class App:
         self.write('\ncancelling ...\n')
         threading.Thread(target=self.cleanup, args=(self.proc,), daemon=True).start()
 
-    def cleanup(self, proc):
+    def cleanup(self, proc: 'subprocess.Popen[str]') -> None:
         try:
             kill_tree(proc)
             # a sampling run killed mid-way leaves the game open and opfor.ini changed
             navkit.close_game()
-            navkit.recover_ini(self.pr, lambda m: self.lines.put(m + '\n'))
+            navkit.recover_ini(self.project, lambda message: self.lines.put(message + '\n'))
             self.lines.put('cancelled\n')
         except Exception as e:                   # noqa: BLE001 - said in the log; the window stays usable
             self.lines.put(f'cancelling failed: {e}\n')
         finally:
             self.lines.put(('cleaned',))
 
-    def set_busy(self, busy, text):
-        for b in self.buttons:
-            b['state'] = 'disabled' if busy else 'normal'
+    def set_busy(self, busy: bool, text: str) -> None:
+        for button in self.buttons:
+            button['state'] = 'disabled' if busy else 'normal'
         self.combo['state'] = 'disabled' if busy else 'readonly'
         self.cancel['state'] = 'normal' if busy else 'disabled'
         self.status['text'] = text
 
-    def write(self, text):
+    def write(self, text: str) -> None:
         self.log['state'] = 'normal'
         self.log.insert('end', text)
         self.log.see('end')
         self.log['state'] = 'disabled'
 
-    def open_folder(self):
+    def open_folder(self) -> None:
         lv = self.level.get()
-        d = os.path.join(self.pr.work, 'navkit', lv) if lv else os.path.join(self.pr.work, 'navkit')
-        os.makedirs(d, exist_ok=True)
-        os.startfile(d)
+        folder = os.path.join(self.project.work, 'navkit', lv) if lv else os.path.join(self.project.work, 'navkit')
+        os.makedirs(folder, exist_ok=True)
+        os.startfile(folder)
 
-    def close(self):
+    def close(self) -> None:
         if self.cleaning:
             self.after_cleanup = self.root.destroy
             return
@@ -292,7 +318,7 @@ class App:
         self.root.destroy()
 
 
-def kill_tree(proc):
+def kill_tree(proc: 'subprocess.Popen[str]') -> None:
     # ends a step and every process it started (taskkill /T), then the step itself if it is still there
     if proc.poll() is None:
         subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True,
@@ -301,7 +327,7 @@ def kill_tree(proc):
         proc.kill()
 
 
-def main():
+def main() -> None:
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)   # sharp text on high-DPI screens
@@ -310,7 +336,7 @@ def main():
     errors.setup('navkit_le-gui')
     with errors.guard():
         root = tk.Tk()
-        root.report_callback_exception = lambda t, v, tb: errors.report(v, tb=tb, where='a button')
+        root.report_callback_exception = lambda exc_type, value, tb: errors.report(value, tb=tb, where='a button')
         App(root)
         root.mainloop()
 

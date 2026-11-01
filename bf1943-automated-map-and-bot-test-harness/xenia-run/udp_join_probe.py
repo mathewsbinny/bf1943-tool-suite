@@ -26,66 +26,66 @@ CATCH = [1001, 1003, 11001, 11003]
 UDP_TABLE_OWNER_PID, AF_INET, ERROR_INSUFFICIENT_BUFFER = 1, 2, 122
 
 
-def udp_endpoints():
+def udp_endpoints() -> list[tuple[str, int, int]]:
     """Every local IPv4 UDP endpoint, [(address, port, process id)], from Windows' UDP table (GetExtendedUdpTable)."""
-    get = ctypes.WinDLL('iphlpapi').GetExtendedUdpTable
+    get_table = ctypes.WinDLL('iphlpapi').GetExtendedUdpTable
     size = ctypes.c_ulong(0)
     for _ in range(5):
         buf = ctypes.create_string_buffer(max(size.value, 4))
-        rc = get(buf, ctypes.byref(size), False, AF_INET, UDP_TABLE_OWNER_PID, 0)
-        if rc == 0:
-            n = struct.unpack_from('<I', buf.raw, 0)[0]
-            rows = [struct.unpack_from('<4sII', buf.raw, 4 + 12 * k) for k in range(n)]
+        status = get_table(buf, ctypes.byref(size), False, AF_INET, UDP_TABLE_OWNER_PID, 0)
+        if status == 0:
+            count = struct.unpack_from('<I', buf.raw, 0)[0]
+            rows = [struct.unpack_from('<4sII', buf.raw, 4 + 12 * k) for k in range(count)]
             return [(socket.inet_ntoa(addr), socket.ntohs(port & 0xFFFF), pid) for addr, port, pid in rows]
-        if rc != ERROR_INSUFFICIENT_BUFFER:
-            raise OSError(f'GetExtendedUdpTable failed: Windows error {rc}')
+        if status != ERROR_INSUFFICIENT_BUFFER:
+            raise OSError(f'GetExtendedUdpTable failed: Windows error {status}')
     raise OSError('GetExtendedUdpTable: the table kept growing')
 
 
-def stamp(when=None):
+def stamp(when: time.struct_time | None = None) -> str:
     """A clock time for the log, 12-hour with AM/PM (the project's time format; 24-hour before 2026-10-31)."""
     return time.strftime('%I:%M:%S %p', time.localtime() if when is None else when)
 
 
-def server_bound():
+def server_bound() -> bool:
     """Whether another process has a UDP socket on the server's port at its address or the wildcard address."""
     return any(port == SERVER[1] and addr in (SERVER[0], '0.0.0.0') and pid != os.getpid()
                for addr, port, pid in udp_endpoints())
 
 
-def main():
-    if len(sys.argv) < 2 or any(a in ('-h', '--help') for a in sys.argv[1:]):
+def main() -> int | None:
+    if len(sys.argv) < 2 or any(arg in ('-h', '--help') for arg in sys.argv[1:]):
         print(__doc__)
         return 0 if len(sys.argv) > 1 else 1
     out = Path(sys.argv[1]) / 'udp-join-probe.txt'
     minutes = float(sys.argv[2]) if len(sys.argv) > 2 else 20
     log = out.open('a', encoding='utf-8', newline='\n')
 
-    def note(msg):
+    def note(msg: str) -> None:
         line = f'{stamp()} {msg}'
         print(line, flush=True)
         log.write(line + '\n')
         log.flush()
 
-    catchers = []
+    catchers: list[tuple[int, socket.socket]] = []
     for port in CATCH:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        catcher = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            s.bind(('0.0.0.0', port))
-            s.setblocking(False)
-            catchers.append((port, s))
+            catcher.bind(('0.0.0.0', port))
+            catcher.setblocking(False)
+            catchers.append((port, catcher))
         except OSError as e:
             note(f'catcher {port}: could not bind ({e})')
-    note(f'catchers on {[p for p, _ in catchers]}; waiting for the server on {SERVER}')
+    note(f'catchers on {[port for port, _ in catchers]}; waiting for the server on {SERVER}')
     tester = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     tester.bind(('127.0.0.1', 0))
     tester.setblocking(False)
     note(f'tester socket {tester.getsockname()}')
     end, was_bound, sent = time.time() + 60 * minutes, False, 0
     while time.time() < end:
-        for port, s in catchers:
+        for port, catcher in catchers:
             try:
-                data, src = s.recvfrom(4096)
+                data, src = catcher.recvfrom(4096)
                 note(f'CAUGHT on :{port} from {src}: {len(data)} bytes {data[:64].hex()}')
             except BlockingIOError:
                 pass

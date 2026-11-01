@@ -25,6 +25,8 @@ import re
 import struct
 import subprocess
 import sys
+from collections.abc import Iterable
+from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITE = os.path.abspath(os.path.join(HERE, '..', '..'))
@@ -34,8 +36,11 @@ CRASH_WINDOW_MIN = 5            # a Windows crash record this close to the log's
 # rs-bots: host player %08x ...), ContextArg)"), which is not a report
 BOT = re.compile(r'\(DbgPrint\) rs-bots: (.*)$')
 
+type Session = dict[str, Any]       # read_log's facts, with main's log time and crashes added
+type Crash = dict[str, str]         # {time, exe, module, offset, code}
 
-def xenia_folder(given=None):
+
+def xenia_folder(given: str | None = None) -> str:
     if given:
         return given
     if os.path.isfile(KIT_MANIFEST):
@@ -44,16 +49,16 @@ def xenia_folder(given=None):
                             f'{KIT_MANIFEST} names it')
 
 
-def floats(words, count):
+def floats(words: list[str], count: int) -> list[float]:
     if len(words) != count:
         raise IndexError(f'{count} values expected, {len(words)} found')
-    return [round(struct.unpack('>f', bytes.fromhex(w))[0], 2) for w in words]
+    return [round(struct.unpack('>f', bytes.fromhex(word))[0], 2) for word in words]
 
 
-def read_log(path):
+def read_log(path: str) -> Session:
     """The session's facts; bot reports that are cut short or garbled are kept, as lines, in 'malformed'."""
-    out = dict(log=path, build=None, title=None, patches=[], warnings=0, last_lines=[], host=None, bots={}, spawns=[],
-               host_position=None, malformed=[])
+    out: Session = dict(log=path, build=None, title=None, patches=[], warnings=0, last_lines=[], host=None, bots={},
+                        spawns=[], host_position=None, malformed=[])
     lines = open(path, 'rb').read().decode('utf-8', errors='replace').splitlines()
     for line in lines:
         if line.startswith('w>'):
@@ -64,95 +69,105 @@ def read_log(path):
             out['title'] = line.split('Title name: ', 1)[1].strip()
         elif line.startswith('!>') and 'Applying patch for:' in line:
             out['patches'].append(line.split('Applying patch for:', 1)[1].strip())
-        m = BOT.search(line)
-        if m:
+        report_match = BOT.search(line)
+        if report_match:
             try:
-                bot_report(out, m.group(1).split())
+                bot_report(out, report_match.group(1).split())
             except (IndexError, ValueError, struct.error):     # cut short (a log still being written, a crash) or garbled
                 out['malformed'].append(line.strip())
-    out['last_lines'] = [l for l in lines if l.strip()][-8:]
+    out['last_lines'] = [line for line in lines if line.strip()][-8:]
     return out
 
 
-def bot_report(out, w):
+def bot_report(out: Session, words: list[str]) -> None:
     """One "rs-bots:" report's words into the result; IndexError, ValueError or struct.error when it is incomplete."""
-    if w[:2] == ['host', 'player']:
-        out['host'] = dict(player=w[2], team=int(w[4]))
-    elif w[0] == 'host' and w[2:4] == ['soldier', 'position']:
-        out['host_position'] = floats(w[4:7], 3)
-    elif w[0] == 'bot' and w[2] == 'team':
-        out['bots'].setdefault(w[1], {}).update(team=int(w[3]), kit=w[5])
-    elif w[0] == 'bot' and w[2:4] == ['soldier', 'position']:
-        out['bots'].setdefault(w[1], {})['position'] = floats(w[4:7], 3)
-    elif w[0] == 'spawned':
-        out['spawns'].append(dict(bot=w[1], team=int(w[3]), spawn_id=w[7], soldier=w[9]))
+    if words[:2] == ['host', 'player']:
+        out['host'] = dict(player=words[2], team=int(words[4]))
+    elif words[0] == 'host' and words[2:4] == ['soldier', 'position']:
+        out['host_position'] = floats(words[4:7], 3)
+    elif words[0] == 'bot' and words[2] == 'team':
+        out['bots'].setdefault(words[1], {}).update(team=int(words[3]), kit=words[5])
+    elif words[0] == 'bot' and words[2:4] == ['soldier', 'position']:
+        out['bots'].setdefault(words[1], {})['position'] = floats(words[4:7], 3)
+    elif words[0] == 'spawned':
+        out['spawns'].append(dict(bot=words[1], team=int(words[3]), spawn_id=words[7], soldier=words[9]))
 
 
 class CrashQueryError(RuntimeError):
     """The event log could not be read: whether Xenia crashed is unknown."""
 
 
-def crashes(exe_names, since):
+def crashes(exe_names: Iterable[str], since: datetime.datetime) -> list[Crash]:
     """Windows' Application Error events (id 1000) for these executables since a time: [{time, module, offset,
     code, exe}]. Read with PowerShell's Get-WinEvent (only reads). No matching events is an empty list; any other
     failure (no PowerShell, an unreadable log) raises CrashQueryError."""
     if os.name != 'nt':
         return []
-    names = '|'.join(re.escape(n) for n in exe_names)
-    ps = ("$s=[datetime]'" + since.strftime('%Y-%m-%dT%H:%M:%S') + "'; "
-          "try { Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=$s} -ErrorAction Stop | "
-          "ForEach-Object { $p=$_.Properties; '{0}|{1}|{2}|{3}|{4}' -f $_.TimeCreated.ToString('s'),$p[0].Value,$p[3].Value,$p[7].Value,$p[6].Value } } "
-          "catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { exit 0 }; "
-          "[Console]::Error.WriteLine($_.Exception.Message); exit 3 }")
+    names = '|'.join(re.escape(name) for name in exe_names)
+    script = ("$s=[datetime]'" + since.strftime('%Y-%m-%dT%H:%M:%S') + "'; "
+              "try { Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=$s} -ErrorAction Stop | "
+              "ForEach-Object { $p=$_.Properties; '{0}|{1}|{2}|{3}|{4}' -f "
+              "$_.TimeCreated.ToString('s'),$p[0].Value,$p[3].Value,$p[7].Value,$p[6].Value } } "
+              "catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { exit 0 }; "
+              "[Console]::Error.WriteLine($_.Exception.Message); exit 3 }")
     try:
-        r = subprocess.run(['powershell', '-NoProfile', '-Command', ps], capture_output=True, text=True, errors='replace',
-                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        result = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True, text=True,
+                                errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except OSError as e:
         raise CrashQueryError(f'cannot run PowerShell to read the event log: {e}') from None
-    if r.returncode != 0:
-        raise CrashQueryError(f'reading the event log failed (exit {r.returncode}): {(r.stderr or "").strip()[:200]}')
+    if result.returncode != 0:
+        raise CrashQueryError(f'reading the event log failed (exit {result.returncode}): '
+                              f'{(result.stderr or "").strip()[:200]}')
     out = []
-    for line in r.stdout.splitlines():
+    for line in result.stdout.splitlines():
         parts = line.strip().split('|')
         if len(parts) == 5 and re.fullmatch(names, parts[1], re.I):
             out.append(dict(time=parts[0], exe=parts[1], module=parts[2], offset=parts[3], code=parts[4]))
     return out
 
 
-def report(r, positions=False):
-    s = [f"log: {r['log']} (written {r['log_time']})", f"Xenia {r['build']}; title {r['title']}"]
-    s.append(f"patches applied: {len(r['patches'])}" + ''.join(f'\n  {p}' for p in r['patches']))
-    s.append(f"warnings: {r['warnings']}")
-    if r['host'] or r['bots']:
-        teams = {}
-        for b in r['bots'].values():
-            teams[b.get('team')] = teams.get(b.get('team'), 0) + 1
-        s.append(f"bots: {len(r['bots'])} (by team {dict(sorted((k, v) for k, v in teams.items() if k is not None))}), "
-                 f"{len(r['spawns'])} spawns; host team {r['host']['team'] if r['host'] else '-'}, "
-                 f"last position {r['host_position']}")
+def report(session: Session, positions: bool = False) -> str:
+    """The session as text: the log, Xenia's build, patches, warnings, the bots, any crash and the last lines."""
+    lines = [f"log: {session['log']} (written {session['log_time']})",
+             f"Xenia {session['build']}; title {session['title']}"]
+    patches = ''.join(f'\n  {patch}' for patch in session['patches'])
+    lines.append(f"patches applied: {len(session['patches'])}" + patches)
+    lines.append(f"warnings: {session['warnings']}")
+    if session['host'] or session['bots']:
+        teams: dict[int | None, int] = {}
+        for bot in session['bots'].values():
+            teams[bot.get('team')] = teams.get(bot.get('team'), 0) + 1
+        by_team = dict(sorted((team, count) for team, count in teams.items() if team is not None))
+        host_team = session['host']['team'] if session['host'] else '-'
+        lines.append(f"bots: {len(session['bots'])} (by team {by_team}), "
+                     f"{len(session['spawns'])} spawns; host team {host_team}, "
+                     f"last position {session['host_position']}")
         if positions:
-            for k, b in sorted(r['bots'].items()):
-                s.append(f"  bot {k} team {b.get('team')} kit {b.get('kit')}: {b.get('position')}")
+            for name, bot in sorted(session['bots'].items()):
+                lines.append(f"  bot {name} team {bot.get('team')} kit {bot.get('kit')}: {bot.get('position')}")
     else:
-        s.append('no bots experiment in this session')
-    if r.get('malformed'):
-        s.append(f"bot reports cut short or garbled (skipped): {len(r['malformed'])}, the last: {r['malformed'][-1][:160]}")
-    if r.get('crash_query_error'):
-        s.append(f"crash status UNKNOWN: {r['crash_query_error']}")
-    elif r['crashes']:
-        for c in r['crashes']:
-            s.append(f"CRASH {c['time']}: {c['exe']} in {c['module']} at +{c['offset']} (exception {c['code']})")
+        lines.append('no bots experiment in this session')
+    if session.get('malformed'):
+        lines.append(f"bot reports cut short or garbled (skipped): {len(session['malformed'])}, "
+                     f"the last: {session['malformed'][-1][:160]}")
+    if session.get('crash_query_error'):
+        lines.append(f"crash status UNKNOWN: {session['crash_query_error']}")
+    elif session['crashes']:
+        for crash in session['crashes']:
+            lines.append(f"CRASH {crash['time']}: {crash['exe']} in {crash['module']} at +{crash['offset']} "
+                         f"(exception {crash['code']})")
     else:
-        s.append('no Xenia crash recorded by Windows at the session\'s end' +
-                 ('; Xenia exited normally' if r.get('normal_exit') else ''))
-    for c in r.get('other_crashes', []):
-        s.append(f"another session's crash near this one (not counted): {c['time']} {c['exe']} at +{c['offset']}")
-    s.append('last lines:' + ''.join(f'\n  {l[:160]}' for l in r['last_lines']))
-    return '\n'.join(s)
+        lines.append('no Xenia crash recorded by Windows at the session\'s end' +
+                     ('; Xenia exited normally' if session.get('normal_exit') else ''))
+    for crash in session.get('other_crashes', []):
+        lines.append(f"another session's crash near this one (not counted): {crash['time']} {crash['exe']} "
+                     f"at +{crash['offset']}")
+    lines.append('last lines:' + ''.join(f'\n  {line[:160]}' for line in session['last_lines']))
+    return '\n'.join(lines)
 
 
-def main(argv):
-    if any(a in ('-h', '--help') for a in argv[1:]):
+def main(argv: list[str]) -> int:
+    if any(arg in ('-h', '--help') for arg in argv[1:]):
         print(__doc__)
         return 0
     opts = dict(zip(argv[1:], argv[2:]))
@@ -163,34 +178,35 @@ def main(argv):
     log = log or os.path.join(folder, 'xenia.log')
     if not os.path.isfile(log):
         raise FileNotFoundError(log)
-    r = read_log(log)
+    session = read_log(log)
     written = os.path.getmtime(log)
-    r['log_time'] = datetime.datetime.fromtimestamp(written).strftime('%Y-%m-%d %I:%M %p')
-    exes = [f for f in os.listdir(folder) if f.lower().startswith('xenia') and f.lower().endswith('.exe')] if folder else []
+    session['log_time'] = datetime.datetime.fromtimestamp(written).strftime('%Y-%m-%d %I:%M %p')
+    exes = [name for name in os.listdir(folder)
+            if name.lower().startswith('xenia') and name.lower().endswith('.exe')] if folder else []
     # a crash ends the session: Windows records it within moments of the log's last write (the file's creation
     # time is no guide - each session overwrites it in place)
     end = datetime.datetime.fromtimestamp(written)
     window = datetime.timedelta(minutes=CRASH_WINDOW_MIN)
-    r['normal_exit'] = any('Cheap-skate exit' in l for l in r['last_lines'])
+    session['normal_exit'] = any('Cheap-skate exit' in line for line in session['last_lines'])
     start = session_start(log)
-    r['crashes'], r['other_crashes'], r['crash_query_error'] = [], [], None
+    session['crashes'], session['other_crashes'], session['crash_query_error'] = [], [], None
     try:
-        near = [c for c in crashes(exes or ['xenia_canary.exe', 'xenia_canary_netfix.exe'], end - window)
-                if datetime.datetime.fromisoformat(c['time']) <= end + window]
+        near = [crash for crash in crashes(exes or ['xenia_canary.exe', 'xenia_canary_netfix.exe'], end - window)
+                if datetime.datetime.fromisoformat(crash['time']) <= end + window]
     except CrashQueryError as e:
-        near, r['crash_query_error'] = [], str(e)
-    for c in near:
+        near, session['crash_query_error'] = [], str(e)
+    for crash in near:
         # a session that exited normally did not crash; a record older than the session's start is an earlier one's
-        ours = not r['normal_exit'] and (start is None or datetime.datetime.fromisoformat(c['time']) >= start)
-        r['crashes' if ours else 'other_crashes'].append(c)
-    print(report(r, '--positions' in argv))
+        ours = not session['normal_exit'] and (start is None or datetime.datetime.fromisoformat(crash['time']) >= start)
+        session['crashes' if ours else 'other_crashes'].append(crash)
+    print(report(session, '--positions' in argv))
     if '--json' in opts:
         with open(opts['--json'], 'w', encoding='utf-8', newline='\n') as f:
-            json.dump(r, f, indent=1)
-    return 2 if r['crash_query_error'] else 1 if r['crashes'] else 0
+            json.dump(session, f, indent=1)
+    return 2 if session['crash_query_error'] else 1 if session['crashes'] else 0
 
 
-def session_start(log):
+def session_start(log: str) -> datetime.datetime | None:
     """The session's start (local time, to the second) from session.json beside the log (run_xenia_probe.ps1), or None."""
     path = os.path.join(os.path.dirname(os.path.abspath(log)), 'session.json')
     try:

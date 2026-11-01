@@ -5,6 +5,7 @@
 Capstone has no VMX128 decoding; those words print as .long. For research reading only.
 """
 import sys
+from collections.abc import Iterator
 
 sys.dont_write_bytecode = True
 import capstone  # noqa: E402
@@ -13,22 +14,25 @@ from xexrefs import BASE, data, word  # noqa: E402
 disassembler = capstone.Cs(capstone.CS_ARCH_PPC, capstone.CS_MODE_64 | capstone.CS_MODE_BIG_ENDIAN)
 
 
-def insn(a):
-    """(mnemonic, operands) of the instruction at address a; '.long' for a word capstone cannot decode."""
-    for instruction in disassembler.disasm(data[a - BASE:a - BASE + 4], a):
+def insn(address: int) -> tuple[str, str]:
+    """(mnemonic, operands) of the instruction at address; '.long' for a word capstone cannot decode."""
+    offset = address - BASE
+    for instruction in disassembler.disasm(data[offset:offset + 4], address):
         return instruction.mnemonic, instruction.op_str
-    return '.long', f'0x{word(a):08x}'
+    return '.long', f'0x{word(address):08x}'
 
 
-def lines(a, n):
-    for k in range(n):
-        mnemonic, operands = insn(a + 4 * k)
-        yield a + 4 * k, word(a + 4 * k), mnemonic, operands
+def lines(address: int, count: int) -> Iterator[tuple[int, int, str, str]]:
+    """(address, word, mnemonic, operands) of count instructions from address."""
+    for k in range(count):
+        at = address + 4 * k
+        mnemonic, operands = insn(at)
+        yield at, word(at), mnemonic, operands
 
 
-def jump_table(a, cases):
-    """Targets of a `lis/addi/lwzx/mtctr/bctr`-style table of absolute 32-bit entries at a."""
-    return [word(a + 4 * k) for k in range(cases)]
+def jump_table(address: int, cases: int) -> list[int]:
+    """Targets of a `lis/addi/lwzx/mtctr/bctr`-style table of absolute 32-bit entries at address."""
+    return [word(address + 4 * k) for k in range(cases)]
 
 
 if __name__ == '__main__':

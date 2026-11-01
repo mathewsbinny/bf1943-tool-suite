@@ -13,7 +13,13 @@ that depend on them, with the rules BF1943's levels needed. The BF1943 tools pas
 (Until 2026-10-31 configure() wrote these into navbuild's, navwalk's and detailed's module constants, and a build
 was BF1943's only when it had run first.)
 """
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
+
 import navbuild  # bf1943-auto-navkit-common's (one copy for both NavKit variants since 2026-10-31)
+
+if TYPE_CHECKING:
+    from bfbc2core.terrain import Heightfield
 
 RADIUS = 0.35                   # PhysicalRadius
 STEP_HEIGHT = 0.3               # StepHeight
@@ -27,12 +33,12 @@ WATER_DEPTH = 1.4               # WaterDepthLimit (m): pass as navbuild.build(ma
 NO_WATER_BELOW = 10.0           # m: a level without water gets its sea this far under its lowest terrain (sea_level)
 
 
-def has_water(settings):
+def has_water(settings: Mapping[str, Any]) -> bool:
     """Whether navkit.py prepare found water on the level (navkit.json's sea_level is None without)."""
     return settings.get('sea_level') is not None
 
 
-def sea_level(settings, heightfield):
+def sea_level(settings: Mapping[str, Any], heightfield: 'Heightfield') -> float:
     """The water height every tool computes with (navexport1943, jumplinks1943, groundnav1943, airnav1943, seanav1943,
     navaudit1943_checks): navkit.json's sea_level, or for a level without water (navkit.py prepare found no water mesh:
     None) NO_WATER_BELOW under the lowest terrain, so no ground counts as under water and the build, which had no water
@@ -43,7 +49,7 @@ def sea_level(settings, heightfield):
     return float(heightfield.heights.min()) - NO_WATER_BELOW
 
 
-def sea_level_args(settings):
+def sea_level_args(settings: Mapping[str, Any]) -> list[str]:
     """navsample1943's --sea-level (it bounds the sampled box by the land); none without water: the whole height field."""
     return ['--sea-level', str(settings['sea_level'])] if has_water(settings) else []
 

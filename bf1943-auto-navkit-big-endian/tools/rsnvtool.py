@@ -34,6 +34,8 @@ import math
 import os
 import re
 import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any
 
 sys.dont_write_bytecode = True
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
@@ -44,11 +46,20 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     suitepath.use(suitepath.NAVKIT_BE)
 from bfbc2core import game1943, rsnv  # noqa: E402
 
-SOLDIER = {'water_scale': (256, 384, 768), 'tight_extra': 800, 'kind_mask': (1 << 7) - 1 & ~(1 << rsnv.EDGE_BOARD)
-           & ~(1 << rsnv.EDGE_ALIGHT)}          # rsnav's rsn_filter_soldier, without the dynamic state
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+    from navsample import Samples
+
+type Point = tuple[float, ...]                  # x, y, z
+type World = rsnv.World
+
+# rsnav's rsn_filter_soldier, without the dynamic state
+SOLDIER: dict[str, Any] = {'water_scale': (256, 384, 768), 'tight_extra': 800,
+                           'kind_mask': (1 << 7) - 1 & ~(1 << rsnv.EDGE_BOARD) & ~(1 << rsnv.EDGE_ALIGHT)}
 
 
-def resolve(spec, klass=None):
+def resolve(spec: str, klass: str | None = None) -> str:
     """An .rsnv path, or a level name's export (with --class, its vehicle world)."""
     if os.path.isfile(spec):
         return spec
@@ -59,66 +70,68 @@ def resolve(spec, klass=None):
     return path
 
 
-def out_dir(path):
+def out_dir(path: str) -> str:
+    """The folder of a file (pictures go beside the export)."""
     return os.path.dirname(os.path.abspath(path))
 
 
-def point(text):
+def point(text: str) -> Point:
+    """A point X,Y,Z."""
     values = [float(x) for x in text.split(',')]
     if len(values) != 3:
         raise ValueError(f'{text!r}: a point is X,Y,Z')
     return tuple(values)
 
 
-def node_of(w, text):
+def node_of(world: World, text: str) -> int:
     """A node number, or the node of the walkable cell nearest a point X,Y,Z."""
     if ',' not in text:
         node = int(text)
-        if not 0 <= node < len(w.node_pos):
-            raise ValueError(f'node {node}: the file has nodes 0..{len(w.node_pos) - 1}')
+        if not 0 <= node < len(world.node_pos):
+            raise ValueError(f'node {node}: the file has nodes 0..{len(world.node_pos) - 1}')
         return node
     x, y, z = point(text)
-    loc = w.locate(x, y, z, max_dist=6.0)
+    loc = world.locate(x, y, z, max_dist=6.0)
     if loc is None:
         raise ValueError(f'{text}: no walkable cell within 6 m')
-    node = w.nearest_node(loc[0], x, z)
+    node = world.nearest_node(loc[0], x, z)
     if node is None:
         raise ValueError(f'{text}: area {loc[0]} has no node')
     return node
 
 
-def edge_source(w):
+def edge_source(world: World) -> list[int]:
     """The source node of every edge (the edges are stored grouped by source)."""
-    sources = [0] * len(w.edge_target)
-    for n in range(len(w.node_pos)):
-        for k in range(int(w.node_first_edge[n]), int(w.node_first_edge[n + 1])):
+    sources = [0] * len(world.edge_target)
+    for n in range(len(world.node_pos)):
+        for k in range(int(world.node_first_edge[n]), int(world.node_first_edge[n + 1])):
             sources[k] = n
     return sources
 
 
-def _kept_edges(w, nodes):
+def _kept_edges(world: World, nodes: Iterable[int]) -> Iterator[tuple[int, int]]:
     """(a, b) of every edge between two of `nodes` that is not tight."""
     inside = set(nodes)
     for a in inside:
-        for k in range(int(w.node_first_edge[a]), int(w.node_first_edge[a + 1])):
-            b = int(w.edge_target[k])
-            if b in inside and not int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT:
+        for k in range(int(world.node_first_edge[a]), int(world.node_first_edge[a + 1])):
+            b = int(world.edge_target[k])
+            if b in inside and not int(world.edge_flags[k]) & rsnv.EDGEF_TIGHT:
                 yield a, b
 
 
-def pieces(w, nodes):
+def pieces(world: World, nodes: Iterable[int]) -> list[list[int]]:
     """The pieces of `nodes` when tight edges are left out: weakly connected components (an edge joins its ends
     whichever way it runs), disjoint, largest first, each sorted. 2026-10-30 second review: the pieces followed
     outgoing edges only and could take nodes of an earlier piece again (1 -> 0 alone gave [[0, 1], [0]]), so pieces
     overlapped and the share outside the largest could be counted twice."""
     parent = {n: n for n in nodes}                   # union-find
 
-    def root(n):
+    def root(n: int) -> int:
         while parent[n] != n:
             parent[n] = parent[parent[n]]
             n = parent[n]
         return n
-    for a, b in _kept_edges(w, nodes):
+    for a, b in _kept_edges(world, nodes):
         root_a, root_b = root(a), root(b)
         if root_a != root_b:
             parent[max(root_a, root_b)] = min(root_a, root_b)
@@ -128,12 +141,12 @@ def pieces(w, nodes):
     return sorted((sorted(group) for group in groups.values()), key=lambda group: (-len(group), group[0]))
 
 
-def strong_core(w, nodes):
+def strong_core(world: World, nodes: Sequence[int]) -> list[int]:
     """The largest strongly connected component of `nodes` without tight edges (every node of it reaches every other
     one and back), sorted: the nodes of a piece outside it can be left but not reached again, or reached but not left
     (one-way edges: a drop, a one-way link)."""
     out_edges, in_edges = collections.defaultdict(list), collections.defaultdict(list)
-    for a, b in _kept_edges(w, nodes):
+    for a, b in _kept_edges(world, nodes):
         out_edges[a].append(b)
         in_edges[b].append(a)
     order, seen = [], set()
@@ -170,32 +183,33 @@ def strong_core(w, nodes):
     return sorted(best)
 
 
-def _tight_count(w):
-    return sum(1 for k in range(len(w.edge_target)) if int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT)
+def _tight_count(world: World) -> int:
+    return sum(1 for k in range(len(world.edge_target)) if int(world.edge_flags[k]) & rsnv.EDGEF_TIGHT)
 
 
-def cmd_info(w, path):
-    kinds = collections.Counter(int(k) for k in w.edge_kind)
+def cmd_info(world: World, path: str) -> int:
+    kinds = collections.Counter(int(k) for k in world.edge_kind)
     walk = kinds.get(rsnv.EDGE_WALK, 0)
-    tight = _tight_count(w)
-    conditional = sum(1 for k in range(len(w.edge_target)) if int(w.edge_flags[k]) & rsnv.EDGEF_COND)
-    pitches = collections.Counter(round(a.pitch, 1) for a in w.areas)
+    tight = _tight_count(world)
+    conditional = sum(1 for k in range(len(world.edge_target)) if int(world.edge_flags[k]) & rsnv.EDGEF_COND)
+    pitches = collections.Counter(round(a.pitch, 1) for a in world.areas)
     kind_counts = ', '.join(f'{rsnv.EDGE_NAMES[k] if k < len(rsnv.EDGE_NAMES) else k} {count}'
                             for k, count in sorted(kinds.items()))
     print(f'{path}')
-    print(f'  {os.path.getsize(path) / 1e6:.2f} MB, {"big" if w.big_endian else "little"}-endian, level id '
-          f'{w.level_id:#010x}, sea level {w.sea_level:.2f} m; agent radius {w.radius} m, height {w.agent_height} m, '
-          f'step {w.step} m, water {w.water_depth} m')
-    print('  sections: ' + ', '.join(f'{tag} {count}' for tag, (_offset, count, _stride) in w.sections.items()))
-    print(f'  {len(w.node_pos)} nodes, {len(w.edge_target)} edges ({kind_counts}); tight {tight} of {walk} walk edges '
-          f'({100 * tight / max(walk, 1):.2f} %); conditional {conditional}')
-    print(f'  {len(w.areas)} areas (' + ', '.join(f'{p} m: {count}' for p, count in sorted(pitches.items())) + '), '
-          f'{len(getattr(w, "ports", []))} portals, {len(w.ladders)} ladder / jump records, {len(w.offmesh)} '
-          f'off-mesh records, {len(w.objects)} objects')
-    island_sizes = collections.Counter(int(i) for i in w.node_island)
+    print(f'  {os.path.getsize(path) / 1e6:.2f} MB, {"big" if world.big_endian else "little"}-endian, level id '
+          f'{world.level_id:#010x}, sea level {world.sea_level:.2f} m; agent radius {world.radius} m, '
+          f'height {world.agent_height} m, step {world.step} m, water {world.water_depth} m')
+    print('  sections: ' + ', '.join(f'{tag} {count}' for tag, (_offset, count, _stride) in world.sections.items()))
+    print(f'  {len(world.node_pos)} nodes, {len(world.edge_target)} edges ({kind_counts}); tight {tight} of {walk} '
+          f'walk edges ({100 * tight / max(walk, 1):.2f} %); conditional {conditional}')
+    print(f'  {len(world.areas)} areas ('
+          + ', '.join(f'{pitch} m: {count}' for pitch, count in sorted(pitches.items())) + '), '
+          f'{len(getattr(world, "ports", []))} portals, {len(world.ladders)} ladder / jump records, '
+          f'{len(world.offmesh)} off-mesh records, {len(world.objects)} objects')
+    island_sizes = collections.Counter(int(i) for i in world.node_island)
     largest = island_sizes.most_common(1)[0] if island_sizes else (None, 0)
     print(f'  {len(island_sizes)} islands; the largest (island {largest[0]}) has {largest[1]} nodes')
-    meta = w.meta or {}
+    meta = world.meta or {}
     if meta:
         sources = ', '.join(f"{name} {source.get('sha256', '')[:12]}"
                             for name, source in (meta.get('sources') or {}).items())
@@ -203,115 +217,116 @@ def cmd_info(w, path):
     return 0
 
 
-def cmd_validate(w, path):
-    problems = w.validate()
+def cmd_validate(world: World, path: str) -> int:
+    problems = world.validate()
     for problem in problems:
         print(f'  {problem}')
     print(f'{path}: {len(problems)} problem(s)')
     return 1 if problems else 0
 
 
-def cmd_locate(w, args):
-    loc = w.locate(args.x, args.y, args.z, max_dist=args.max_dist)
+def cmd_locate(world: World, args: argparse.Namespace) -> int:
+    loc = world.locate(args.x, args.y, args.z, max_dist=args.max_dist)
     if loc is None:
         print(f'no walkable cell within {args.max_dist} m of ({args.x}, {args.y}, {args.z})')
         return 1
     area_index, (i, j), dist = loc
-    area = w.areas[area_index]
-    node = w.nearest_node(area_index, args.x, args.z)
+    area = world.areas[area_index]
+    node = world.nearest_node(area_index, args.x, args.z)
     if node is not None:
-        node_at = tuple(round(float(v), 2) for v in w.node_pos[node])
+        node_at = tuple(round(float(v), 2) for v in world.node_pos[node])
         print(f'area {area_index} (pitch {area.pitch} m, sector {area.sector}), cell ({i}, {j}) at {dist:.2f} m, '
-              f'ground {w.ground(area, args.x, args.z):.2f} m; nearest node {node} at {node_at}')
+              f'ground {world.ground(area, args.x, args.z):.2f} m; nearest node {node} at {node_at}')
     else:
         print(f'area {area_index}, cell ({i}, {j}) at {dist:.2f} m; the area has no node')
     return 0
 
 
-def search(w, start, goal, soldier):
-    return rsnv.search(w, start, goal, **(SOLDIER if soldier else {}))
+def search(world: World, start: int, goal: int, soldier: bool) -> tuple[str, int, list[int], int]:
+    """rsnv.search with the file's own costs, or with the runtime's soldier filter (SOLDIER)."""
+    return rsnv.search(world, start, goal, **(SOLDIER if soldier else {}))
 
 
-def cmd_route(w, args, path):
-    start, goal = node_of(w, args.start), node_of(w, args.goal)
-    status, cost, nodes, expansions = search(w, start, goal, args.soldier)
-    length = sum(math.dist(w.node_pos[p], w.node_pos[q]) for p, q in zip(nodes, nodes[1:]))
+def cmd_route(world: World, args: argparse.Namespace, path: str) -> int:
+    start, goal = node_of(world, args.start), node_of(world, args.goal)
+    status, cost, nodes, expansions = search(world, start, goal, args.soldier)
+    length = sum(math.dist(world.node_pos[src], world.node_pos[dst]) for src, dst in zip(nodes, nodes[1:]))
     kinds = collections.Counter()
     tight = 0
-    for p, q in zip(nodes, nodes[1:]):                 # the edge p -> q taken: its kind, whether it is tight
-        for k in range(int(w.node_first_edge[p]), int(w.node_first_edge[p + 1])):
-            if int(w.edge_target[k]) == q:
-                kinds[rsnv.EDGE_NAMES[int(w.edge_kind[k])]] += 1
-                tight += bool(int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT)
+    for src, dst in zip(nodes, nodes[1:]):                 # the edge p -> q taken: its kind, whether it is tight
+        for k in range(int(world.node_first_edge[src]), int(world.node_first_edge[src + 1])):
+            if int(world.edge_target[k]) == dst:
+                kinds[rsnv.EDGE_NAMES[int(world.edge_kind[k])]] += 1
+                tight += bool(int(world.edge_flags[k]) & rsnv.EDGEF_TIGHT)
                 break
     print(f'{start} -> {goal}: {status}, cost {cost / 16:.1f} m over {length:.1f} m, {len(nodes)} nodes, {expansions} '
           f'expansions; edges {dict(kinds)}, tight {tight}' + (' (soldier filter)' if args.soldier else ''))
     if args.png:
-        points = [tuple(float(v) for v in w.node_pos[n]) for n in nodes]
-        xs, zs = [p[0] for p in points], [p[2] for p in points]
+        points = [tuple(float(v) for v in world.node_pos[n]) for n in nodes]
+        xs, zs = [src[0] for src in points], [src[2] for src in points]
         cx, cz = (min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2
         radius = max(max(xs) - min(xs), max(zs) - min(zs)) / 2 + 8
         if args.png != '-':
             png = args.png
         else:
             png = os.path.join(out_dir(path), f'rsnvtool-route-{start}-{goal}.png')
-        picture(w, cx, cz, radius, nodes, png)
+        picture(world, cx, cz, radius, nodes, png)
     return 0 if status == rsnv.DONE else 1
 
 
-def cmd_pockets(w, args):
-    island_sizes = collections.Counter(int(i) for i in w.node_island)
+def cmd_pockets(world: World, args: argparse.Namespace) -> int:
+    island_sizes = collections.Counter(int(i) for i in world.node_island)
     main_id = island_sizes.most_common(1)[0][0]
-    main = [n for n in range(len(w.node_pos)) if int(w.node_island[n]) == main_id]
-    parts = pieces(w, main)                          # disjoint: the shares below add up to the main network
+    main = [n for n in range(len(world.node_pos)) if int(world.node_island[n]) == main_id]
+    parts = pieces(world, main)                          # disjoint: the shares below add up to the main network
     outside = sum(len(part) for part in parts[1:])
     print(f'main network (island {main_id}): {len(main)} nodes; without tight edges {len(parts)} pieces, the largest '
           f'{len(parts[0])}; {outside} nodes ({100 * outside / len(main):.2f} %) outside it')
-    core = strong_core(w, parts[0])
+    core = strong_core(world, parts[0])
     one_way = len(parts[0]) - len(core)
     print(f'  of the largest piece, {one_way} nodes ({100 * one_way / len(main):.2f} %) are outside its strongly '
           f'connected core (reached but not left, or left but not reached again, by one-way edges)')
     for part in parts[1:1 + args.top]:
-        centre = [sum(float(w.node_pos[n][i]) for n in part) / len(part) for i in range(3)]
+        centre = [sum(float(world.node_pos[n][i]) for n in part) / len(part) for i in range(3)]
         print(f'  {len(part):5d} nodes around ({centre[0]:.1f}, {centre[1]:.1f}, {centre[2]:.1f})')
     return 0
 
 
-def end_info(w, p):
+def end_info(world: World, p: Sequence[float]) -> dict[str, Any]:
     """The area under an edge's end (a node position): index, sector id, pitch, layer, cell and ground."""
-    loc = w.locate(p[0], p[1], p[2], max_dist=1.0)
+    loc = world.locate(p[0], p[1], p[2], max_dist=1.0)
     if loc is None:
         return {'area': None}
     area_index, (i, j), _dist = loc
-    area = w.areas[area_index]
-    sector = w.sectors[area.sector]
+    area = world.areas[area_index]
+    sector = world.sectors[area.sector]
     return {'area': area_index, 'sector': f'{int(sector[0]):04x}', 'layer': int(sector[1]),
-            'pitch': round(area.pitch, 1), 'cell': [i, j], 'ground': round(w.ground(area, p[0], p[2]), 3)}
+            'pitch': round(area.pitch, 1), 'cell': [i, j], 'ground': round(world.ground(area, p[0], p[2]), 3)}
 
 
-def _hood(w, area, x, z):
+def _hood(world: World, area: rsnv.Area, x: float, z: float) -> str:
     """The 3 x 3 cells of the area around (x, z), rows from +z down: '#' walkable, '.' not, ' ' outside the bitmap."""
-    i, j, _in = w._cell_of(area, x, z)
+    i, j, _in = world._cell_of(area, x, z)
 
-    def mark(a, b):
+    def mark(a: int, b: int) -> str:
         if not (0 <= a < area.width and 0 <= b < area.height):
             return ' '
-        return '#' if w.walkable(area, a, b) else '.'
+        return '#' if world.walkable(area, a, b) else '.'
     rows = []
     for dj in (1, 0, -1):
         rows.append(''.join(mark(i + di, j + dj) for di in (-1, 0, 1)))
     return '/'.join(rows)
 
 
-def los_failure(w, pa, pb):
+def los_failure(world: World, pa: Sequence[float], pb: Sequence[float]) -> dict[str, Any] | None:
     """None when pa sees pb; otherwise the first failing sample (rsnv.World.los's trace) with what lies there: the
     current area's cells, every nearby area with ground on that spot (its height against the current area's, and the
     allowance), and a cause: 'hole' (no other area has a cell there: a gap in the cells, its length along the line),
     'step' (cells there, all beyond the height allowance), 'lean' (the sample on its 0.8 m area's ground, a neighbour
     cell it leans to blocked), 'cell' (ground within the allowance whose cell test fails), 'climb' (the ground
     changing too fast between samples), 'start' / 'end' (an end off its ground)."""
-    trace = {}
-    if w.los(pa, pb, trace):
+    trace: dict[str, Any] = {}
+    if world.los(pa, pb, trace):
         return None
     out = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in trace.items()}
     rule = trace['rule']
@@ -319,34 +334,35 @@ def los_failure(w, pa, pb):
         out['cause'] = rule
         return out
     x, z, current = trace['x'], trace['z'], trace['area']
-    area = w.areas[current]
-    i, j, _in = w._cell_of(area, x, z)
-    here = w.ground(area, x, z)
-    out.update(pitch=round(area.pitch, 1), sector=f'{int(w.sectors[area.sector][0]):04x}', cell=[i, j],
-               own=w.walkable(area, i, j), hood=_hood(w, area, x, z), cur_ground=round(here, 3))
+    area = world.areas[current]
+    i, j, _in = world._cell_of(area, x, z)
+    here = world.ground(area, x, z)
+    out.update(pitch=round(area.pitch, 1), sector=f'{int(world.sectors[area.sector][0]):04x}', cell=[i, j],
+               own=world.walkable(area, i, j), hood=_hood(world, area, x, z), cur_ground=round(here, 3))
     others = []
-    for k in w._near_los(x, z):
+    for k in world._near_los(x, z):
         if k == current:
             continue
-        other = w.areas[k]
-        if not w.on_cell(other, x, z):
+        other = world.areas[k]
+        if not world.on_cell(other, x, z):
             continue
-        dy = w.ground(other, x, z) - here
-        others.append({'area': k, 'pitch': round(other.pitch, 1), 'sector': f'{int(w.sectors[other.sector][0]):04x}',
-                       'dy': round(dy, 3), 'allowed': round(w._allowed(current, k), 3), 'cell_ok': w._cell_ok(k, x, z),
-                       'hood': _hood(w, other, x, z)})
-    others.sort(key=lambda c: abs(c['dy']))
+        dy = world.ground(other, x, z) - here
+        others.append({'area': k, 'pitch': round(other.pitch, 1),
+                       'sector': f'{int(world.sectors[other.sector][0]):04x}', 'dy': round(dy, 3),
+                       'allowed': round(world._allowed(current, k), 3), 'cell_ok': world._cell_ok(k, x, z),
+                       'hood': _hood(world, other, x, z)})
+    others.sort(key=lambda candidate: abs(candidate['dy']))
     out['others'] = others[:4]
     if rule == 'climb':
         out['cause'] = 'climb'
         return out
-    if w.on_cell(area, x, z) and area.pitch_mm_ >= rsnv.COARSE_MM:
+    if world.on_cell(area, x, z) and area.pitch_mm_ >= rsnv.COARSE_MM:
         out['cause'] = 'lean'
     elif not others:
         out['cause'] = 'hole'
-    elif all(abs(c['dy']) > c['allowed'] for c in others):
+    elif all(abs(candidate['dy']) > candidate['allowed'] for candidate in others):
         out['cause'] = 'step'
-        out['step_excess'] = round(min(abs(c['dy']) - c['allowed'] for c in others), 3)
+        out['step_excess'] = round(min(abs(candidate['dy']) - candidate['allowed'] for candidate in others), 3)
     else:
         out['cause'] = 'cell'
     if out['cause'] == 'hole':
@@ -355,10 +371,10 @@ def los_failure(w, pa, pb):
         length = math.hypot(dx, dz)
         failed_k, n_samples = trace['k'], trace['n']
 
-        def on_ground(x2, z2):
-            for c in w._near_los(x2, z2):
-                near = w.areas[c]
-                if w.on_cell(near, x2, z2) and abs(w.ground(near, x2, z2) - trace['gy']) <= rsnv.LOS_COARSE_DY:
+        def on_ground(x2: float, z2: float) -> bool:
+            for candidate in world._near_los(x2, z2):
+                near = world.areas[candidate]
+                if world.on_cell(near, x2, z2) and abs(world.ground(near, x2, z2) - trace['gy']) <= rsnv.LOS_COARSE_DY:
                     return True
             return False
         gap = None
@@ -374,11 +390,12 @@ def los_failure(w, pa, pb):
 class BuildSamples:
     """The build's own collision samples and kept surfaces (navaudit1943's base masks) of a level, both grids."""
 
-    def __init__(self, level):
+    def __init__(self, level: str) -> None:
         import numpy as np
         import navaudit1943
         paths = navaudit1943.level_paths(level)
-        self.grids = []                              # (grid name, samples, kept mask, the mask's build hpd_sha256)
+        # (grid name, samples, kept mask, the mask's build hpd_sha256)
+        self.grids: list[tuple[str, Samples, npt.NDArray[np.bool_], str]] = []
         for which, src, mask_name in (('0.8 m', 'samples.bin', 'normal'), ('0.2 m', 'samples_02.bin', 'detailed')):
             mask_path = os.path.join(paths['audit'], 'masks', f'{mask_name}_base.npz')
             samples_path = os.path.join(paths['samples'], src)
@@ -390,7 +407,7 @@ class BuildSamples:
                 raise SystemExit(f'{mask_path}: made from another sampling run')
             self.grids.append((which, samples, mask['keep'], str(mask['hpd_sha256'])))
 
-    def at(self, x, z, y, dy=2.5):
+    def at(self, x: float, z: float, y: float, dy: float = 2.5) -> dict[str, Any]:
         """Per grid, the nearest column's surfaces within dy of y: (height, kept, slope in degrees)."""
         out = {}
         for which, samples, keep, _sha in self.grids:
@@ -399,38 +416,38 @@ class BuildSamples:
             if not (0 <= i < samples.nx and 0 <= j < samples.nz):
                 continue
             column = []
-            for q in samples.column(i, j):
-                if abs(float(samples.y[q]) - y) <= dy:
-                    normal_y = max(-1.0, min(1.0, float(samples.normal[q][1])))
+            for surface in samples.column(i, j):
+                if abs(float(samples.y[surface]) - y) <= dy:
+                    normal_y = max(-1.0, min(1.0, float(samples.normal[surface][1])))
                     slope = round(math.degrees(math.acos(normal_y)), 1)
-                    column.append((round(float(samples.y[q]), 2), bool(keep[q]), slope))
+                    column.append((round(float(samples.y[surface]), 2), bool(keep[surface]), slope))
             out[which] = {'column': [round(samples.min_x + i * samples.pitch, 2),
                                      round(samples.min_z + j * samples.pitch, 2)],
                           'surfaces': column}
         return out
 
 
-def tight_pairs(w):
+def tight_pairs(world: World) -> list[tuple[int, int]]:
     """Every tight walk edge once: (node a, node b) with a < b."""
-    sources = edge_source(w)
+    sources = edge_source(world)
     pairs = set()
-    for k in range(len(w.edge_target)):
-        if int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT and int(w.edge_kind[k]) == rsnv.EDGE_WALK:
-            a, b = sources[k], int(w.edge_target[k])
+    for k in range(len(world.edge_target)):
+        if int(world.edge_flags[k]) & rsnv.EDGEF_TIGHT and int(world.edge_kind[k]) == rsnv.EDGE_WALK:
+            a, b = sources[k], int(world.edge_target[k])
             pairs.add((min(a, b), max(a, b)))
     return sorted(pairs)
 
 
-def cmd_tight(w, args, path):
+def cmd_tight(world: World, args: argparse.Namespace, path: str) -> int:
     import json
     build_samples = BuildSamples(os.path.basename(path).split('.')[0]) if args.samples else None
     rows = []
     causes = collections.Counter()
-    for n0, n1 in tight_pairs(w):
-        pa, pb = (tuple(float(v) for v in w.node_pos[n]) for n in (n0, n1))
+    for n0, n1 in tight_pairs(world):
+        pa, pb = (tuple(float(v) for v in world.node_pos[n]) for n in (n0, n1))
         row = {'nodes': [n0, n1], 'a': [round(v, 2) for v in pa], 'b': [round(v, 2) for v in pb],
-               'length': round(math.dist(pa, pb), 3), 'ends': [end_info(w, pa), end_info(w, pb)],
-               'ab': los_failure(w, pa, pb), 'ba': los_failure(w, pb, pa)}
+               'length': round(math.dist(pa, pb), 3), 'ends': [end_info(world, pa), end_info(world, pb)],
+               'ab': los_failure(world, pa, pb), 'ba': los_failure(world, pb, pa)}
         if build_samples is not None:
             for way in ('ab', 'ba'):
                 failure = row[way]
@@ -471,7 +488,7 @@ def cmd_tight(w, args, path):
     return 0
 
 
-def _on_line(line, x, z, tol):
+def _on_line(line: tuple[Sequence[float], Sequence[float]], x: float, z: float, tol: float) -> bool:
     """Whether (x, z) lies within tol of the segment line ((x, y, z), (x, y, z)) in plan."""
     (ax, _ay, az), (bx, _by, bz) = line
     dx, dz = bx - ax, bz - az
@@ -480,7 +497,7 @@ def _on_line(line, x, z, tol):
     return math.hypot(ax + dx * t - x, az + dz * t - z) <= tol
 
 
-def cmd_cells(w, args, path):
+def cmd_cells(world: World, args: argparse.Namespace, path: str) -> int:
     """Text maps around a point, 0.2 m to a character, +z up: each area with ground within --dy of --y (its walkable
     cells '#', its other cells '.'); with --samples, the build's own samples on both grids ('K' a kept surface within
     0.6 m of --y, 'k' kept further off, 's' a surface within 0.6 m not kept, '.' none); with --line, '*' marks where the
@@ -492,13 +509,13 @@ def cmd_cells(w, args, path):
     xs = [cx + i * 0.2 for i in range(-n, n + 1)]
     zs = [cz + j * 0.2 for j in range(n, -n - 1, -1)]
     near_areas = set()
-    for bx in (-1, 0, 1):
-        for bz in (-1, 0, 1):
-            near_areas.update(w._near_los(cx + bx * radius, cz + bz * radius))
+    for step_x in (-1, 0, 1):
+        for step_z in (-1, 0, 1):
+            near_areas.update(world._near_los(cx + step_x * radius, cz + step_z * radius))
     print(f'around ({cx:.2f}, {cz:.2f}), {radius} m, ground within {args.dy} m of {y:.2f}; 0.2 m a character, +z up, '
           f'x right')
 
-    def show(title, char_at):
+    def show(title: str, char_at: Callable[[float, float], str]) -> None:
         print(title)
         for z in zs:
             row = ''
@@ -511,37 +528,38 @@ def cmd_cells(w, args, path):
                 row += char
             print('    ' + row)
     for k in sorted(near_areas):
-        area = w.areas[k]
+        area = world.areas[k]
         overlaps = (area.x0 - area.pitch <= cx + radius and cx - radius <= area.x1 + area.pitch
                     and area.z0 - area.pitch <= cz + radius and cz - radius <= area.z1 + area.pitch)
         if not overlaps:
             continue
-        ground = w.ground(area, cx, cz)
+        ground = world.ground(area, cx, cz)
         if abs(ground - y) > args.dy:
             continue
 
-        def area_char(x, z, area=area):
-            i, j, inside = w._cell_of(area, x, z)
+        def area_char(x: float, z: float, area: rsnv.Area = area) -> str:
+            i, j, inside = world._cell_of(area, x, z)
             if not inside:
                 return ' '
-            return '#' if w.walkable(area, i, j) else '.'
-        sector = w.sectors[area.sector]
+            return '#' if world.walkable(area, i, j) else '.'
+        sector = world.sectors[area.sector]
         show(f'  area {k} (sector {int(sector[0]):04x}, {area.pitch:.1f} m, ground {ground:.2f} here, '
              f'{area.min_y:.2f}..{area.max_y - 1.52:.2f})', area_char)
     if args.samples:
         build_samples = BuildSamples(os.path.basename(path).split('.')[0])
         for which, samples, keep, sha in build_samples.grids:
-            def sample_char(x, z, samples=samples, keep=keep):
+            def sample_char(x: float, z: float, samples: 'Samples' = samples,
+                            keep: 'npt.NDArray[np.bool_]' = keep) -> str:
                 i = int(round((x - samples.min_x) / samples.pitch))
                 j = int(round((z - samples.min_z) / samples.pitch))
                 if not (0 <= i < samples.nx and 0 <= j < samples.nz):
                     return ' '
                 best = '.'
-                for q in samples.column(i, j):
-                    dist = abs(float(samples.y[q]) - y)
-                    if keep[q] and dist <= 0.6:
+                for surface in samples.column(i, j):
+                    dist = abs(float(samples.y[surface]) - y)
+                    if keep[surface] and dist <= 0.6:
                         return 'K'
-                    if keep[q] and dist <= 2.0:
+                    if keep[surface] and dist <= 2.0:
                         best = 'k'
                     elif dist <= 0.6 and best == '.':
                         best = 's'
@@ -550,12 +568,13 @@ def cmd_cells(w, args, path):
     return 0
 
 
-def sample_walk(bs, a, b, grid='0.2 m', reach=1.0):
+def sample_walk(build_samples: BuildSamples, a: Sequence[float], b: Sequence[float], grid: str = '0.2 m',
+                reach: float = 1.0) -> dict[str, Any] | None:
     """The build's own kept samples along the line a -> b on one grid: column by column (every 0.05 m along the line,
     the nearest column), the kept surface nearest the height followed so far (within reach), or a gap. Returns
     {'grid', 'columns': [(x, z, y or None, slope or None)], 'largest_step', 'step_at', 'gaps', 'end_dy'} or None when
     the grid does not cover the line. Read-only; what a straight walk over the kept surfaces meets."""
-    found = [entry for entry in bs.grids if entry[0] == grid]
+    found = [entry for entry in build_samples.grids if entry[0] == grid]
     if not found:
         return None
     _which, samples, keep, _sha = found[0]
@@ -575,10 +594,10 @@ def sample_walk(bs, a, b, grid='0.2 m', reach=1.0):
             continue
         last_column = (i, j)
         nearest = None                               # the kept surface nearest y within reach
-        for q in samples.column(i, j):
-            off = abs(float(samples.y[q]) - y)
-            if keep[q] and off <= reach and (nearest is None or off < abs(float(samples.y[nearest]) - y)):
-                nearest = q
+        for surface in samples.column(i, j):
+            off = abs(float(samples.y[surface]) - y)
+            if keep[surface] and off <= reach and (nearest is None or off < abs(float(samples.y[nearest]) - y)):
+                nearest = surface
         col_x, col_z = samples.min_x + i * samples.pitch, samples.min_z + j * samples.pitch
         if nearest is None:
             columns.append((round(col_x, 2), round(col_z, 2), None, None))
@@ -599,12 +618,12 @@ def sample_walk(bs, a, b, grid='0.2 m', reach=1.0):
             'end_dy': round(y - b[1], 3)}
 
 
-def cmd_walk(w, args, path):
+def cmd_walk(world: World, args: argparse.Namespace, path: str) -> int:
     """The build's kept samples along a line, on both grids (sample_walk)."""
     build_samples = BuildSamples(os.path.basename(path).split('.')[0])
-    pa, pb = node_of_point(w, args.a), node_of_point(w, args.b)
-    print(f'{pa} -> {pb}: line of sight {"in sight" if w.los(pa, pb) else "not in sight"} / '
-          f'{"in sight" if w.los(pb, pa) else "not in sight"} (back)')
+    pa, pb = node_of_point(world, args.a), node_of_point(world, args.b)
+    print(f'{pa} -> {pb}: line of sight {"in sight" if world.los(pa, pb) else "not in sight"} / '
+          f'{"in sight" if world.los(pb, pa) else "not in sight"} (back)')
     for grid in ('0.2 m', '0.8 m'):
         walk = sample_walk(build_samples, pa, pb, grid, args.reach)
         if walk is None:
@@ -612,18 +631,18 @@ def cmd_walk(w, args, path):
             continue
         print(f"  {grid}: largest step {walk['largest_step']} m at {walk['step_at']}, gaps {walk['gaps'] or 'none'}, "
               f"the end {walk['end_dy']:+.2f} m off b")
-        print('    ' + ' '.join(f'{c[2]:.2f}' if c[2] is not None else '-' for c in walk['columns']))
+        print('    ' + ' '.join(f'{column[2]:.2f}' if column[2] is not None else '-' for column in walk['columns']))
     return 0
 
 
-def node_of_point(w, text):
+def node_of_point(world: World, text: str) -> Point:
     """A point X,Y,Z, or a node number's position."""
     if ',' in text:
         return point(text)
-    return tuple(float(v) for v in w.node_pos[int(text)])
+    return tuple(float(v) for v in world.node_pos[int(text)])
 
 
-def _edge_colour(tight, kind):
+def _edge_colour(tight: int, kind: int) -> tuple[int, int, int]:
     if tight:
         return (230, 25, 75)
     if kind in (1, 2):                               # ladders
@@ -633,7 +652,9 @@ def _edge_colour(tight, kind):
     return (110, 110, 110)
 
 
-def picture(w, cx, cz, radius, route, png, y=None, dy=3.0):
+def picture(world: World, cx: float, cz: float, radius: float, route: Sequence[int] | None, png: str,
+            y: float | None = None, dy: float = 3.0) -> None:
+    """A top-down PNG of radius m around (cx, cz): cells, edges, nodes and a route (--y: floors near that height)."""
     from PIL import Image, ImageDraw
     x0, x1, z0, z1 = cx - radius, cx + radius, cz - radius, cz + radius
     scale = min(40.0, 1600.0 / (2 * radius))         # pixels per metre
@@ -641,12 +662,12 @@ def picture(w, cx, cz, radius, route, png, y=None, dy=3.0):
     img = Image.new('RGB', (size, size), (24, 24, 28))
     draw = ImageDraw.Draw(img)
 
-    def to_pixel(x, z):
+    def to_pixel(x: float, z: float) -> tuple[float, float]:
         return ((x - x0) * scale, (z1 - z) * scale)
 
-    def node_pixel(n):
-        return to_pixel(w.node_pos[n][0], w.node_pos[n][2])
-    for area in w.areas:
+    def node_pixel(n: int) -> tuple[float, float]:
+        return to_pixel(world.node_pos[n][0], world.node_pos[n][2])
+    for area in world.areas:
         if area.x1 < x0 or area.x0 > x1 or area.z1 < z0 or area.z0 > z1:
             continue
         if y is not None and not (area.min_y - dy <= y <= area.max_y + dy):
@@ -658,20 +679,20 @@ def picture(w, cx, cz, radius, route, png, y=None, dy=3.0):
                 continue
             for i in range(area.width):
                 x = area.x0 + i * area.pitch
-                if x0 - 1 <= x <= x1 + 1 and w.walkable(area, i, j):
+                if x0 - 1 <= x <= x1 + 1 and world.walkable(area, i, j):
                     u, v = to_pixel(x, z)
                     draw.rectangle([u - half, v - half, u + half, v + half], fill=(46, 78, 52))
-    inside = [n for n in range(len(w.node_pos))
-              if x0 <= w.node_pos[n][0] <= x1 and z0 <= w.node_pos[n][2] <= z1
-              and (y is None or abs(w.node_pos[n][1] - y) <= dy)]
+    inside = [n for n in range(len(world.node_pos))
+              if x0 <= world.node_pos[n][0] <= x1 and z0 <= world.node_pos[n][2] <= z1
+              and (y is None or abs(world.node_pos[n][1] - y) <= dy)]
     inside_set = set(inside)
     for n in inside:
-        for k in range(int(w.node_first_edge[n]), int(w.node_first_edge[n + 1])):
-            target = int(w.edge_target[k])
+        for k in range(int(world.node_first_edge[n]), int(world.node_first_edge[n + 1])):
+            target = int(world.edge_target[k])
             if target < n and target in inside_set:
                 continue                                   # drawn from the other end
-            tight = int(w.edge_flags[k]) & rsnv.EDGEF_TIGHT
-            draw.line([node_pixel(n), node_pixel(target)], fill=_edge_colour(tight, int(w.edge_kind[k])),
+            tight = int(world.edge_flags[k]) & rsnv.EDGEF_TIGHT
+            draw.line([node_pixel(n), node_pixel(target)], fill=_edge_colour(tight, int(world.edge_kind[k])),
                       width=2 if tight else 1)
     for n in inside:
         u, v = node_pixel(n)
@@ -682,27 +703,27 @@ def picture(w, cx, cz, radius, route, png, y=None, dy=3.0):
     print(f'picture: {png} (cells green; edges grey, tight red, ladders orange, jumps cyan; route yellow)')
 
 
-def cmd_picture(w, args, path):
+def cmd_picture(world: World, args: argparse.Namespace, path: str) -> int:
     cx, cz = (float(v) for v in args.at.split(','))
     route = None
     if args.route:
-        start, goal = node_of(w, args.route[0]), node_of(w, args.route[1])
-        route = search(w, start, goal, args.soldier)[2]
+        start, goal = node_of(world, args.route[0]), node_of(world, args.route[1])
+        route = search(world, start, goal, args.soldier)[2]
     png = args.png or os.path.join(out_dir(path), f'rsnvtool-{cx:.0f}_{cz:.0f}.png')
-    picture(w, cx, cz, args.radius, route, png, args.y, args.dy)
+    picture(world, cx, cz, args.radius, route, png, args.y, args.dy)
     return 0
 
 
-def cmd_diff(path_a, path_b):
-    a, b = rsnv.load(path_a), rsnv.load(path_b)
+def cmd_diff(path_a: str, path_b: str) -> int:
+    world_a, world_b = rsnv.load(path_a), rsnv.load(path_b)
     rows = [('file size, MB', os.path.getsize(path_a) / 1e6, os.path.getsize(path_b) / 1e6),
-            ('nodes', len(a.node_pos), len(b.node_pos)),
-            ('edges', len(a.edge_target), len(b.edge_target)),
-            ('areas', len(a.areas), len(b.areas)),
-            ('tight edges', _tight_count(a), _tight_count(b)),
-            ('islands', len(set(a.node_island.tolist())), len(set(b.node_island.tolist()))),
-            ('ladder / jump records', len(a.ladders), len(b.ladders)),
-            ('off-mesh records', len(a.offmesh), len(b.offmesh))]
+            ('nodes', len(world_a.node_pos), len(world_b.node_pos)),
+            ('edges', len(world_a.edge_target), len(world_b.edge_target)),
+            ('areas', len(world_a.areas), len(world_b.areas)),
+            ('tight edges', _tight_count(world_a), _tight_count(world_b)),
+            ('islands', len(set(world_a.node_island.tolist())), len(set(world_b.node_island.tolist()))),
+            ('ladder / jump records', len(world_a.ladders), len(world_b.ladders)),
+            ('off-mesh records', len(world_a.offmesh), len(world_b.offmesh))]
     print(f'{"":24} {"a":>12} {"b":>12}')
     for name, value_a, value_b in rows:
         if isinstance(value_a, float):
@@ -710,12 +731,12 @@ def cmd_diff(path_a, path_b):
         else:
             change = '' if value_a == value_b else f'   {value_b - value_a:+d}'
             print(f'{name:24} {value_a:12d} {value_b:12d}' + change)
-    print(f"exporter: a {a.meta.get('exporter', '?')}; b {b.meta.get('exporter', '?')}")
-    if len(a.node_pos) == len(b.node_pos):
+    print(f"exporter: a {world_a.meta.get('exporter', '?')}; b {world_b.meta.get('exporter', '?')}")
+    if len(world_a.node_pos) == len(world_b.node_pos):
         import numpy as np
-        moved = np.linalg.norm(a.node_pos - b.node_pos, axis=1)
-        edges_a = set(zip(edge_source(a), a.edge_target.tolist()))
-        edges_b = set(zip(edge_source(b), b.edge_target.tolist()))
+        moved = np.linalg.norm(world_a.node_pos - world_b.node_pos, axis=1)
+        edges_a = set(zip(edge_source(world_a), world_a.edge_target.tolist()))
+        edges_b = set(zip(edge_source(world_b), world_b.edge_target.tolist()))
         print(f'same node count: {int((moved > 1e-4).sum())} nodes moved (largest {moved.max():.3f} m); '
               f'edges only in a {len(edges_a - edges_b)}, only in b {len(edges_b - edges_a)}')
     else:
@@ -723,87 +744,88 @@ def cmd_diff(path_a, path_b):
     return 0
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog='rsnvtool.py', description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='cmd', required=True)
 
-    def add(name):
-        p = sub.add_parser(name)
-        p._negative_number_matcher = re.compile(r'^-\d')       # a point like -240.4,218.4,23.4 is a value
-        p.add_argument('file')
-        p.add_argument('--class', dest='klass', choices=('jeep', 'tank', 'lcvp', 'plane'))
-        return p
+    def add(name: str) -> argparse.ArgumentParser:
+        command = sub.add_parser(name)
+        command._negative_number_matcher = re.compile(r'^-\d')       # a point like -240.4,218.4,23.4 is a value
+        command.add_argument('file')
+        command.add_argument('--class', dest='klass', choices=('jeep', 'tank', 'lcvp', 'plane'))
+        return command
     add('info')
     add('validate')
-    p = add('locate')
-    p.add_argument('x', type=float)
-    p.add_argument('y', type=float)
-    p.add_argument('z', type=float)
-    p.add_argument('--max-dist', type=float, default=3.0)
-    p = add('los')
-    p.add_argument('a')
-    p.add_argument('b')
-    p = add('route')
-    p.add_argument('start')
-    p.add_argument('goal')
-    p.add_argument('--soldier', action='store_true')
-    p.add_argument('--png', nargs='?', const='-')
-    p = add('pockets')
-    p.add_argument('--top', type=int, default=10)
-    p = add('tight')
-    p.add_argument('--samples', action='store_true', help="the build's own samples at each failing sample")
-    p.add_argument('--json')
-    p = add('cells')
-    p.add_argument('--at', required=True)
-    p.add_argument('--y', type=float, required=True)
-    p.add_argument('--radius', type=float, default=1.6)
-    p.add_argument('--dy', type=float, default=1.5, help='areas whose ground at the point is within this of --y')
-    p.add_argument('--samples', action='store_true')
-    p.add_argument('--line', nargs=2, help='two points X,Y,Z: the line drawn over the maps')
-    p = add('walk')
-    p.add_argument('a')
-    p.add_argument('b')
-    p.add_argument('--reach', type=float, default=1.0, help='the kept surface followed lies within this of the last')
-    p = add('picture')
-    p.add_argument('--at', required=True)
-    p.add_argument('--radius', type=float, default=25.0)
-    p.add_argument('--route', nargs=2)
-    p.add_argument('--soldier', action='store_true')
-    p.add_argument('--y', type=float, help='draw only the floors within --dy of this height')
-    p.add_argument('--dy', type=float, default=3.0)
-    p.add_argument('--png')
-    p = sub.add_parser('diff')
-    p.add_argument('a')
-    p.add_argument('b')
+    command = add('locate')
+    command.add_argument('x', type=float)
+    command.add_argument('y', type=float)
+    command.add_argument('z', type=float)
+    command.add_argument('--max-dist', type=float, default=3.0)
+    command = add('los')
+    command.add_argument('a')
+    command.add_argument('b')
+    command = add('route')
+    command.add_argument('start')
+    command.add_argument('goal')
+    command.add_argument('--soldier', action='store_true')
+    command.add_argument('--png', nargs='?', const='-')
+    command = add('pockets')
+    command.add_argument('--top', type=int, default=10)
+    command = add('tight')
+    command.add_argument('--samples', action='store_true', help="the build's own samples at each failing sample")
+    command.add_argument('--json')
+    command = add('cells')
+    command.add_argument('--at', required=True)
+    command.add_argument('--y', type=float, required=True)
+    command.add_argument('--radius', type=float, default=1.6)
+    command.add_argument('--dy', type=float, default=1.5, help='areas whose ground at the point is within this of --y')
+    command.add_argument('--samples', action='store_true')
+    command.add_argument('--line', nargs=2, help='two points X,Y,Z: the line drawn over the maps')
+    command = add('walk')
+    command.add_argument('a')
+    command.add_argument('b')
+    command.add_argument('--reach', type=float, default=1.0,
+                         help='the kept surface followed lies within this of the last')
+    command = add('picture')
+    command.add_argument('--at', required=True)
+    command.add_argument('--radius', type=float, default=25.0)
+    command.add_argument('--route', nargs=2)
+    command.add_argument('--soldier', action='store_true')
+    command.add_argument('--y', type=float, help='draw only the floors within --dy of this height')
+    command.add_argument('--dy', type=float, default=3.0)
+    command.add_argument('--png')
+    command = sub.add_parser('diff')
+    command.add_argument('a')
+    command.add_argument('b')
     args = parser.parse_args(argv[1:])
     if args.cmd == 'diff':
         return cmd_diff(resolve(args.a), resolve(args.b))
     path = resolve(args.file, args.klass)
-    w = rsnv.load(path)
+    world = rsnv.load(path)
     if args.cmd == 'info':
-        return cmd_info(w, path)
+        return cmd_info(world, path)
     if args.cmd == 'validate':
-        return cmd_validate(w, path)
+        return cmd_validate(world, path)
     if args.cmd == 'locate':
-        return cmd_locate(w, args)
+        return cmd_locate(world, args)
     if args.cmd == 'los':
         pa, pb = point(args.a), point(args.b)
-        in_sight = w.los(pa, pb)
+        in_sight = world.los(pa, pb)
         print(f'{"in sight" if in_sight else "not in sight"}: {pa} -> {pb}')
         return 0 if in_sight else 1
     if args.cmd == 'route':
-        return cmd_route(w, args, path)
+        return cmd_route(world, args, path)
     if args.cmd == 'pockets':
-        return cmd_pockets(w, args)
+        return cmd_pockets(world, args)
     if args.cmd == 'picture':
-        return cmd_picture(w, args, path)
+        return cmd_picture(world, args, path)
     if args.cmd == 'tight':
-        return cmd_tight(w, args, path)
+        return cmd_tight(world, args, path)
     if args.cmd == 'cells':
-        return cmd_cells(w, args, path)
+        return cmd_cells(world, args, path)
     if args.cmd == 'walk':
-        return cmd_walk(w, args, path)
+        return cmd_walk(world, args, path)
     return 2
 
 

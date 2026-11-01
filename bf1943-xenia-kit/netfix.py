@@ -8,6 +8,7 @@ swaps, which are needed, are untouched. Every original byte is checked first, so
 import hashlib
 import struct
 import sys
+from typing import Any
 
 sys.dont_write_bytecode = True
 EXE = 'xenia_canary.exe'
@@ -22,31 +23,34 @@ SITES = [
 ]
 
 
-def file_offset(data, va):
-    pe = struct.unpack_from('<I', data, 0x3C)[0]
-    opt = pe + 24
-    first = opt + struct.unpack_from('<H', data, pe + 20)[0]
-    for k in range(struct.unpack_from('<H', data, pe + 6)[0]):
-        name, vsize, rva, rsize, raw = struct.unpack_from('<8sIIII', data, first + 40 * k)
-        if BASE + rva <= va < BASE + rva + rsize:
-            return va - BASE - rva + raw
+def file_offset(data: bytes | bytearray, va: int) -> int:
+    """The file offset of a virtual address in a PE image (its section table)."""
+    pe_header = struct.unpack_from('<I', data, 0x3C)[0]
+    optional_header = pe_header + 24
+    first_section = optional_header + struct.unpack_from('<H', data, pe_header + 20)[0]
+    section_count = struct.unpack_from('<H', data, pe_header + 6)[0]
+    for k in range(section_count):
+        _name, _vsize, rva, raw_size, raw_offset = struct.unpack_from('<8sIIII', data, first_section + 40 * k)
+        if BASE + rva <= va < BASE + rva + raw_size:
+            return va - BASE - rva + raw_offset
     raise ValueError(f'0x{va:x} is not in a section')
 
 
-def build(exe_bytes):
+def build(exe_bytes: bytes) -> tuple[bytes, list[dict[str, Any]]]:
     """(fixed exe bytes, change log). Raises if any site does not hold the expected original bytes."""
     data = bytearray(exe_bytes)
-    changes = []
+    changes: list[dict[str, Any]] = []
     for va, expected, why in SITES:
-        at = file_offset(data, va)
-        n = len(expected) // 2
-        found = bytes(data[at:at + n]).hex()
+        offset = file_offset(data, va)
+        size = len(expected) // 2
+        found = bytes(data[offset:offset + size]).hex()
         if found != expected:
-            raise ValueError(f'Xenia 0x{va:x}: expected {expected}, found {found} - this is not the Xenia build the fix is for')
-        data[at:at + n] = b'\x90' * n
-        changes.append(dict(va=f'0x{va:x}', file_offset=at, before=expected, after='90' * n, why=why))
+            raise ValueError(f'Xenia 0x{va:x}: expected {expected}, found {found} - '
+                             'this is not the Xenia build the fix is for')
+        data[offset:offset + size] = b'\x90' * size
+        changes.append(dict(va=f'0x{va:x}', file_offset=offset, before=expected, after='90' * size, why=why))
     return bytes(data), changes
 
 
-def sha256(b):
-    return hashlib.sha256(b).hexdigest()
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()

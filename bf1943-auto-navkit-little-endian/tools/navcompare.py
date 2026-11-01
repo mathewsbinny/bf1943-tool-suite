@@ -14,6 +14,8 @@ The reference is normally the level's original (DICE) file, the candidate NavKit
 """
 import json
 import sys
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -24,71 +26,88 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
 import hpdtool  # noqa: E402
 import ordercheck  # noqa: E402
 
+if TYPE_CHECKING:
+    from ordercheck import OrderPoint
 
-def main_network(data, points):
+type Report = dict[str, Any]     # compare()'s result (its keys are listed in compare)
+
+
+def main_network(data: ordercheck.PathData, points: 'list[OrderPoint]') -> int:
+    """How many of the points are near a route group at least 25 % the size of the file's largest."""
     largest = max(data.group_size.values()) if data.group_size else 0
     count = 0
-    for _, _, p in points:
-        _, size = data.nearest_group(p)
+    for _, _, position in points:
+        _, size = data.nearest_group(position)
         if size and size >= 0.25 * largest:
             count += 1
     return count
 
 
-def compare(level_xml, reference, candidate):
+def compare(level_xml: str, reference: str, candidate: str) -> Report:
+    """The comparison of the two files on the level's AI positions (the module docstring's measures)."""
     points = ordercheck.order_points(level_xml)
-    ref, cand = ordercheck.PathData(reference), ordercheck.PathData(candidate)
-    on_ref = [ref.on_area(p) for _, _, p in points]
-    on_cand = [cand.on_area(p) for _, _, p in points]
-    group_ref = [ref.nearest_group(p)[0] if on_ref[i] else None for i, (_, _, p) in enumerate(points)]
-    group_cand = [cand.nearest_group(p)[0] if on_cand[i] else None for i, (_, _, p) in enumerate(points)]
-    both = sum(1 for a, b in zip(on_ref, on_cand) if a and b)
-    only_cand = sum(1 for a, b in zip(on_ref, on_cand) if b and not a)
-    idx = [i for i in range(len(points)) if group_ref[i] is not None]
+    reference_data, candidate_data = ordercheck.PathData(reference), ordercheck.PathData(candidate)
+    on_reference = [reference_data.on_area(position) for _, _, position in points]
+    on_candidate = [candidate_data.on_area(position) for _, _, position in points]
+    reference_group = [reference_data.nearest_group(position)[0] if on_reference[i] else None
+                       for i, (_, _, position) in enumerate(points)]
+    candidate_group = [candidate_data.nearest_group(position)[0] if on_candidate[i] else None
+                       for i, (_, _, position) in enumerate(points)]
+    both = sum(1 for in_reference, in_candidate in zip(on_reference, on_candidate) if in_reference and in_candidate)
+    only_candidate = sum(1 for in_reference, in_candidate in zip(on_reference, on_candidate)
+                         if in_candidate and not in_reference)
+    grouped = [i for i in range(len(points)) if reference_group[i] is not None]
     pairs = connected = 0
-    for a in range(len(idx)):
-        for b in range(a + 1, len(idx)):
-            x, y = idx[a], idx[b]
-            if group_ref[x] == group_ref[y]:
+    for first in range(len(grouped)):
+        for second in range(first + 1, len(grouped)):
+            x, y = grouped[first], grouped[second]
+            if reference_group[x] == reference_group[y]:
                 pairs += 1
-                if group_cand[x] is not None and group_cand[x] == group_cand[y]:
+                if candidate_group[x] is not None and candidate_group[x] == candidate_group[y]:
                     connected += 1
     files = {}
     for name, path in (('reference', reference), ('candidate', candidate)):
-        f = hpdtool.parse(open(path, 'rb').read())
-        files[name] = {'file': path, 'sectors': len(f.sectors), 'nodes': sum(len(s.nodes) for s in f.sectors),
-                       'edges': sum(len(s.edges) for s in f.sectors)}
+        hpd = hpdtool.parse(open(path, 'rb').read())
+        files[name] = {'file': path, 'sectors': len(hpd.sectors),
+                       'nodes': sum(len(sector.nodes) for sector in hpd.sectors),
+                       'edges': sum(len(sector.edges) for sector in hpd.sectors)}
     return {
         'positions': len(points),
-        'reference_covers': sum(on_ref),
+        'reference_covers': sum(on_reference),
         'candidate_covers_of_those': both,
-        'coverage_percent': round(both / max(sum(on_ref), 1) * 100, 1),
-        'candidate_only': only_cand,
-        'main_network': {'reference': main_network(ref, points), 'candidate': main_network(cand, points)},
+        'coverage_percent': round(both / max(sum(on_reference), 1) * 100, 1),
+        'candidate_only': only_candidate,
+        'main_network': {'reference': main_network(reference_data, points),
+                         'candidate': main_network(candidate_data, points)},
         'pairwise': {'connected': connected, 'pairs': pairs, 'percent': round(connected / max(pairs, 1) * 100, 1)},
         'files': files,
     }
 
 
-def report(r, log=print):
-    log(f"{r['positions']} order positions; the reference covers {r['reference_covers']}, the candidate {r['candidate_covers_of_those']} "
-        f"of those ({r['coverage_percent']} %) + {r['candidate_only']} more")
-    log(f"main route network: reference {r['main_network']['reference']}, candidate {r['main_network']['candidate']}; "
-        f"pairwise {r['pairwise']['connected']}/{r['pairwise']['pairs']} ({r['pairwise']['percent']} %)")
-    fr, fc = r['files']['reference'], r['files']['candidate']
-    log(f"sectors {fr['sectors']} / {fc['sectors']}; nodes {fr['nodes']} / {fc['nodes']}; edges {fr['edges']} / {fc['edges']}")
+def report(result: Report, log: Callable[[str], object] = print) -> None:
+    """compare()'s result in three lines."""
+    log(f"{result['positions']} order positions; the reference covers {result['reference_covers']}, "
+        f"the candidate {result['candidate_covers_of_those']} of those ({result['coverage_percent']} %) "
+        f"+ {result['candidate_only']} more")
+    main, pairwise = result['main_network'], result['pairwise']
+    log(f"main route network: reference {main['reference']}, candidate {main['candidate']}; "
+        f"pairwise {pairwise['connected']}/{pairwise['pairs']} ({pairwise['percent']} %)")
+    reference_file, candidate_file = result['files']['reference'], result['files']['candidate']
+    log(f"sectors {reference_file['sectors']} / {candidate_file['sectors']}; "
+        f"nodes {reference_file['nodes']} / {candidate_file['nodes']}; "
+        f"edges {reference_file['edges']} / {candidate_file['edges']}")
 
 
-def main(argv):
-    args = [a for a in argv[1:] if not a.startswith('--')]
+def main(argv: list[str]) -> int:
+    args = [arg for arg in argv[1:] if not arg.startswith('--')]
     if len(args) != 3:
         print(__doc__)
         return 1
-    r = compare(*args)
+    result = compare(*args)
     if '--json' in argv:
-        print(json.dumps(r, indent=1))
+        print(json.dumps(result, indent=1))
     else:
-        report(r)
+        report(result)
     return 0
 
 

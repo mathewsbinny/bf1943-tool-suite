@@ -28,8 +28,11 @@ import math
 import os
 import sys
 import time
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -42,16 +45,27 @@ import navkitjson1943 as nj  # noqa: E402
 import vehicleclasses1943 as vc  # noqa: E402
 from bfbc2core import game1943, rsnv, terrain  # noqa: E402
 
-MARGIN = 600.0
-SEA_CLEAR = 30.0
+if TYPE_CHECKING:
+    from bfbc2core.level import Level
+
+type Log = Callable[[str], object]
+type Triangles = npt.NDArray[np.float32]        # (n, 3 corners, x y z)
+type Heights = npt.NDArray[np.float64]          # per cell (nz, nx): a height
+type Obstacles = tuple[float, float, Heights]   # obstacle_tops: (x0, z0, the highest obstacle per OBS_CELL cell)
+type Edge = tuple[int, int, int, float | None, bool]    # rsnvgrid1943.write_world's: (a, b, kind, cost m, both ways)
+type Point = Sequence[float] | npt.NDArray[np.float64]     # (x, y, z)
+type Lane = dict[str, Any]                      # choose_lane's: yaw, offset, start, length, clear, carried, ...
+
+MARGIN = 600.0               # m of air around the land, the plane spawns and the soldier nodes
+SEA_CLEAR = 30.0             # m: the altitude floor is at least this over the sea
 CLIMB = 0.12                 # m per m: the cruise surface's steepest climb
 CLIMB_OUT = 300.0            # m ahead of the lane's end: the first cruise node
 APPROACH = 400.0             # m behind the spawn: the landing approach node
-LANE_PITCH = 2.0
+LANE_PITCH = 2.0             # m: the take-off lanes' cells
 ENTRY_LOCAL = (0.0, 0.239, -0.592)     # [O] corsair.dbx LandingGearEntryComponentData Transform (zero: the same)
 ENTRY_RADIUS = 7.0                     # [O] its EntryRadius
-OFFM_DROP = 4
-DROP_ISLAND_MIN = 10
+OFFM_DROP = 4                # the OFFM kind of a parachute drop
+DROP_ISLAND_MIN = 10         # soldier nodes: an island this large or larger gets a drop
 # take-off lanes checked against the collision (2026-10-26): the obstacle grid of rsnav's flight test (flightsim.py:
 # the highest terrain or object per 4 m cell from the height field's corner, terrain sampled 5 x 5 a cell, triangles
 # every 2 m), so a lane clear here is clear there
@@ -63,22 +77,25 @@ CLEAR_RISE = 0.5             # m over the lane's height: an obstacle
 WING_HALF = 6.0              # m: half the wingspan [O] (11.9 / 12.0 m)
 LIFT_OFF = 85.0              # m of roll the deck or runway must carry (the flight test's plane lifts off at 81 m [E])
 SUPPORT_DROP = 3.5           # m: the deck or runway under the roll no lower than the lane less this
-HEADINGS = [0.0] + [v * sgn for v in np.arange(0.5, 20.01, 0.5) for sgn in (1, -1)]    # deg off the spawn heading
+# deg off the spawn heading
+HEADINGS = [0.0] + [offset * sign for offset in np.arange(0.5, 20.01, 0.5) for sign in (1, -1)]
 LENGTHS = [120.0, 110.0, 100.0, 90.0, 80.0, 75.0]   # m; under 90 only when nothing longer is clear (short: the
                                                    # plane rolls on past the end to lift off, flightsim.Lane)
-HEADINGS_WIDE = [v * sgn for v in np.arange(22.5, 180.01, 2.5) for sgn in (1, -1)]  # deg: second stage, turning
+# deg: second stage, turning
+HEADINGS_WIDE = [offset * sign for offset in np.arange(22.5, 180.01, 2.5) for sign in (1, -1)]
 STARTS = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0]   # m ahead of the spawn the lane may begin: the plane taxis
                              # that far first [H] (out of a hangar: Iwo Jima's zero in hangar_t01 [O])
 
 
-def paths(lv):
+def paths(lv: str) -> dict[str, str]:
     work = game1943.level_work(lv)
     return {'objects': os.path.join(work, 'objects'), 'navkit': os.path.join(work, 'navkit'),
             'rsnv': os.path.join(work, 'navkit', f'{lv}.plane.rsnv'),
             'soldier': os.path.join(work, 'navkit', f'{lv}.rsnv')}
 
 
-def plane_spawns(lv, game=None):
+def plane_spawns(lv: str, game: str | None = None) -> tuple[list[dict[str, Any]], 'Level']:
+    """The level's plane spawns (vehicle name, team, position, heading, the entry point) and the level."""
     from bfbc2core import level1943, vehicles1943
     level = level1943.load(lv, game=game, log=lambda *a: None)
     out = []
@@ -100,13 +117,14 @@ def plane_spawns(lv, game=None):
     return out, level
 
 
-def floor_grid(T, hf, x0, z0, nx, nz, pitch, sea):
+def floor_grid(T: Triangles, hf: 'terrain.Heightfield', x0: float, z0: float, nx: int, nz: int, pitch: float,
+               sea: float) -> Heights:
     """Highest terrain or collision per cell. T: the triangles, (n, 3 corners, x y z)."""
     top = np.full((nz, nx), -1e9)
-    for a in np.linspace(-0.5, 0.5, 5):
-        for b in np.linspace(-0.5, 0.5, 5):
+    for offset_x in np.linspace(-0.5, 0.5, 5):        # 5 x 5 terrain samples a cell
+        for offset_z in np.linspace(-0.5, 0.5, 5):
             I, J = np.meshgrid(np.arange(nx), np.arange(nz))      # cell column / row indices
-            top = np.maximum(top, hf.height(x0 + (I + a) * pitch, z0 + (J + b) * pitch))
+            top = np.maximum(top, hf.height(x0 + (I + offset_x) * pitch, z0 + (J + offset_z) * pitch))
     # each triangle's cell range (first and last cell in x and z) and its highest corner
     grid_corner = [x0 - pitch / 2, z0 - pitch / 2]
     cell_lo = np.floor((T[:, :, [0, 2]].min(1) - grid_corner) / pitch).astype(np.int64)
@@ -124,20 +142,22 @@ def floor_grid(T, hf, x0, z0, nx, nz, pitch, sea):
     return np.maximum(top, sea)
 
 
-def grow_max(a, cells):
+def grow_max(a: Heights, cells: float) -> Heights:
+    """Each cell the highest of a within a disc of `cells` radius."""
     out = a.copy()
     nz, nx = a.shape
     reach = int(math.ceil(cells))
     for dj in range(-reach, reach + 1):
         for di in range(-reach, reach + 1):
             if di * di + dj * dj <= cells * cells + 1e-9:
+                # the grid shifted by (di, dj): dst[r, c] takes src[r, c]
                 src = a[max(0, -dj):nz - max(0, dj), max(0, -di):nx - max(0, di)]
                 dst = out[max(0, dj):nz + min(0, dj), max(0, di):nx + min(0, di)]
                 np.maximum(dst, src, out=dst)
     return out
 
 
-def envelope(alt, pitch, climb):
+def envelope(alt: Heights, pitch: float, climb: float) -> Heights:
     """The lowest surface over alt whose rise between neighbouring cells is at most climb x their distance."""
     out = alt.copy()
     nz, nx = out.shape
@@ -153,7 +173,8 @@ def envelope(alt, pitch, climb):
     return out
 
 
-def obstacle_tops(T, hf, sea, cx, cz, half=OBS_WINDOW):
+def obstacle_tops(T: Triangles, hf: 'terrain.Heightfield', sea: float, cx: float, cz: float,
+                  half: float = OBS_WINDOW) -> Obstacles:
     """(x0, z0, top): the highest terrain or object per OBS_CELL cell over a window around (cx, cz), on the grid of
     rsnav's flightsim.Obstacles (cells from the height field's corner). T: the triangles, (n, 3 corners, x y z)."""
     hf_x0, hf_z0 = float(hf.min[0]), float(hf.min[2])
@@ -166,9 +187,9 @@ def obstacle_tops(T, hf, sea, cx, cz, half=OBS_WINDOW):
     x0, z0 = hf_x0 + i0 * OBS_CELL, hf_z0 + j0 * OBS_CELL
     top = np.full((nz, nx), -1e9)
     I, J = np.meshgrid(np.arange(nx), np.arange(nz))              # cell column / row indices
-    for a in np.linspace(0.0, 1.0, 5):
-        for b in np.linspace(0.0, 1.0, 5):
-            top = np.maximum(top, hf.height(x0 + (I + a) * OBS_CELL, z0 + (J + b) * OBS_CELL))
+    for offset_x in np.linspace(0.0, 1.0, 5):                       # 5 x 5 terrain samples a cell
+        for offset_z in np.linspace(0.0, 1.0, 5):
+            top = np.maximum(top, hf.height(x0 + (I + offset_x) * OBS_CELL, z0 + (J + offset_z) * OBS_CELL))
     # the triangles over the window, each sampled every 2 m or closer (barycentric points on a regular lattice)
     tri_lo, tri_hi = T[:, :, [0, 2]].min(1), T[:, :, [0, 2]].max(1)
     near = ((tri_hi[:, 0] >= x0) & (tri_lo[:, 0] <= x0 + nx * OBS_CELL)
@@ -178,14 +199,16 @@ def obstacle_tops(T, hf, sea, cx, cz, half=OBS_WINDOW):
                                          np.linalg.norm(tris[:, 1] - tris[:, 2], axis=1)),
                               np.linalg.norm(tris[:, 2] - tris[:, 0], axis=1))
     divisions = np.maximum(np.ceil(longest_edge / 2.0), 1).astype(np.int64)
-    for m in np.unique(divisions):
-        group = tris[divisions == m]
-        uv = np.array([(i / m, j / m) for i in range(m + 1) for j in range(m + 1 - i)])   # barycentric (u, v)
+    for division in np.unique(divisions):
+        group = tris[divisions == division]
+        # barycentric (u, v) of the lattice points
+        uv = np.array([(i / division, j / division) for i in range(division + 1) for j in range(division + 1 - i)])
         chunk_size = max(1, 2_000_000 // len(uv))
         for chunk_start in range(0, len(group), chunk_size):
             chunk = group[chunk_start:chunk_start + chunk_size]
-            points = chunk[:, None, 0] + uv[None, :, 0, None] * (chunk[:, None, 1] - chunk[:, None, 0]) + \
-                uv[None, :, 1, None] * (chunk[:, None, 2] - chunk[:, None, 0])
+            corner_a = chunk[:, None, 0]
+            points = corner_a + uv[None, :, 0, None] * (chunk[:, None, 1] - corner_a) + \
+                uv[None, :, 1, None] * (chunk[:, None, 2] - corner_a)
             points = points.reshape(-1, 3)
             cell_i = np.floor((points[:, 0] - x0) / OBS_CELL).astype(np.int64)
             cell_j = np.floor((points[:, 2] - z0) / OBS_CELL).astype(np.int64)
@@ -194,14 +217,14 @@ def obstacle_tops(T, hf, sea, cx, cz, half=OBS_WINDOW):
     return x0, z0, np.maximum(top, sea)
 
 
-def lane_check(obs, pa, pb, y):
+def lane_check(obs: Obstacles, pa: Point, pb: Point, y: float) -> tuple[bool, bool, float]:
     """(centre line clear, the roll carried to lift-off, the highest obstacle over the lane within the half wingspan)
     of the lane pa -> pb at height y: the flight test's rule (rsnav tests/test_flight.py lane_obstruction), the centre
     line +-CLEAR_ACROSS every metre from the start to CLEAR_PAST past the end, here every 1 m across."""
     x0, z0, top = obs
     nz, nx = top.shape
 
-    def obstacle_at(x, z):
+    def obstacle_at(x: float, z: float) -> float:
         i, j = int((x - x0) // OBS_CELL), int((z - z0) // OBS_CELL)
         return top[j, i] if 0 <= i < nx and 0 <= j < nz else -1e9
     yaw = math.atan2(pb[0] - pa[0], pb[2] - pa[2])
@@ -227,27 +250,29 @@ def lane_check(obs, pa, pb, y):
     return clear, carried, wing
 
 
-def segment_clear(floor, x0, z0, pitch, a, b, clear):
+def segment_clear(floor: Heights, x0: float, z0: float, pitch: float, a: Point, b: Point,
+                  clear: float) -> bool:
     """Whether the straight segment a -> b (x, y, z) stays clear above the floor grid (samples every half cell)."""
     steps = max(2, int(math.ceil(math.dist(a, b) / (pitch / 2))))
-    t = np.linspace(0, 1, steps + 1)
-    points = np.asarray(a)[None, :] + (np.asarray(b) - np.asarray(a))[None, :] * t[:, None]
+    along = np.linspace(0, 1, steps + 1)
+    points = np.asarray(a)[None, :] + (np.asarray(b) - np.asarray(a))[None, :] * along[:, None]
     i = np.clip(np.round((points[:, 0] - x0) / pitch).astype(int), 0, floor.shape[1] - 1)
     j = np.clip(np.round((points[:, 2] - z0) / pitch).astype(int), 0, floor.shape[0] - 1)
     return bool((points[:, 1] >= floor[j, i] + clear - 1e-6).all())
 
 
-def flight_box(hf, sea, pts):
+def flight_box(hf: 'terrain.Heightfield', sea: float, pts: Sequence[Sequence[float]]) \
+        -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """(min (x, z), max (x, z)) the plane world covers before it is fitted to the sectors: the land (terrain above the
     sea) and the points given (plane spawns, soldier nodes), MARGIN around. 2026-10-30 review: no terrain above the
     sea raised ValueError on an empty array; ValueError now only when there is neither land nor a point."""
     lo, hi = np.array([np.inf, np.inf]), np.array([-np.inf, -np.inf])
     land = hf.heights > sea
     if land.any():
-        jj, ii = np.nonzero(land)
+        land_j, land_i = np.nonzero(land)
         cell_x, cell_z = hf.cell
-        lo = np.array([hf.min[0] + ii.min() * cell_x, hf.min[2] + jj.min() * cell_z])
-        hi = np.array([hf.min[0] + (ii.max() + 1) * cell_x, hf.min[2] + (jj.max() + 1) * cell_z])
+        lo = np.array([hf.min[0] + land_i.min() * cell_x, hf.min[2] + land_j.min() * cell_z])
+        hi = np.array([hf.min[0] + (land_i.max() + 1) * cell_x, hf.min[2] + (land_j.max() + 1) * cell_z])
     if len(pts):
         points_xz = np.asarray(pts, float).reshape(-1, 3)[:, [0, 2]]
         lo, hi = np.minimum(lo, points_xz.min(0)), np.maximum(hi, points_xz.max(0))
@@ -256,12 +281,13 @@ def flight_box(hf, sea, pts):
     return lo - MARGIN, hi + MARGIN
 
 
-def lane_cell(point, lane_x0, lane_z0):
+def lane_cell(point: Point, lane_x0: float, lane_z0: float) -> tuple[int, int]:
     """The (i, j) lane cell (LANE_PITCH, from the lane grid's corner) nearest a point."""
     return int(round((point[0] - lane_x0) / LANE_PITCH)), int(round((point[2] - lane_z0) / LANE_PITCH))
 
 
-def build(lv, soldier_path=None, game=None, log=print):
+def build(lv: str, soldier_path: str | None = None, game: str | None = None,
+          log: Log = print) -> tuple[str, dict[str, Any]]:
     """The plane world: (rsnv path, stats). Reads the level from the game copy it was prepared from (2026-10-30:
     game=None read the default copy); a level without water flies over its terrain (soldier1943.sea_level)."""
     import soldier1943
@@ -302,14 +328,14 @@ def build(lv, soldier_path=None, game=None, log=print):
     air = rsnvgrid1943.CellSet(pitch, x0, z0, I.ravel(), J.ravel(), cruise.ravel(), links, name=f'{lv} air')
     # cruise nodes: the centre cell of each node_spacing x node_spacing block
     spacing = int(vc.value('plane', 'node_spacing'))
-    blocks = {}
+    blocks = {}                                     # (block i, block j): its centre cell
     for block_j in range(0, nz, spacing):
         for block_i in range(0, nx, spacing):
             centre_i, centre_j = min(block_i + spacing // 2, nx - 1), min(block_j + spacing // 2, nz - 1)
             blocks[(block_i // spacing, block_j // spacing)] = int(cell_index[centre_j, centre_i])
     cell_nodes = sorted(set(blocks.values()))
 
-    def cell_pos(k):
+    def cell_pos(k: int) -> tuple[float, float, float]:
         return air.x0 + air.i[k] * pitch, float(air.y[k]), air.z0 + air.j[k] * pitch
     edges = set()
     for (block_i, block_j), cell in blocks.items():
@@ -319,11 +345,11 @@ def build(lv, soldier_path=None, game=None, log=print):
                 edges.add((min(cell, other), max(cell, other)))
     node_list = [(0, k) for k in cell_nodes]
     node_of_cell = {k: n for n, k in enumerate(cell_nodes)}
-    edge_list = [(node_of_cell[a], node_of_cell[b], rsnv.EDGE_WALK, None, True) for a, b in sorted(edges)]
+    edge_list: list[Edge] = [(node_of_cell[a], node_of_cell[b], rsnv.EDGE_WALK, None, True) for a, b in sorted(edges)]
     node_pos = np.array([cell_pos(k) for k in cell_nodes])
     log(f'  {len(cell_nodes)} cruise nodes, {len(edges)} edges')
 
-    def nearest_cruise(x, z):
+    def nearest_cruise(x: float, z: float) -> int:
         dist2 = (node_pos[:, 0] - x) ** 2 + (node_pos[:, 2] - z) ** 2
         return int(np.argmin(dist2))
     # take-off and landing lanes: from the spawn along its heading [O: the planes face along the decks and fields],
@@ -389,10 +415,11 @@ def build(lv, soldier_path=None, game=None, log=print):
                       'soldier island': int(soldier.node_island[entry_node]) if entry_node is not None else None})
     # parachute drops: over bases and flags, and over each soldier island that is no carrier
     drops = []
-    targets = [(o.get('name'), o['position']) for o in getattr(level, 'objectives', []) if o.get('position')]
-    for k, island in enumerate(soldier.islands):          # island rows: (node count, a node of it, flags, ...)
-        if island[0] >= DROP_ISLAND_MIN and not island[2] & rsnv.ISLD_CARRIER and k != 0:
-            targets.append((f'island {k}', soldier.node_pos[island[1]].tolist()))
+    targets = [(objective.get('name'), objective['position']) for objective in getattr(level, 'objectives', [])
+               if objective.get('position')]
+    for island_no, island in enumerate(soldier.islands):   # island rows: (node count, a node of it, flags, ...)
+        if island[0] >= DROP_ISLAND_MIN and not island[2] & rsnv.ISLD_CARRIER and island_no != 0:
+            targets.append((f'island {island_no}', soldier.node_pos[island[1]].tolist()))
     for name, target in targets:
         dist = np.hypot(soldier.node_pos[:, 0] - target[0], soldier.node_pos[:, 2] - target[2])
         ground_node = int(np.argmin(dist))
@@ -421,8 +448,10 @@ def build(lv, soldier_path=None, game=None, log=print):
                 f'wing obstacle {lane["highest within the half wingspan m"]} m')
     sources = (('soldier rsnv', soldier_path), ('all_tris.npy', os.path.join(files['objects'], 'all_tris.npy')),
                ('heightfield.res', hf_path), ('navkit.json', os.path.join(files['navkit'], 'navkit.json')))
-    meta = {'sources': {k: {'path': v, 'sha256': rsnvgrid1943.sha256(v)} for k, v in sources if os.path.isfile(v)},
-            'class parameters': {k: list(v) if isinstance(v, tuple) else v for k, v in vc.CLASSES['plane'].items()},
+    meta = {'sources': {name: {'path': path, 'sha256': rsnvgrid1943.sha256(path)} for name, path in sources
+                        if os.path.isfile(path)},
+            'class parameters': {key: list(entry) if isinstance(entry, tuple) else entry
+                                 for key, entry in vc.CLASSES['plane'].items()},
             'grid': {'pitch': pitch, 'x0': x0, 'z0': z0, 'nx': nx, 'nz': nz,
                      'floor range': [float(floor.min()), float(floor.max())]},
             'edge kinds': 'walk: fly; jump: take-off climb-out; drop: landing approach', 'lanes': lanes,
@@ -437,11 +466,12 @@ def build(lv, soldier_path=None, game=None, log=print):
     return files['rsnv'], stats
 
 
-def choose_lane(obs, p0, yaw0):
+def choose_lane(obs: Obstacles, p0: npt.NDArray[np.float64], yaw0: float) -> Lane:
     """The take-off lane of a plane spawn: the spawn's own heading and takeoff_run [H] when clear (lane_check on the
     lane's nodes as the world will hold them: 2 m cell centres); else the first clear candidate by (start ahead,
     length longest, heading offset smallest, then the least wing obstacle); flagged when none is clear."""
-    def geometry(ahead, length, offset):
+    def geometry(ahead: float, length: float, offset: float) \
+            -> tuple[float, npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """(yaw, lane start, lane end) of a lane starting ahead m in front of the spawn, offset deg off its heading."""
         yaw = yaw0 + math.radians(offset)
         forward = np.array([math.sin(yaw), 0.0, math.cos(yaw)])
@@ -468,8 +498,13 @@ def choose_lane(obs, p0, yaw0):
                        '[U] no clear lane at any heading, 75-120 m, within 16 m of the spawn: kept, blocked')}
 
 
-def search_lane(obs, p0, yaw0, y, geometry, headings):
-    best = None                                          # (sort key, lane)
+def search_lane(obs: Obstacles, p0: npt.NDArray[np.float64], yaw0: float, y: float,
+                geometry: Callable[[float, float, float], tuple[float, npt.NDArray[np.float64],
+                                                                npt.NDArray[np.float64]]],
+                headings: Sequence[float]) -> Lane | None:
+    """The best clear and carried lane for headings: the nearest start, then the longest, then the smallest heading
+    offset, then the least wing obstacle; None when none is."""
+    best: tuple[tuple[float, float, float, float], Lane] | None = None     # (sort key, lane)
     for ahead in STARTS:
         for length in LENGTHS:
             for offset in headings:
@@ -489,21 +524,24 @@ def search_lane(obs, p0, yaw0, y, geometry, headings):
     return best[1] if best is not None else None
 
 
-def snap_lane(q):
+def snap_lane(point: Point) -> tuple[float, float, float]:
     """A lane end as the world holds it: the 2 m lane cell's centre (on the lane cell grid of build())."""
-    return (math.floor(q[0] / LANE_PITCH + 0.5) * LANE_PITCH, float(q[1]),
-            math.floor(q[2] / LANE_PITCH + 0.5) * LANE_PITCH)
+    return (math.floor(point[0] / LANE_PITCH + 0.5) * LANE_PITCH, float(point[1]),
+            math.floor(point[2] / LANE_PITCH + 0.5) * LANE_PITCH)
 
 
-def team_mask(team):
-    return {1: 1, 2: 2}.get(team, 3)
+def team_mask(team: int | None) -> int:
+    """The OFFM team mask of a spawn's team (1, 2; anything else: both)."""
+    masks: dict[int | None, int] = {1: 1, 2: 2}
+    return masks.get(team, 3)
 
 
-def soldier_node(S, p, reach, dy=3.5):
+def soldier_node(S: rsnv.World, p: Point, reach: float, dy: float = 3.5) -> int | None:
+    """rsnvgrid1943.soldier_node: the rule the runtime resolves a transfer with again. S: the soldier world."""
     return rsnvgrid1943.soldier_node(S, p, reach, dy)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog='airnav1943.py', description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('level')

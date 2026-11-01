@@ -43,6 +43,8 @@ import json
 import struct
 import sys
 import time
+from collections.abc import Callable
+from typing import Any, Protocol
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -66,16 +68,30 @@ BUTTONS = {name: bit for bit, name in enumerate(
     'SelectWeapon4 MapZoom SnapView SelectAll Select1 Select2 Select3'.split(), 8)}
 FACING_VALID = 40
 MATCH_CHANGED = 'the match ended or another replaced its mailbox during the hold: stopped, nothing more written'
-k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+k32 = ctypes.WinDLL('kernel32', use_last_error=True)    # kernel32.dll
+
+type Record = dict[str, Any]        # a state, command or flag record by field name (bots.py's names), with 'torn'
+type Snapshot = dict[str, Any]      # snapshot(): the tick, the mailbox and every bot's and capture point's record
 
 
-class MBI(ctypes.Structure):
+class GuestMemory(Protocol):
+    """What the readers here use of a guest: its base and big-endian reads and writes at guest addresses (Guest, or a
+    test's made-up guest)."""
+    base: int
+
+    def read(self, guest: int, size: int, /) -> bytes: ...
+    def u32(self, guest: int, /) -> int: ...
+    def write(self, guest: int, data: bytes, /) -> None: ...
+    def write_u32(self, guest: int, value: int, /) -> None: ...
+
+
+class MEMORY_BASIC_INFORMATION(ctypes.Structure):
     _fields_ = [('BaseAddress', ctypes.c_void_p), ('AllocationBase', ctypes.c_void_p), ('AllocationProtect', wt.DWORD),
                 ('PartitionId', wt.WORD), ('RegionSize', ctypes.c_size_t), ('State', wt.DWORD), ('Protect', wt.DWORD),
                 ('Type', wt.DWORD)]
 
 
-class PE32(ctypes.Structure):
+class PROCESSENTRY32(ctypes.Structure):
     _fields_ = [('dwSize', wt.DWORD), ('cntUsage', wt.DWORD), ('th32ProcessID', wt.DWORD),
                 ('th32DefaultHeapID', ctypes.c_void_p), ('th32ModuleID', wt.DWORD), ('cntThreads', wt.DWORD),
                 ('th32ParentProcessID', wt.DWORD), ('pcPriClassBase', ctypes.c_long), ('dwFlags', wt.DWORD),
@@ -84,31 +100,33 @@ class PE32(ctypes.Structure):
 
 k32.OpenProcess.restype = wt.HANDLE
 k32.CreateToolhelp32Snapshot.restype = wt.HANDLE
-k32.VirtualQueryEx.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.POINTER(MBI), ctypes.c_size_t]
+k32.VirtualQueryEx.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.POINTER(MEMORY_BASIC_INFORMATION), ctypes.c_size_t]
 k32.VirtualQueryEx.restype = ctypes.c_size_t
 k32.ReadProcessMemory.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
                                   ctypes.POINTER(ctypes.c_size_t)]
 k32.WriteProcessMemory.argtypes = k32.ReadProcessMemory.argtypes
 
 
-def xenia_processes():
+def xenia_processes() -> list[tuple[int, str]]:
     """[(pid, exe name)] of running Xenia processes."""
-    snap = k32.CreateToolhelp32Snapshot(2, 0)
+    snapshot_handle = k32.CreateToolhelp32Snapshot(2, 0)
     found = []
-    entry = PE32()
-    entry.dwSize = ctypes.sizeof(PE32)
-    ok = k32.Process32First(snap, ctypes.byref(entry))
+    entry = PROCESSENTRY32()
+    entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+    ok = k32.Process32First(snapshot_handle, ctypes.byref(entry))
     while ok:
         name = entry.szExeFile.decode('ascii', 'replace')
         if name.lower() in XENIA_NAMES:
             found.append((entry.th32ProcessID, name))
-        ok = k32.Process32Next(snap, ctypes.byref(entry))
-    k32.CloseHandle(snap)
+        ok = k32.Process32Next(snapshot_handle, ctypes.byref(entry))
+    k32.CloseHandle(snapshot_handle)
     return found
 
 
 class Guest:
-    def __init__(self, pid=None):
+    """A running Xenia's guest memory, read and written with ReadProcessMemory / WriteProcessMemory at its base."""
+
+    def __init__(self, pid: int | None = None) -> None:
         if pid is None:
             procs = xenia_processes()
             if not procs:
@@ -119,14 +137,14 @@ class Guest:
         else:
             self.exe = '?'
         self.pid = pid
-        self.handle = k32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE |
-                                      PROCESS_VM_OPERATION, False, pid)
+        access = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION
+        self.handle = k32.OpenProcess(access, False, pid)
         if not self.handle:
             raise PermissionError(f'cannot open Xenia (process {pid}), Windows error {ctypes.get_last_error()}: '
                                   f'run this as the same user as Xenia')
         self.base, self.how = self.find_base()
 
-    def raw_read(self, address, size):
+    def raw_read(self, address: int, size: int) -> bytes | None:
         buf = ctypes.create_string_buffer(size)
         done = ctypes.c_size_t()
         if not k32.ReadProcessMemory(self.handle, ctypes.c_void_p(address), buf, size, ctypes.byref(done)) \
@@ -134,126 +152,137 @@ class Guest:
             return None
         return buf.raw
 
-    def find_base(self):
+    def find_base(self) -> tuple[int, str]:
+        """(host address of guest 0, how it was found)."""
         for n in range(32, 47):
             if self.raw_read((1 << n) + IMAGE, 2) == b'MZ':
                 return 1 << n, f'reserved at 1 << {n}'
-        mbi, address = MBI(), 0
-        while k32.VirtualQueryEx(self.handle, ctypes.c_void_p(address), ctypes.byref(mbi), ctypes.sizeof(mbi)):
-            start = mbi.BaseAddress or 0
-            if mbi.State == MEM_COMMIT and mbi.Type == MEM_MAPPED and start >= IMAGE \
+        region, address = MEMORY_BASIC_INFORMATION(), 0
+        while k32.VirtualQueryEx(self.handle, ctypes.c_void_p(address), ctypes.byref(region), ctypes.sizeof(region)):
+            start = region.BaseAddress or 0
+            if region.State == MEM_COMMIT and region.Type == MEM_MAPPED and start >= IMAGE \
                     and self.raw_read(start, 2) == b'MZ':
                 return start - IMAGE, 'a mapped region starting with MZ'
-            address = start + mbi.RegionSize
+            address = start + region.RegionSize
         raise RuntimeError('no guest memory with MZ at 0x82000000 in this Xenia: is a game running?')
 
-    def read(self, guest, size):
+    def read(self, guest: int, size: int) -> bytes:
         data = self.raw_read(self.base + guest, size)
         if data is None:
             raise OSError(f'cannot read guest {guest:#010x} ({size} bytes)')
         return data
 
-    def u32(self, guest):
+    def u32(self, guest: int) -> int:
         return struct.unpack('>I', self.read(guest, 4))[0]
 
-    def write(self, guest, data):
+    def write(self, guest: int, data: bytes) -> None:
         """data at a guest address in one WriteProcessMemory call."""
         done = ctypes.c_size_t()
         if not k32.WriteProcessMemory(self.handle, ctypes.c_void_p(self.base + guest), data, len(data),
                                       ctypes.byref(done)) or done.value != len(data):
-            raise OSError(f'cannot write guest {guest:#010x} ({len(data)} bytes), Windows error {ctypes.get_last_error()}')
+            raise OSError(f'cannot write guest {guest:#010x} ({len(data)} bytes), '
+                          f'Windows error {ctypes.get_last_error()}')
 
-    def write_u32(self, guest, value):
+    def write_u32(self, guest: int, value: int) -> None:
         self.write(guest, struct.pack('>I', value))
 
 
-def f32(bits):
+def f32(bits: int) -> float:
     return struct.unpack('>f', struct.pack('>I', bits))[0]
 
 
-def bits32(value):
+def bits32(value: float) -> int:
     return struct.unpack('>I', struct.pack('>f', value))[0]
 
 
-def button_names(mask):
-    names = [n for n, b in BUTTONS.items() if mask >> b & 1] + (['facing'] if mask >> FACING_VALID & 1 else [])
+def button_names(mask: int) -> str:
+    names = [name for name, bit in BUTTONS.items() if mask >> bit & 1]
+    names += ['facing'] if mask >> FACING_VALID & 1 else []
     return ','.join(names) or 'none'
 
 
-def bot_code_state(g):
+def bot_code_state(guest: GuestMemory) -> tuple[str, int]:
     """'applied' (the bot code, and the hook branching to it), 'unhooked' (the code without that hook: it never
     runs), 'absent' (the cave is zero and the hook the game's own: a normal build) or 'other', and the hook word."""
     words, code, tail = bots.build()
     blob = code + tail
-    have = g.read(bots.CODE, len(blob))
-    hook = g.u32(bots.HOOK)
+    have = guest.read(bots.CODE, len(blob))
+    hook = guest.u32(bots.HOOK)
     if have == blob:
-        return ('applied' if hook == dict((a, w) for a, w, _ in words)[bots.HOOK] else 'unhooked'), hook
+        patched = dict((address, word) for address, word, _ in words)[bots.HOOK]
+        return ('applied' if hook == patched else 'unhooked'), hook
     return ('absent' if not any(have) and hook == bots.HOOK_ORIGINAL else 'other'), hook
 
 
-def block_of(g):
+def block_of(guest: GuestMemory) -> int | None:
     """The mailbox block's guest address, or None (no match running yet, or not mailbox v2)."""
-    magic, block = struct.unpack('>II', g.read(bots.DATA + bots.MBOX_MAGIC, 8))
+    magic, block = struct.unpack('>II', guest.read(bots.DATA + bots.MBOX_MAGIC, 8))
     if magic != bots.MAGIC or not block:
         return None
-    head = struct.unpack('>4I', g.read(block, 16))
+    head = struct.unpack('>4I', guest.read(block, 16))
     if head != (bots.MAGIC, bots.VERSION, bots.MAX_BOTS, bots.BOT_SIZE):
         raise RuntimeError(f'the mailbox at {block:#010x} is not v{bots.VERSION} as bots.py lays it out: {head}')
     return block
 
 
-def words(g, address, count):
-    return struct.unpack(f'>{count}I', g.read(address, 4 * count))
+def words(guest: GuestMemory, address: int, count: int) -> tuple[int, ...]:
+    return struct.unpack(f'>{count}I', guest.read(address, 4 * count))
 
 
-def record_words(g, address, first, last, count):
+def record_words(guest: GuestMemory, address: int, first: int, last: int, count: int) -> tuple[tuple[int, ...], bool]:
     """A state or flag record's count words, read whole under its two-word lock (bots.py; bots.host_record): the
     closing tick (last), the words, then the opening tick (first), each read after the one before; whole when the two
     ticks are the same, else tried again, bots.TRIES times in all. (words, torn): torn when no read was whole (the
     last read's words, which may mix two ticks). The two ticks of one copy are not compared: a copy can take the old
     opening tick, new fields and the old closing tick."""
+    record: tuple[int, ...] = ()
     for _ in range(bots.TRIES):
-        end = g.u32(address + last)
-        w = words(g, address, count)
-        if g.u32(address + first) == end:
-            return w, False
-    return w, True
+        end = guest.u32(address + last)
+        record = words(guest, address, count)
+        if guest.u32(address + first) == end:
+            return record, False
+    return record, True
 
 
-def bot_record(g, block, k):
+BOT_FIELDS = ('R_SEQ', 'R_PLAYER', 'R_SOLDIER', 'R_TEAM', 'R_X', 'R_Y', 'R_Z', 'R_SEQ_END', 'C_STAMP', 'C_THROTTLE',
+              'C_STRAFE', 'C_YAW', 'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO')
+
+
+def bot_record(guest: GuestMemory, block: int, k: int) -> Record:
     """Slot k's state record (read whole, record_words: torn when it could not be) and command record."""
     at = block + bots.BOT0 + bots.BOT_SIZE * k
-    w, torn = record_words(g, at, bots.R_SEQ, bots.R_SEQ_END, bots.R_SEQ_END // 4 + 1)
-    w += words(g, at + bots.C_STAMP, (bots.BOT_SIZE - bots.C_STAMP) // 4)
-    r = {name: w[getattr(bots, name) // 4] for name in ('R_SEQ', 'R_PLAYER', 'R_SOLDIER', 'R_TEAM', 'R_X', 'R_Y', 'R_Z',
-                                                        'R_SEQ_END', 'C_STAMP', 'C_THROTTLE', 'C_STRAFE', 'C_YAW',
-                                                        'C_PITCH', 'C_BUTTONS_HI', 'C_BUTTONS_LO')}
-    r['torn'] = torn
-    return r
+    state, torn = record_words(guest, at, bots.R_SEQ, bots.R_SEQ_END, bots.R_SEQ_END // 4 + 1)
+    record_words_all = state + words(guest, at + bots.C_STAMP, (bots.BOT_SIZE - bots.C_STAMP) // 4)
+    record: Record = {name: record_words_all[getattr(bots, name) // 4] for name in BOT_FIELDS}
+    record['torn'] = torn
+    return record
 
 
-def flag_records(g, block):
+def flag_records(guest: GuestMemory, block: int) -> list[Record]:
     """The capture points' records, each read whole under its own two ticks. The header's count (H_FLAGS) is not
     locked with them: a record whose tick is older than the newest one read is left from a tick that found more capture
     points (or the count was read mid-update), and is marked stale."""
-    n = min(g.u32(block + bots.H_FLAGS), bots.MAX_FLAGS)
+    count = min(guest.u32(block + bots.H_FLAGS), bots.MAX_FLAGS)
     out = []
-    for f in range(n):
-        w, torn = record_words(g, block + bots.FLAG0 + bots.FLAG_SIZE * f, bots.F_SEQ, bots.F_SEQ_END,
-                               bots.FLAG_SIZE // 4)
-        get = lambda name: w[getattr(bots, name) // 4]
-        out.append(dict(index=f, entity=f'{get("F_ENTITY"):08x}', owner=get('F_OWNER'),
-                        control=round(f32(get('F_CONTROL')), 1), enabled=get('F_ENABLED'),
-                        radius=round(f32(get('F_RADIUS')), 2), position=[round(f32(get(n)), 2) for n in ('F_X', 'F_Y', 'F_Z')],
-                        tick=get('F_SEQ'), torn=torn))
-    newest = max((r['tick'] for r in out if not r['torn']), default=0)
-    for r in out:
-        r['stale'] = not r['torn'] and r['tick'] < newest
+    for index in range(count):
+        record, torn = record_words(guest, block + bots.FLAG0 + bots.FLAG_SIZE * index, bots.F_SEQ, bots.F_SEQ_END,
+                                    bots.FLAG_SIZE // 4)
+
+        def field(name: str) -> int:
+            return record[getattr(bots, name) // 4]
+        out.append(dict(index=index, entity=f'{field("F_ENTITY"):08x}', owner=field('F_OWNER'),
+                        control=round(f32(field('F_CONTROL')), 1), enabled=field('F_ENABLED'),
+                        radius=round(f32(field('F_RADIUS')), 2),
+                        position=[round(f32(field(name)), 2) for name in ('F_X', 'F_Y', 'F_Z')],
+                        tick=field('F_SEQ'), torn=torn))
+    newest = max((flag['tick'] for flag in out if not flag['torn']), default=0)
+    for flag in out:
+        flag['stale'] = not flag['torn'] and flag['tick'] < newest
     return out
 
 
-def write_command(g, block, k, stamp, throttle=0.0, strafe=0.0, yaw=0.0, pitch=0.0, buttons=0):
+def write_command(guest: GuestMemory, block: int, k: int, stamp: int, throttle: float = 0.0, strafe: float = 0.0,
+                  yaw: float = 0.0, pitch: float = 0.0, buttons: int = 0) -> None:
     """Slot k's command under its sequence lock (bots.py, C_SEQ; as navhost writes it): the sequence odd, the stamp
     and fields in one write, then the sequence even and new: three writes, so the record is open as briefly as the
     process calls allow (a guest read that finds it open uses the bot's last whole command; before 2026-10-30 each field
@@ -263,81 +292,96 @@ def write_command(g, block, k, stamp, throttle=0.0, strafe=0.0, yaw=0.0, pitch=0
                          buttons & 0xFFFFFFFF)
     if bots.C_BUTTONS_LO + 4 - bots.C_STAMP != len(fields):
         raise RuntimeError('the command record\'s fields are not seven consecutive words: bots.py changed its layout')
-    odd = (g.u32(at + bots.C_SEQ) + 1 | 1) & 0xFFFFFFFF
-    g.write_u32(at + bots.C_SEQ, odd)
-    g.write(at + bots.C_STAMP, fields)
-    g.write_u32(at + bots.C_SEQ, (odd + 1) & 0xFFFFFFFF)
+    odd = (guest.u32(at + bots.C_SEQ) + 1 | 1) & 0xFFFFFFFF
+    guest.write_u32(at + bots.C_SEQ, odd)
+    guest.write(at + bots.C_STAMP, fields)
+    guest.write_u32(at + bots.C_SEQ, (odd + 1) & 0xFFFFFFFF)
 
 
-def snapshot(g):
-    d = bots.DATA
-    block = block_of(g)
-    s = dict(time=time.strftime('%I:%M:%S %p'), clock=time.time(), state=g.u32(d + bots.STATE),
-             manager=g.u32(d + bots.MANAGER), tick=g.u32(d + bots.TICK),
-             mailbox=f'{block:08x}' if block else None, bots=[], flags=[])
+def bot_entry(guest: GuestMemory, record: Record, slot: int, tick: int) -> dict[str, Any]:
+    """One live bot slot as snapshot() lists it: its state, its command and, with a soldier, health and aim."""
+    def position_bits(name: str) -> str:
+        return f'{record[name]:08x}'
+    buttons = button_names(record['C_BUTTONS_HI'] << 32 | record['C_BUTTONS_LO'])
+    command = dict(stamp=record['C_STAMP'], age=(tick - record['C_STAMP']) & 0xFFFFFFFF,
+                   throttle=f32(record['C_THROTTLE']), strafe=f32(record['C_STRAFE']),
+                   yaw=f32(record['C_YAW']), pitch=f32(record['C_PITCH']), buttons=buttons)
+    bot: dict[str, Any] = dict(
+        slot=slot, player=f'{record["R_PLAYER"]:08x}', team=record['R_TEAM'], record_tick=record['R_SEQ'],
+        torn=record['torn'], position_bits=' '.join(position_bits(name) for name in ('R_X', 'R_Y', 'R_Z')),
+        position=[round(f32(record[name]), 3) for name in ('R_X', 'R_Y', 'R_Z')], command=command)
+    soldier = record['R_SOLDIER']
+    if soldier:
+        bot['soldier'] = f'{soldier:08x}'
+        try:
+            bot['health'] = round(f32(guest.u32(soldier + 0x3c)), 2)
+            aim = guest.u32(soldier + 0x230)
+            if aim:
+                bot.update(aim_yaw=round(f32(guest.u32(aim + 4)), 4), aim_pitch=round(f32(guest.u32(aim + 8)), 4))
+        except OSError:
+            bot['soldier'] = 'unreadable'
+    return bot
+
+
+def snapshot(guest: GuestMemory) -> Snapshot:
+    data = bots.DATA
+    block = block_of(guest)
+    snap: Snapshot = dict(time=time.strftime('%I:%M:%S %p'), clock=time.time(), state=guest.u32(data + bots.STATE),
+                          manager=guest.u32(data + bots.MANAGER), tick=guest.u32(data + bots.TICK),
+                          mailbox=f'{block:08x}' if block else None, bots=[], flags=[])
     if not block:
-        return s
-    s['flags'] = flag_records(g, block)
+        return snap
+    snap['flags'] = flag_records(guest, block)
     for k in range(bots.MAX_BOTS):
-        r = bot_record(g, block, k)
-        if not r['R_PLAYER']:
+        record = bot_record(guest, block, k)
+        if not record['R_PLAYER']:
             continue
-        b = dict(slot=k, player=f'{r["R_PLAYER"]:08x}', team=r['R_TEAM'], record_tick=r['R_SEQ'], torn=r['torn'],
-                 position_bits=f'{r["R_X"]:08x} {r["R_Y"]:08x} {r["R_Z"]:08x}',
-                 position=[round(f32(r[n]), 3) for n in ('R_X', 'R_Y', 'R_Z')],
-                 command=dict(stamp=r['C_STAMP'], age=(s['tick'] - r['C_STAMP']) & 0xFFFFFFFF,
-                              throttle=f32(r['C_THROTTLE']), strafe=f32(r['C_STRAFE']), yaw=f32(r['C_YAW']),
-                              pitch=f32(r['C_PITCH']), buttons=button_names(r['C_BUTTONS_HI'] << 32 | r['C_BUTTONS_LO'])))
-        soldier = r['R_SOLDIER']
-        if soldier:
-            b['soldier'] = f'{soldier:08x}'
-            try:
-                b['health'] = round(f32(g.u32(soldier + 0x3c)), 2)
-                aim = g.u32(soldier + 0x230)
-                if aim:
-                    b.update(aim_yaw=round(f32(g.u32(aim + 4)), 4), aim_pitch=round(f32(g.u32(aim + 8)), 4))
-            except OSError:
-                b['soldier'] = 'unreadable'
-        s['bots'].append(b)
-    return s
+        snap['bots'].append(bot_entry(guest, record, k, snap['tick']))
+    return snap
 
 
-def show(s, only=None):
-    print(f'{s["time"]}  tick {s["tick"]}  mailbox {s["mailbox"] or "none"}  bots {len(s["bots"])}  '
-          f'capture points {len(s["flags"])}')
-    for f in s['flags'] if only is None else []:
-        x, y, z = f['position']
-        print(f'  flag {f["index"]}  owner {f["owner"]}  control {f["control"]:5.1f}  radius {f["radius"]:g}  '
-              f'enabled {f["enabled"]}  at {x:9.2f} {y:8.2f} {z:9.2f}{"  (torn)" if f["torn"] else "  (stale)" if f.get("stale") else ""}')
-    for b in s['bots']:
-        if only is not None and b['slot'] != only:
+def show(snap: Snapshot, only: int | None = None) -> None:
+    print(f'{snap["time"]}  tick {snap["tick"]}  mailbox {snap["mailbox"] or "none"}  bots {len(snap["bots"])}  '
+          f'capture points {len(snap["flags"])}')
+    for flag in snap['flags'] if only is None else []:
+        x, y, z = flag['position']
+        state = '  (torn)' if flag['torn'] else '  (stale)' if flag.get('stale') else ''
+        print(f'  flag {flag["index"]}  owner {flag["owner"]}  control {flag["control"]:5.1f}  '
+              f'radius {flag["radius"]:g}  enabled {flag["enabled"]}  at {x:9.2f} {y:8.2f} {z:9.2f}{state}')
+    for bot in snap['bots']:
+        if only is not None and bot['slot'] != only:
             continue
-        x, y, z = b['position']
-        c = b['command']
-        extra = (f'  health {b["health"]:g}' if 'health' in b else '  no soldier') + \
-            (f'  aim {b["aim_yaw"]:+.3f} {b["aim_pitch"]:+.3f}' if 'aim_yaw' in b else '')
-        cmd = (f'  cmd age {c["age"]} thr {c["throttle"]:+.2f} str {c["strafe"]:+.2f} yaw {c["yaw"]:+.3f} '
-               f'{c["buttons"]}' if c['age'] <= bots.STALE else '  cmd stale')
-        print(f'  slot {b["slot"]:2d}  team {b["team"]}  player {b["player"]}  position {x:9.3f} {y:8.3f} {z:9.3f}'
-              f'{extra}{cmd}{"  (torn)" if b["torn"] else ""}')
+        x, y, z = bot['position']
+        command = bot['command']
+        health = f'  health {bot["health"]:g}' if 'health' in bot else '  no soldier'
+        aim = f'  aim {bot["aim_yaw"]:+.3f} {bot["aim_pitch"]:+.3f}' if 'aim_yaw' in bot else ''
+        if command['age'] <= bots.STALE:
+            cmd = (f'  cmd age {command["age"]} thr {command["throttle"]:+.2f} str {command["strafe"]:+.2f} '
+                   f'yaw {command["yaw"]:+.3f} {command["buttons"]}')
+        else:
+            cmd = '  cmd stale'
+        print(f'  slot {bot["slot"]:2d}  team {bot["team"]}  player {bot["player"]}  '
+              f'position {x:9.3f} {y:8.3f} {z:9.3f}{health}{aim}{cmd}{"  (torn)" if bot["torn"] else ""}')
 
 
-def slots_of(opts):
-    n = opts.get('--slot', 'all')
-    if n == 'all':
+def slots_of(opts: dict[str, str]) -> list[int]:
+    slot = opts.get('--slot', 'all')
+    if slot == 'all':
         return list(range(bots.MAX_BOTS))
-    k = int(n)
+    k = int(slot)
     if not 0 <= k < bots.MAX_BOTS:
         raise ValueError(f'--slot: 0 to {bots.MAX_BOTS - 1}, or all')
     return [k]
 
 
-def still_block(g, block):
+def still_block(guest: GuestMemory, block: int) -> bool:
     """Whether the data area still names this block (its magic and address): a new match replaces or clears it."""
-    return struct.unpack('>II', g.read(bots.DATA + bots.MBOX_MAGIC, 8)) == (bots.MAGIC, block)
+    return struct.unpack('>II', guest.read(bots.DATA + bots.MBOX_MAGIC, 8)) == (bots.MAGIC, block)
 
 
-def drive(g, block, slots, hold, press, throttle=0.0, strafe=0.0, yaw=None, pitch=None, mask=0, sleep=time.sleep):
+def drive(guest: GuestMemory, block: int, slots: list[int], hold: float, press: float | None, throttle: float = 0.0,
+          strafe: float = 0.0, yaw: float | None = None, pitch: float | None = None, mask: int = 0,
+          sleep: Callable[[float], object] = time.sleep) -> bool:
     """Keeps the commands fresh for hold seconds (about 60 times a second, stamped with the guest's tick), the
     buttons in mask for the first press seconds (all of hold when press is None), then zeroes them. Each round
     first checks that the data area still names the block: once a match ends or another replaces it, nothing more
@@ -348,80 +392,97 @@ def drive(g, block, slots, hold, press, throttle=0.0, strafe=0.0, yaw=None, pitc
     ours = True
     try:
         while True:
-            t = time.time() - start
-            buttons = facing | (mask if press is None or t < press else 0)
-            tick = g.u32(bots.DATA + bots.TICK)
-            ours = still_block(g, block)
+            elapsed = time.time() - start
+            buttons = facing | (mask if press is None or elapsed < press else 0)
+            tick = guest.u32(bots.DATA + bots.TICK)
+            ours = still_block(guest, block)
             if not ours:
                 return False
             for k in slots:
-                write_command(g, block, k, tick, throttle, strafe, yaw or 0.0, pitch or 0.0, buttons)
-            if t >= hold:
+                write_command(guest, block, k, tick, throttle, strafe, yaw or 0.0, pitch or 0.0, buttons)
+            if elapsed >= hold:
                 return True
             sleep(1 / 60)
     finally:
-        if ours and still_block(g, block):
+        if ours and still_block(guest, block):
             for k in slots:
-                write_command(g, block, k, 0)
+                write_command(guest, block, k, 0)
 
 
-def main(argv, guest=None, sleep=time.sleep):
-    if any(a in ('-h', '--help') for a in argv[1:]) or len(argv) < 2 or \
-            argv[1] not in ('attach', 'bots', 'throttle', 'input', 'stop', 'watch'):
+COMMANDS = ('attach', 'bots', 'throttle', 'input', 'stop', 'watch')
+
+
+def main(argv: list[str], guest: GuestMemory | None = None, sleep: Callable[[float], object] = time.sleep) -> int:
+    if any(arg in ('-h', '--help') for arg in argv[1:]) or len(argv) < 2 or argv[1] not in COMMANDS:
         print(__doc__)
         return 0 if len(argv) > 1 and argv[1] in ('-h', '--help') else 1
     opts = dict(zip(argv[2:], argv[3:]))
     pid = int(opts['--pid']) if '--pid' in opts else None
-    g = guest or Guest(pid)
-    state, hook = bot_code_state(g)
+    guest = guest or Guest(pid)
+    state, hook = bot_code_state(guest)
     cmd = argv[1]
     if cmd == 'attach':
-        print(f'Xenia {getattr(g, "exe", "?")} process {getattr(g, "pid", "?")}: guest base {g.base:#x} '
-              f'({getattr(g, "how", "?")}); MZ at {IMAGE:#010x}')
+        print(f'Xenia {getattr(guest, "exe", "?")} process {getattr(guest, "pid", "?")}: guest base {guest.base:#x} '
+              f'({getattr(guest, "how", "?")}); MZ at {IMAGE:#010x}')
         print(f'bot code at {bots.CODE:#010x}: {state}; hook {bots.HOOK:#010x} = {hook:#010x}')
         if state == 'applied':
-            block = block_of(g)
-            print(f'mailbox v{bots.VERSION}: ' + (f'at {block:#010x}' if block else 'not made yet (no match with bots)'))
+            block = block_of(guest)
+            where = f'at {block:#010x}' if block else 'not made yet (no match with bots)'
+            print(f'mailbox v{bots.VERSION}: ' + where)
         return 0 if state == 'applied' else 1
     if state != 'applied':
-        raise RuntimeError(f'the bots experiment is not in guest memory ({state}): build the kit with --experiment-bots')
+        raise RuntimeError(f'the bots experiment is not in guest memory ({state}): '
+                           'build the kit with --experiment-bots')
     if cmd in ('bots', 'watch'):
-        seconds = float(argv[2]) if cmd == 'watch' and len(argv) > 2 and not argv[2].startswith('--') else 0
-        every = float(opts.get('--every', 1))
-        only = int(opts['--slot']) if '--slot' in opts else None
-        shots = []
-        end = time.time() + seconds
-        while True:
-            shots.append(snapshot(g))
-            show(shots[-1], only)
-            if time.time() + every > end:
-                break
-            sleep(every)
-        if '--json' in opts:
-            with open(opts['--json'], 'w', encoding='utf-8', newline='\n') as f:
-                json.dump(dict(pid=getattr(g, 'pid', None), exe=getattr(g, 'exe', None), base=f'{g.base:#x}',
-                               snapshots=shots), f, indent=1)
-        return 0
-    block = block_of(g)
+        return watch(guest, argv, opts, sleep)
+    block = block_of(guest)
     if not block:
         raise RuntimeError('no mailbox yet: the bots are made once a match runs and the host player has a soldier')
     if cmd == 'stop':
         for k in range(bots.MAX_BOTS):
-            write_command(g, block, k, 0)
+            write_command(guest, block, k, 0)
         print(f'every command zeroed ({bots.MAX_BOTS} slots)')
         return 0
     if cmd == 'throttle':
         if len(argv) < 3 or argv[2].startswith('--'):
             raise ValueError('throttle needs a value, such as 0 or 1')
         opts = dict(zip(argv[3:], argv[4:]))
-        if not drive(g, block, slots_of(opts), float(opts.get('--hold', 10)), None, throttle=float(argv[2]), sleep=sleep):
+        slots = slots_of(opts)
+        if not drive(guest, block, slots, float(opts.get('--hold', 10)), None, throttle=float(argv[2]), sleep=sleep):
             print(MATCH_CHANGED)
             return 1
         print(f'throttle {float(argv[2]):g} held {float(opts.get("--hold", 10)):g} s, then zeroed')
         return 0
+    return drive_input(guest, block, argv, opts, sleep)
+
+
+def watch(guest: GuestMemory, argv: list[str], opts: dict[str, str], sleep: Callable[[float], object]) -> int:
+    """bots and watch: snapshots every --every seconds for the given seconds (bots: one), shown and kept for --json."""
+    cmd = argv[1]
+    seconds = float(argv[2]) if cmd == 'watch' and len(argv) > 2 and not argv[2].startswith('--') else 0
+    every = float(opts.get('--every', 1))
+    only = int(opts['--slot']) if '--slot' in opts else None
+    shots = []
+    end = time.time() + seconds
+    while True:
+        shots.append(snapshot(guest))
+        show(shots[-1], only)
+        if time.time() + every > end:
+            break
+        sleep(every)
+    if '--json' in opts:
+        with open(opts['--json'], 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(dict(pid=getattr(guest, 'pid', None), exe=getattr(guest, 'exe', None), base=f'{guest.base:#x}',
+                           snapshots=shots), f, indent=1)
+    return 0
+
+
+def drive_input(guest: GuestMemory, block: int, argv: list[str], opts: dict[str, str],
+                sleep: Callable[[float], object]) -> int:
+    """input: the given throttle, strafe, facing and buttons held for --hold seconds, then zeroed."""
     given = argv[2::2]
     allowed = ('--throttle', '--strafe', '--yaw', '--pitch', '--buttons', '--slot', '--press', '--hold', '--pid')
-    if any(a not in allowed for a in given) or len(argv) % 2:
+    if any(option not in allowed for option in given) or len(argv) % 2:
         raise ValueError(f'input: options are {", ".join(allowed[:-1])} (each with a value); got {" ".join(argv[2:])}')
     mask = 0
     for name in opts.get('--buttons', 'none').split(','):
@@ -430,9 +491,12 @@ def main(argv, guest=None, sleep=time.sleep):
         if name not in BUTTONS:
             raise ValueError(f'unknown button {name}: one of {", ".join(BUTTONS)}')
         mask |= 1 << BUTTONS[name]
-    num = lambda k: float(opts[k]) if k in opts else None
-    if not drive(g, block, slots_of(opts), float(opts.get('--hold', 10)), num('--press'), throttle=num('--throttle') or 0.0,
-                 strafe=num('--strafe') or 0.0, yaw=num('--yaw'), pitch=num('--pitch'), mask=mask, sleep=sleep):
+
+    def number(option: str) -> float | None:
+        return float(opts[option]) if option in opts else None
+    if not drive(guest, block, slots_of(opts), float(opts.get('--hold', 10)), number('--press'),
+                 throttle=number('--throttle') or 0.0, strafe=number('--strafe') or 0.0, yaw=number('--yaw'),
+                 pitch=number('--pitch'), mask=mask, sleep=sleep):
         print(MATCH_CHANGED)
         return 1
     print(f'held {float(opts.get("--hold", 10)):g} s, then zeroed')

@@ -1,5 +1,8 @@
 """Parse Xenia function trace files (functions.N) from a probe session and map them onto BF1943 .pdata functions.
 
+Reads the session's functions.N files and work/xex-analysis/functions.tsv; writes function-coverage.tsv and
+function-coverage.json into the session folder.
+
 Record layout from xenia-canary src/xenia/cpu/function_trace_data.h at e6cd2e4bc (the installed build; copy in
 work/tools/xenia-canary-src): u32 data_size, u32 start, u32 end, u32 type, u64 thread mask, u64 call count,
 u32 caller history[4], then u64 execute count per instruction. Little-endian (host) layout.
@@ -14,16 +17,18 @@ import csv  # noqa: E402
 import hashlib  # noqa: E402
 import json  # noqa: E402
 import struct  # noqa: E402
+from typing import Any  # noqa: E402
+
 from workspace import research_root  # noqa: E402
 
 FORMAT_SHA256 = 'be26cf69639117985c7c9bd2c7c52d60a6125111039ed1221f1197f3b34eb334'
 HEADER = struct.Struct('<IIIIQQ4I')
 
 
-def read_records(session):
+def read_records(session: Path) -> dict[int, dict[str, Any]]:
     """The trace records of every functions.N file, merged by function start: {start: record}."""
-    records = {}
-    for path in sorted(session.glob('functions.*'), key=lambda p: int(p.suffix[1:])):
+    records: dict[int, dict[str, Any]] = {}
+    for path in sorted(session.glob('functions.*'), key=lambda trace: int(trace.suffix[1:])):
         data = path.read_bytes()
         offset = 0
         while offset + HEADER.size <= len(data):
@@ -42,7 +47,7 @@ def read_records(session):
     return records
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     trace_format = (root / 'work/tools/xenia-canary-src/function_trace_data.h').read_bytes()
     assert hashlib.sha256(trace_format).hexdigest() == FORMAT_SHA256
@@ -52,7 +57,7 @@ def main():
                  for row in csv.DictReader((root / 'work/xex-analysis/functions.tsv').open(), delimiter='\t')]
     starts = [start for start, _ in functions]
 
-    def pdata_function(address):
+    def pdata_function(address: int) -> tuple[int, int] | None:
         i = bisect.bisect_right(starts, address) - 1
         return functions[i] if i >= 0 and address < functions[i][1] else None
 
@@ -69,7 +74,8 @@ def main():
                          threads=bin(record['threads']).count('1'),
                          callers=' '.join(f'{caller:08x}' for caller in sorted(record['callers']))))
     with (session / 'function-coverage.tsv').open('w', encoding='utf-8', newline='') as out:
-        writer = csv.DictWriter(out, fieldnames=list(rows[0]) if rows else ['start'], delimiter='\t', lineterminator='\n')
+        writer = csv.DictWriter(out, fieldnames=list(rows[0]) if rows else ['start'], delimiter='\t',
+                                lineterminator='\n')
         writer.writeheader()
         writer.writerows(rows)
     summary = dict(session=session.name, format_sha256=FORMAT_SHA256, trace_records=len(records),
@@ -77,7 +83,8 @@ def main():
                    pdata_functions=len(functions), pdata_functions_executed=len(hit),
                    pdata_coverage=round(len(hit) / len(functions), 4),
                    instructions_executed=sum(row['instructions_executed'] for row in rows))
-    (session / 'function-coverage.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8', newline='\n')
+    (session / 'function-coverage.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8',
+                                                    newline='\n')
     print(summary)
 
 

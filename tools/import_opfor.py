@@ -1,5 +1,8 @@
 r"""Copy folders or files from OPFOR's BFBC2 tool suite into this suite, recording where they came from.
 
+Reads OPFOR's committed files through git; writes them under this suite and records each import or update in
+provenance/opfor-imports.json.
+
   python -B tools\import_opfor.py <path in bfbc2-tool-suite> <path in this suite> [--note "why"]
   python -B tools\import_opfor.py --plan tools\opfor-import-plan.json
   python -B tools\import_opfor.py --update <path in this suite> [...]
@@ -33,23 +36,47 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
+from typing import Any
 
 sys.dont_write_bytecode = True
 SUITE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE_SUITE = os.environ.get('BFBC2_TOOL_SUITE', r'C:\Games\Project OPFOR Toolkit\bfbc2-tool-suite')
 MANIFEST = os.path.join(SUITE, 'provenance', 'opfor-imports.json')
 
+# provenance/opfor-imports.json and its records, as JSON objects
+type Manifest = dict[str, Any]
+type Record = dict[str, Any]
 
-def git(*args):
+
+def git(*args: str) -> bytes:
+    """The output of a read-only git command in the source suite."""
     return subprocess.run(['git', '--no-optional-locks', '-C', SOURCE_SUITE, *args],
                           check=True, capture_output=True).stdout
 
 
-def blob_id(data):
+def blob_id(data: bytes) -> str:
+    """The git blob id of data."""
     return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest()
 
 
-def place(path, data, blob, new):
+def file_record(rel: str, data: bytes, blob: str) -> Record:
+    """A file's record in the manifest: path, size, git blob id and SHA-256."""
+    return {'path': rel, 'bytes': len(data), 'git_blob': blob, 'sha256': hashlib.sha256(data).hexdigest()}
+
+
+def now() -> str:
+    """The local time, to the second, with its UTC offset."""
+    return datetime.datetime.now().astimezone().isoformat(timespec='seconds')
+
+
+def uncommitted() -> list[str]:
+    """The source suite's tracked files with uncommitted changes (they are never copied)."""
+    status = git('status', '--porcelain', '--untracked-files=no').decode('utf-8')
+    return [line[3:] for line in status.splitlines()]
+
+
+def place(path: str, data: bytes, blob: str, new: bool) -> None:
     """path holding data: written to a temporary file beside it, checked against blob, then moved into place
     (os.replace). new: path must not exist (an import). A failure leaves path as it was and no temporary file
     (2026-10-30 second review: a write that failed part-way left a cut file, never recorded)."""
@@ -71,9 +98,9 @@ def place(path, data, blob, new):
         raise
 
 
-def tracked(commit, source):
-    """(path relative to source, blob id) for every file committed under source."""
-    out = []
+def tracked(commit: str, source: str) -> list[tuple[str, str, str]]:
+    """(path, path relative to source, blob id) for every file committed under source."""
+    out: list[tuple[str, str, str]] = []
     for line in git('ls-tree', '-r', '-z', commit, '--', source).split(b'\0'):
         if not line:
             continue
@@ -81,13 +108,13 @@ def tracked(commit, source):
         mode, kind, blob = meta.split()
         if kind != b'blob' or mode == b'120000':
             continue
-        path = path.decode('utf-8')
-        rel = os.path.relpath(path, source).replace(os.sep, '/') if path != source else os.path.basename(path)
-        out.append((path, rel, blob.decode()))
+        name = path.decode('utf-8')
+        rel = os.path.relpath(name, source).replace(os.sep, '/') if name != source else os.path.basename(name)
+        out.append((name, rel, blob.decode()))
     return out
 
 
-def check_import(commit, source, destination):
+def check_import(commit: str, source: str, destination: str) -> tuple[str, str, list[tuple[str, str, str]]]:
     """(source, destination folder, files) of one import, or SystemExit before anything is written: a destination
     outside this suite or already there, nothing committed at the source."""
     source = source.replace('\\', '/').strip('/')
@@ -102,12 +129,12 @@ def check_import(commit, source, destination):
     return source, dst, files
 
 
-def import_one(commit, source, destination, note, item=None):
+def import_one(commit: str, source: str, destination: str, note: str, item: Record | None = None) -> Record:
     """Copies one import; its record is filled in as each file is written (item: the dict to fill, already in the
     manifest's list, so a failure part-way still leaves the files written on record)."""
     source, dst, files = check_import(commit, source, destination)
     single = len(files) == 1 and files[0][0] == source
-    copied = []
+    copied: list[Record] = []
     item = item if item is not None else {}
     item.update({'source': source, 'destination': os.path.relpath(dst, SUITE).replace(os.sep, '/'), 'note': note,
                  'files': copied})
@@ -115,16 +142,17 @@ def import_one(commit, source, destination, note, item=None):
         data = git('cat-file', 'blob', blob)
         if blob_id(data) != blob:
             sys.exit(f'blob mismatch reading {path}')
-        d = dst if single else os.path.join(dst, rel)
+        target = dst if single else os.path.join(dst, rel)
         if not single and not os.path.isdir(dst):
             item['created'] = True                      # the destination folder exists from here on: recorded
-        place(d, data, blob, new=True)
-        copied.append({'path': rel, 'bytes': len(data), 'git_blob': blob, 'sha256': hashlib.sha256(data).hexdigest()})
+        place(target, data, blob, new=True)
+        copied.append(file_record(rel, data, blob))
     print(f'{len(copied):4d} files  {source} -> {os.path.relpath(dst, SUITE)}')
     return item
 
 
-def recorded(manifest, destination, moves=None):
+def recorded(manifest: Manifest, destination: str,
+             moves: dict[str, str] | None = None) -> tuple[str, dict[str, Record], set[str]]:
     """(source, {path: file record}, removed paths): the last recorded version of each file imported to destination,
     and the files removed here since (records {"kind": "remove", "destination", "paths"}) or moved elsewhere in this
     suite (records {"kind": "move", "destination", "paths": {path: new place}}), which updates leave out. moves: a dict
@@ -133,7 +161,9 @@ def recorded(manifest, destination, moves=None):
     for entry in reversed(manifest['imports']):
         if entry.get('kind') == 'rename' and entry['to'] in names:
             names.add(entry['from'])
-    source, files, removed = None, {}, set()
+    source: str | None = None
+    files: dict[str, Record] = {}
+    removed: set[str] = set()
     for entry in manifest['imports']:
         if entry.get('kind') == 'remove' and entry['destination'] in names:
             removed.update(entry['paths'])
@@ -144,23 +174,25 @@ def recorded(manifest, destination, moves=None):
         for item in entry.get('items', ()):
             if item['destination'] in names:
                 source = item['source']
-                for f in item['files']:
-                    files[f['path']] = f
+                for file in item['files']:
+                    files[file['path']] = file
     if source is None:
         sys.exit(f'nothing was imported to {destination}')
     return source, files, removed
 
 
-def update_one(commit, manifest, destination, item=None):
+def update_one(commit: str, manifest: Manifest, destination: str, item: Record | None = None) -> Record:
     """Brings one import up to commit; its record (item: the dict to fill, already in the manifest's list) is filled
     in as each file is written, so a failure part-way still leaves the files written on record."""
     destination = destination.replace('\\', '/').strip('/')
     dst = os.path.normpath(os.path.join(SUITE, destination))
-    moves = {}
+    moves: dict[str, str] = {}
     source, known, removed = recorded(manifest, destination, moves)
-    updated, conflicts = [], []
+    updated: list[Record] = []
+    conflicts: list[str] = []
     item = item if item is not None else {}
-    item.update({'source': source, 'destination': destination, 'note': 'update', 'files': updated, 'conflicts': conflicts})
+    item.update({'source': source, 'destination': destination, 'note': 'update', 'files': updated,
+                 'conflicts': conflicts})
     for path, rel, blob in tracked(commit, source):
         if rel in moves:
             old = known.get(rel)
@@ -183,15 +215,15 @@ def update_one(commit, manifest, destination, item=None):
         if blob_id(data) != blob:
             sys.exit(f'blob mismatch reading {path}')
         place(local, data, blob, new=False)             # never a cut file, never written through a hard link
-        updated.append({'path': rel, 'bytes': len(data), 'git_blob': blob, 'sha256': hashlib.sha256(data).hexdigest(),
+        updated.append({**file_record(rel, data, blob),
                         **({'previous_git_blob': old['git_blob']} if old else {'new': True})})
     print(f'{len(updated):4d} files updated, {len(conflicts)} to merge by hand  {source} -> {destination}')
-    for c in conflicts:
-        print(f'       conflict: {c}')
+    for conflict in conflicts:
+        print(f'       conflict: {conflict}')
     return item
 
 
-def save_manifest(manifest):
+def save_manifest(manifest: Manifest) -> None:
     """The manifest written beside itself and moved into place (UTF-8, \\n newlines)."""
     tmp = MANIFEST + '.tmp'
     with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
@@ -200,7 +232,7 @@ def save_manifest(manifest):
     os.replace(tmp, MANIFEST)
 
 
-def run_recorded(manifest, entry, work):
+def run_recorded(manifest: Manifest, entry: Record, work: Callable[[list[Record]], None]) -> None:
     """Runs work(items) - which appends each item's record to items before writing its files - and records entry in
     the manifest whatever happens: a failure part-way (2026-10-30: the manifest was written only after the last item,
     so files already copied or updated were left without a record) is recorded with the files written so far and the
@@ -223,42 +255,43 @@ def run_recorded(manifest, entry, work):
     save_manifest(manifest)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('source', nargs='?')
-    ap.add_argument('destination', nargs='?')
-    ap.add_argument('--note', default='')
-    ap.add_argument('--plan', help='JSON list of {source, destination, note}')
-    ap.add_argument('--update', nargs='+', metavar='DESTINATION', help='bring earlier imports up to the source HEAD')
-    a = ap.parse_args()
-    if a.update:
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('source', nargs='?')
+    parser.add_argument('destination', nargs='?')
+    parser.add_argument('--note', default='')
+    parser.add_argument('--plan', help='JSON list of {source, destination, note}')
+    parser.add_argument('--update', nargs='+', metavar='DESTINATION',
+                        help='bring earlier imports up to the source HEAD')
+    args = parser.parse_args()
+    if args.update:
         commit = git('rev-parse', 'HEAD').decode().strip()
         with open(MANIFEST, encoding='utf-8') as f:
             manifest = json.load(f)
-        for d in a.update:                              # every destination known before anything is written
-            recorded(manifest, d.replace('\\', '/').strip('/'))
-        dirty = [l[3:] for l in git('status', '--porcelain', '--untracked-files=no').decode('utf-8').splitlines()]
-        entry = {'commit': commit, 'imported': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+        for destination in args.update:                 # every destination known before anything is written
+            recorded(manifest, destination.replace('\\', '/').strip('/'))
+        dirty = uncommitted()
+        entry = {'commit': commit, 'imported': now(),
                  'kind': 'update', 'source_uncommitted_not_copied': dirty, 'items': []}
 
-        def work(items):
-            for d in a.update:
+        def update_all(items: list[Record]) -> None:
+            for destination in args.update:
                 items.append({})
-                update_one(commit, manifest, d, items[-1])
-        run_recorded(manifest, entry, work)
+                update_one(commit, manifest, destination, items[-1])
+        run_recorded(manifest, entry, update_all)
         print(f'{sum(len(i["files"]) for i in entry["items"])} files updated to {commit[:7]}; manifest updated')
         return
-    if a.plan:
-        with open(a.plan, encoding='utf-8') as f:
+    if args.plan:
+        with open(args.plan, encoding='utf-8') as f:
             plan = json.load(f)
-    elif a.source and a.destination:
-        plan = [{'source': a.source, 'destination': a.destination, 'note': a.note}]
+    elif args.source and args.destination:
+        plan = [{'source': args.source, 'destination': args.destination, 'note': args.note}]
     else:
-        ap.error('give a source and destination, or --plan')
+        parser.error('give a source and destination, or --plan')
     commit = git('rev-parse', 'HEAD').decode().strip()
     # every item checked before anything is written (2026-10-30: a later item's missing source stopped the run after
     # the earlier items were copied, and those were never recorded)
-    seen = {}
+    seen: dict[str, str] = {}           # destination folder (normcased) -> as the plan names it
     for i in plan:
         _, dst, _ = check_import(commit, i['source'], i['destination'])
         key = os.path.normcase(dst)
@@ -269,17 +302,17 @@ def main():
             if os.path.commonpath([key, other]) in (key, other):
                 sys.exit(f"destination {i['destination']} lies inside {name}, or the other way round: one import each")
         seen[key] = i['destination']
-    dirty = [l[3:] for l in git('status', '--porcelain', '--untracked-files=no').decode('utf-8').splitlines()]
+    dirty = uncommitted()
     with open(MANIFEST, encoding='utf-8') as f:
         manifest = json.load(f)
-    entry = {'commit': commit, 'imported': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+    entry = {'commit': commit, 'imported': now(),
              'source_uncommitted_not_copied': dirty, 'items': []}
 
-    def work(items):
+    def import_all(items: list[Record]) -> None:
         for i in plan:
             items.append({})
             import_one(commit, i['source'], i['destination'], i.get('note', ''), items[-1])
-    run_recorded(manifest, entry, work)
+    run_recorded(manifest, entry, import_all)
     print(f'{sum(len(i["files"]) for i in entry["items"])} files from {commit[:7]}; manifest updated')
 
 

@@ -30,6 +30,8 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable, Container, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -41,6 +43,13 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     suitepath.use(suitepath.NAVKIT_BE)
 import navkitjson1943 as nj  # noqa: E402
 
+if TYPE_CHECKING:
+    from bfbc2core.game1943 import Game
+
+type Stamp = dict[str, Any]                     # a vehicle step's stamp in navkit.json 'vehicles' (inputs, record)
+type Box = tuple[list[float], list[float]]      # (min, max) corners, x y z
+
+# vehicle name: (class, blueprint partition, collision *_havok.res)
 VEHICLES = {
     'willys-mb': ('jeep', 'objects/vehicles/beach/willys-mb/willys-mb', 'objects/vehicles/beach/willys-mb/willys-mb_havok.res'),
     'kurogane': ('jeep', 'objects/vehicles/beach/kurogane/kurogane', 'objects/vehicles/beach/kurogane/kurogane_mesh_havok.res'),
@@ -54,7 +63,7 @@ VEHICLES = {
 # The navigation parameters per class. Each value: (value, label and basis). The [O] values are checked against the
 # blueprints by read() / tests; the margins are ours.
 MARGIN = 0.45            # m added to the half-width: steering error and the body's corners at small turns [E]
-CLASSES = {
+CLASSES: dict[str, dict[str, Any]] = {
     'jeep': {
         'vehicles': ['willys-mb', 'kurogane'],
         'half_width': (1.06, '[O] collision box: willys-mb x -1.06..0.84 (the wider side), kurogane -0.87..0.87'),
@@ -113,7 +122,8 @@ CLASSES = {
 CLASS_IDS = {'jeep': 1, 'tank': 2, 'lcvp': 3, 'plane': 4}       # the RSNV layer / OFFM vehicle class of each file
 
 
-def value(cls, key):
+def value(cls: str, key: str) -> Any:
+    """A class's navigation parameter (CLASSES[cls][key] without its label)."""
     return CLASSES[cls][key][0]
 
 
@@ -135,20 +145,21 @@ class StaleError(RuntimeError):
 SAMPLING_PARAMS = ('radius', 'step', 'height', 'pitch')   # what navsample1943 is given (groundnav1943.sample_command)
 
 
-def params_id(cls, keys=None):
+def params_id(cls: str, keys: Container[str] | None = None) -> str:
     """The digest of a class's navigation parameters: every value of CLASSES[cls], or only keys."""
     import hashlib
-    vals = {k: (v[0] if isinstance(v, tuple) else v) for k, v in CLASSES[cls].items() if keys is None or k in keys}
-    return hashlib.sha256(json.dumps(vals, sort_keys=True).encode()).hexdigest()
+    values = {key: (entry[0] if isinstance(entry, tuple) else entry) for key, entry in CLASSES[cls].items()
+              if keys is None or key in keys}
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
-def sampling_params_id(cls):
+def sampling_params_id(cls: str) -> str:
     """The digest of the parameters the class's samples depend on (2026-10-30: every parameter was hashed, so a new
     speed or node spacing sampled again for nothing)."""
     return params_id(cls, SAMPLING_PARAMS)
 
 
-def inputs(st, lv, cls=None, sampling=False, **extra):
+def inputs(st: 'nj.Settings', lv: str, cls: str | None = None, sampling: bool = False, **extra: Any) -> Stamp:
     """The stamp a vehicle step of the current preparation makes (and the one its next step needs); sampling: the
     class's samples' (their parameters only those the sampler reads)."""
     if not st.get('preparation'):
@@ -161,29 +172,32 @@ def inputs(st, lv, cls=None, sampling=False, **extra):
     return out
 
 
-def stamp(st, kind, cls=None):
-    v = (st.get('vehicles') or {}).get(kind)
-    return (v or {}).get(cls) if cls is not None else v
+def stamp(st: Mapping[str, Any], kind: str, cls: str | None = None) -> Any:
+    """A vehicle step's stamp in navkit.json ('collision'; 'samples' or 'worlds' with a class), or None."""
+    of_kind = (st.get('vehicles') or {}).get(kind)
+    return (of_kind or {}).get(cls) if cls is not None else of_kind
 
 
-def current(st, kind, want, cls=None):
+def current(st: Mapping[str, Any], kind: str, want: Mapping[str, Any], cls: str | None = None) -> bool:
     """Whether the step's stamp in st is want (its time and what it found aside)."""
     have = stamp(st, kind, cls)
-    return have is not None and all(have.get(k) == v for k, v in want.items())
+    return have is not None and all(have.get(key) == wanted for key, wanted in want.items())
 
 
-def soldier_changed(st, lv, soldier):
+def soldier_changed(st: Mapping[str, Any], lv: str, soldier: str) -> str | None:
     """Why a world built on the soldier world whose SHA-256 is soldier may not be stamped now (None when it may): that
     file must still be the export of the current, passed build (navkit.json 'exported' and 'build_from')."""
     built = st.get('build_from') or {}
-    ex = st.get('exported') or {}
-    if 'built' not in st or not built.get('hpd_sha256') or ex.get('hpd_sha256') != built['hpd_sha256']             or ex.get('sha256') != soldier or not nj.check_passed(st):
+    exported = st.get('exported') or {}
+    if 'built' not in st or not built.get('hpd_sha256') or exported.get('hpd_sha256') != built['hpd_sha256'] \
+            or exported.get('sha256') != soldier or not nj.check_passed(st):
         return (f'{lv}: the soldier world changed while the vehicle world was built (built, checked or exported again): '
                 f'it is not stamped; build it again (navexport_vehicles1943.py {lv})')
     return None
 
 
-def record(lv, kind, value, cls=None, soldier_path=None):
+def record(lv: str, kind: str, value: Mapping[str, Any], cls: str | None = None,
+           soldier_path: str | None = None) -> 'nj.Settings':
     """Stamps a finished step; nothing when navkit.json now holds another preparation (prepared meanwhile). A world
     (a value with 'soldier') built on the default soldier world (soldier_path None or that file, as soldier_world
     tells it) is refused with StaleError, and not stamped, when that file is no longer the export of the current
@@ -191,10 +205,11 @@ def record(lv, kind, value, cls=None, soldier_path=None):
     check took it as current while the old export was still on disk."""
     import time
     value = dict(value, time=time.strftime('%Y-%m-%d %H:%M'))
-    refused = []
-    default_soldier = soldier_path is None or nj.same_file(soldier_path, os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv'))
+    refused: list[str] = []
+    default_soldier = soldier_path is None or nj.same_file(soldier_path,
+                                                           os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv'))
 
-    def change(st):
+    def change(st: 'nj.Settings') -> None:
         if st.get('preparation') != value['preparation']:
             return
         if 'soldier' in value and default_soldier:
@@ -202,30 +217,31 @@ def record(lv, kind, value, cls=None, soldier_path=None):
             if why:
                 refused.append(why)
                 return
-        v = st.setdefault('vehicles', {})
+        vehicles = st.setdefault('vehicles', {})
         if cls is None:
-            v[kind] = value
+            vehicles[kind] = value
         else:
-            v.setdefault(kind, {})[cls] = value
+            vehicles.setdefault(kind, {})[cls] = value
     st = nj.update(lv, change)
     if refused:
         raise StaleError(refused[0])
     return st
 
 
-def drop(lv, kind, cls=None):
+def drop(lv: str, kind: str, cls: str | None = None) -> None:
     """Removes a step's stamp before it runs: an interrupted run leaves none."""
-    def change(st):
-        v = st.get('vehicles') or {}
+    def change(st: 'nj.Settings') -> None:
+        vehicles = st.get('vehicles') or {}
         if cls is None:
-            v.pop(kind, None)
+            vehicles.pop(kind, None)
         else:
-            (v.get(kind) or {}).pop(cls, None)
+            (vehicles.get(kind) or {}).pop(cls, None)
     if os.path.isfile(nj.paths(lv)['settings']):
         nj.update(lv, change)
 
 
-def absent(lv, cls, want, path, why, log=print):
+def absent(lv: str, cls: str, want: Mapping[str, Any], path: str, why: str,
+           log: Callable[[str], object] = print) -> None:
     """The level has no world of the class (its data says so: no spawns of it, no water): a world file of an earlier
     run goes, and the stamp says why (navexport_vehicles1943.check tells this from a world not built)."""
     if os.path.isfile(path):
@@ -234,7 +250,7 @@ def absent(lv, cls, want, path, why, log=print):
     record(lv, 'worlds', dict(want, absent=why), cls)
 
 
-def prepared_game(st, game, lv):
+def prepared_game(st: Mapping[str, Any], game: str | None, lv: str) -> str | None:
     """The game copy the level was prepared from; a different one given is refused (navkit.same_game's rule: the
     same folder by identity, navkitjson1943.same_file)."""
     want = st.get('game')
@@ -245,7 +261,7 @@ def prepared_game(st, game, lv):
     return game
 
 
-def soldier_world(st, lv, path):
+def soldier_world(st: Mapping[str, Any], lv: str, path: str) -> str:
     """The SHA-256 of the soldier world a vehicle world is built on. Refused when it is missing, when the soldier build
     is not of the current preparation, or (the default <level>.rsnv, by file identity) when the file is not the export
     of the current build: the export's stamp names the build by its .hpd's SHA-256 (navkit.json 'build_from'
@@ -259,137 +275,154 @@ def soldier_world(st, lv, path):
     if not nj.check_passed(st):              # 2026-10-30 review: a build whose check failed was exported and stamped
         raise StaleError(f'{lv}: the soldier build\'s check did not pass ({st.get("checked") or "not checked"}): no '
                          f'vehicle world is built on it (navkit.py check {lv})')
-    h = nj.sha256(path)
-    ex = st.get('exported') or {}
+    digest = nj.sha256(path)
+    exported = st.get('exported') or {}
     default = os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv')
-    if nj.same_file(path, default) and (ex.get('sha256') != h or ex.get('hpd_sha256') != built['hpd_sha256']):
+    if nj.same_file(path, default) and (exported.get('sha256') != digest
+                                        or exported.get('hpd_sha256') != built['hpd_sha256']):
         raise StaleError(f'{lv}: {path} is not the export of the current build: export again (navexport1943.py {lv})')
-    return h
+    return digest
 
 
-def _fields(xml, name):
+def _fields(xml: str, name: str) -> list[str]:
+    """The text of every <field name="name"> in a partition's XML."""
     return re.findall(r'<field name="' + re.escape(name) + r'">([^<]*)</field>', xml)
 
 
-def _instances(xml, typename):
+def _instances(xml: str, typename: str) -> list[str]:
+    """The XML of every instance of a type (its name without the namespace)."""
     return re.findall(r'<instance[^>]*type="[^"]*\.' + typename + r'"[^>]*>.*?</instance>', xml, re.S)
 
 
-def _translation(inst):
-    m = re.search(r'<complex name="Transform">([^<]*)</complex>', inst)
-    if not m:
+def _translation(inst: str) -> list[float] | None:
+    """An instance's Transform translation (x, y, z), or None."""
+    match = re.search(r'<complex name="Transform">([^<]*)</complex>', inst)
+    if not match:
         return None
-    v = [float(t) for t in m.group(1).split('/')]
-    return [round(x, 3) for x in v[12:15]] if len(v) == 16 else None
+    values = [float(t) for t in match.group(1).split('/')]
+    return [round(x, 3) for x in values[12:15]] if len(values) == 16 else None
 
 
-def collision_box(game, res):
+def collision_box(game: 'Game', res: str) -> Box | None:
     """(min, max) of a vehicle's collision (meshes and convex shapes of its *_havok.res), or None."""
     import havok461
     import hkpack
     data = game.data(res)
     if not data:
         return None
-    pf = hkpack.Packfile(data, classes=havok461.CLASSES)
-    pts = []
-    for off in pf.objects_of('hkStorageExtendedMeshShapeMeshSubpartStorage'):
-        v, t = havok461.triangles(pf, off)
-        if v:
-            pts.append(np.asarray(v, float)[:, :3])
-    for off in pf.objects_of('hkConvexVerticesShape'):
-        box, _, _ = havok461.convex_box(pf, off)
+    packfile = hkpack.Packfile(data, classes=havok461.CLASSES)
+    points = []
+    for offset in packfile.objects_of('hkStorageExtendedMeshShapeMeshSubpartStorage'):
+        vertices, _triangles = havok461.triangles(packfile, offset)
+        if vertices:
+            points.append(np.asarray(vertices, float)[:, :3])
+    for offset in packfile.objects_of('hkConvexVerticesShape'):
+        box, _, _ = havok461.convex_box(packfile, offset)
         if box:
-            pts.append(np.asarray(box, float).reshape(-1, 3))
-    if not pts:
+            points.append(np.asarray(box, float).reshape(-1, 3))
+    if not points:
         return None
-    p = np.concatenate(pts)
-    return p.min(0).round(3).tolist(), p.max(0).round(3).tolist()
+    every = np.concatenate(points)
+    return every.min(0).round(3).tolist(), every.max(0).round(3).tolist()
 
 
-def read(game_dir=None, level='wake_island_s'):
+def read(game_dir: str | None = None, level: str = 'wake_island_s') -> dict[str, dict[str, Any]]:
     """{vehicle: {...}} from the blueprints and collision of your copy (every value [O]); hashes of the inputs."""
     import hashlib
     from bfbc2core import dbx, game1943
-    g = game1943.Game(game1943.find_game(game_dir), level)
-    out = {}
+    level_game = game1943.Game(game1943.find_game(game_dir), level)
+    out: dict[str, dict[str, Any]] = {}
     for name, (cls, part, res) in VEHICLES.items():
-        data = g.data(part + '.dbx')
+        data = level_game.data(part + '.dbx')
         if data is None:
             out[name] = {'class': cls, 'missing': part}
             continue
         xml = dbx.to_xml(data)
         xml = xml if isinstance(xml, str) else xml.decode('utf-8')
-        floats = lambda n: [float(v) for v in _fields(xml, n)]
-        wheels = {}
+
+        def floats(field: str) -> list[float]:
+            return [float(text) for text in _fields(xml, field)]
+        wheels: dict[str | int, list[float] | None] = {}     # wheel name (or its number): its local position
         for inst in _instances(xml, 'WheelComponentData'):
-            nm = re.search(r'<field name="Name">([^<]*)<', inst)
-            wheels[nm.group(1) if nm else len(wheels)] = _translation(inst)
-        exits = [_translation(i) for i in _instances(xml, 'VehicleExitPointComponentData')]
+            name_match = re.search(r'<field name="Name">([^<]*)<', inst)
+            wheels[name_match.group(1) if name_match else len(wheels)] = _translation(inst)
+        exits = [_translation(inst) for inst in _instances(xml, 'VehicleExitPointComponentData')]
         entries = []
         for inst in _instances(xml, 'PlayerEntryComponentData') + _instances(xml, 'LandingGearEntryComponentData'):
-            nm = re.search(r'<field name="Name">([^<]*)<', inst)
-            r = re.search(r'<field name="EntryRadius">([^<]*)<', inst)
-            entries.append({'name': nm.group(1) if nm else '', 'local': _translation(inst),
-                            'radius': float(r.group(1)) if r else None})
-        gears = [[float(v) for v in s.split('/')] for s in re.findall(r'<array name="ForwardGearSpeeds">([^<]*)<', xml)]
-        box = collision_box(g, res)
+            name_match = re.search(r'<field name="Name">([^<]*)<', inst)
+            radius_match = re.search(r'<field name="EntryRadius">([^<]*)<', inst)
+            entries.append({'name': name_match.group(1) if name_match else '', 'local': _translation(inst),
+                            'radius': float(radius_match.group(1)) if radius_match else None})
+        gears = [[float(speed) for speed in speeds.split('/')]
+                 for speeds in re.findall(r'<array name="ForwardGearSpeeds">([^<]*)<', xml)]
+        box = collision_box(level_game, res)
+        collision_data = level_game.data(res)
+        spring_lengths = re.findall(r'<complex name="Spring">\s*<field name="Length">([^<]*)<', xml)
         out[name] = {
             'class': cls, 'blueprint': part + '.dbx', 'sha256': hashlib.sha256(data).hexdigest(),
-            'collision': res, 'collision_sha256': hashlib.sha256(g.data(res)).hexdigest() if g.data(res) else None,
+            'collision': res,
+            'collision_sha256': hashlib.sha256(collision_data).hexdigest() if collision_data else None,
             'collision_box': box,
             'size': [round(b - a, 3) for a, b in zip(*box)] if box else None,
             'body_mass': floats('BodyMass')[:1],
             'wheel_radius': floats('Radius')[:2] if wheels else [],
-            'spring_length': [float(v) for v in re.findall(r'<complex name="Spring">\s*<field name="Length">([^<]*)<', xml)],
+            'spring_length': [float(length) for length in spring_lengths],
             'slope_grip_min': floats('SlopeGripMinAngle'), 'slope_grip_max': floats('SlopeGripMaxAngle'),
-            'steering_type': [int(v) for v in _fields(xml, 'SteeringType')],
-            'forward_gear_speeds': gears, 'top_gear_speed': max((max(gs) for gs in gears), default=None),
+            'steering_type': [int(text) for text in _fields(xml, 'SteeringType')],
+            'forward_gear_speeds': gears, 'top_gear_speed': max((max(speeds) for speeds in gears), default=None),
             'wheels': wheels, 'entries': entries, 'exits': exits,
             'water_jet': 'true' in _fields(xml, 'IsWaterJetEngine'),
             'float_physics': [t for t in ('BoatFloatPhysicsData', 'BoxFloatPhysicsData') if _instances(xml, t)],
         }
         if len(wheels) >= 4:
-            pos = np.array([v for k, v in wheels.items() if str(k).startswith('Wheel ') and v], float)
-            if len(pos) >= 4:
-                out[name]['wheelbase'] = round(float(pos[:, 2].max() - pos[:, 2].min()), 3)
-                out[name]['track'] = round(float(pos[:, 0].max() - pos[:, 0].min()), 3)
+            wheel_pos = np.array([at for wheel, at in wheels.items() if str(wheel).startswith('Wheel ') and at], float)
+            if len(wheel_pos) >= 4:
+                out[name]['wheelbase'] = round(float(wheel_pos[:, 2].max() - wheel_pos[:, 2].min()), 3)
+                out[name]['track'] = round(float(wheel_pos[:, 0].max() - wheel_pos[:, 0].min()), 3)
     return out
 
 
-def check(table):
+def check(table: Mapping[str, Mapping[str, Any]]) -> list[str]:
     """Problems where the [O] parameters of CLASSES disagree with the data read ([] when none)."""
     problems = []
-    for cls, p in CLASSES.items():
-        hw = max((max(-v['collision_box'][0][0], v['collision_box'][1][0]) for n, v in table.items()
-                  if v.get('class') == cls and v.get('collision_box')), default=None)
-        if hw is not None and abs(hw - p['half_width'][0]) > 0.06:
-            problems.append(f'{cls}: half-width {p["half_width"][0]} against the collision\'s {hw:.2f}')
+    for cls, params in CLASSES.items():
+        # the wider side (x) of the class's collision boxes
+        half_width = max((max(-vehicle['collision_box'][0][0], vehicle['collision_box'][1][0])
+                          for _name, vehicle in table.items()
+                          if vehicle.get('class') == cls and vehicle.get('collision_box')), default=None)
+        if half_width is not None and abs(half_width - params['half_width'][0]) > 0.06:
+            problems.append(f'{cls}: half-width {params["half_width"][0]} against the collision\'s {half_width:.2f}')
         if cls in ('jeep', 'tank'):
-            grip = max((max(v['slope_grip_max']) for v in table.values() if v.get('class') == cls and v.get('slope_grip_max')), default=None)
-            if cls == 'jeep' and grip is not None and grip != p['slope'][0]:
-                problems.append(f'jeep: slope {p["slope"][0]} against SlopeGripMaxAngle {grip}')
+            grip = max((max(vehicle['slope_grip_max']) for vehicle in table.values()
+                        if vehicle.get('class') == cls and vehicle.get('slope_grip_max')), default=None)
+            if cls == 'jeep' and grip is not None and grip != params['slope'][0]:
+                problems.append(f'jeep: slope {params["slope"][0]} against SlopeGripMaxAngle {grip}')
     return problems
 
 
-def main(argv):
-    ap = argparse.ArgumentParser(prog='vehicleclasses1943.py', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--game')
-    ap.add_argument('--json')
-    a = ap.parse_args(argv[1:])
-    table = read(a.game)
-    for name, v in table.items():
-        print(f'{name:18s} {v["class"]:6s} size {v.get("size")} mass {v.get("body_mass")} slope grip '
-              f'{v.get("slope_grip_min")}..{v.get("slope_grip_max")} top gear {v.get("top_gear_speed")} '
-              f'wheelbase {v.get("wheelbase")} track {v.get("track")} entries {len(v.get("entries", []))} exits {len(v.get("exits", []))}')
-    for cls, p in CLASSES.items():
-        print(f'{cls}: ' + ', '.join(f'{k} {v[0]:g}' for k, v in p.items() if k != 'vehicles'))
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog='vehicleclasses1943.py', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--game')
+    parser.add_argument('--json')
+    args = parser.parse_args(argv[1:])
+    table = read(args.game)
+    for name, vehicle in table.items():
+        print(f'{name:18s} {vehicle["class"]:6s} size {vehicle.get("size")} mass {vehicle.get("body_mass")} slope grip '
+              f'{vehicle.get("slope_grip_min")}..{vehicle.get("slope_grip_max")} '
+              f'top gear {vehicle.get("top_gear_speed")} wheelbase {vehicle.get("wheelbase")} '
+              f'track {vehicle.get("track")} entries {len(vehicle.get("entries", []))} '
+              f'exits {len(vehicle.get("exits", []))}')
+    for cls, params in CLASSES.items():
+        print(f'{cls}: ' + ', '.join(f'{key} {entry[0]:g}' for key, entry in params.items() if key != 'vehicles'))
     problems = check(table)
-    for pr in problems:
-        print('MISMATCH ' + pr)
-    if a.json:
-        with open(a.json, 'w', encoding='utf-8', newline='') as f:
-            json.dump({'vehicles': table, 'classes': {c: {k: (list(v) if isinstance(v, tuple) else v) for k, v in p.items()}
-                                                       for c, p in CLASSES.items()}}, f, indent=1)
+    for problem in problems:
+        print('MISMATCH ' + problem)
+    if args.json:
+        classes = {cls: {key: (list(entry) if isinstance(entry, tuple) else entry) for key, entry in params.items()}
+                   for cls, params in CLASSES.items()}
+        with open(args.json, 'w', encoding='utf-8', newline='') as f:
+            json.dump({'vehicles': table, 'classes': classes}, f, indent=1)
     return 1 if problems else 0
 
 

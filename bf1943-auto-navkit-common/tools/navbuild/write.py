@@ -34,7 +34,9 @@ def write_file(graphs: 'list[SectorGraph]', out_path: str, log: 'Log', t0: float
         graphs = prune_order_nodes(graphs, state)
     if settings.border_seam_line:
         graphs = merge_coincident_border(graphs, log)
-    linked = {pts[i][0] for _sid, _b, _m, pts, pairs, _o in graphs for a_, b_, _d in pairs for i in (a_, b_)}
+    # the ids of every node with an edge, in any sector (a border node counts its edges in both)
+    linked = {pts[i][0] for _sid, _b, _m, pts, pairs, _o in graphs
+              for node_a, node_b, _d in pairs for i in (node_a, node_b)}
     for sid, bounds, mesh, pts, pairs, origin in graphs:
         nodes, edges = finalize_graph(pts, pairs, linked, origin)
         hpd_sectors.append(hpdtool.Sector(sid, bounds, 0, date, clock, nodes, edges, kymesh.write_mesh(mesh)))
@@ -58,8 +60,8 @@ def write_file(graphs: 'list[SectorGraph]', out_path: str, log: 'Log', t0: float
         if os.path.exists(tmp):
             os.remove(tmp)
     write_cells(graphs, out_path, data, log, state.area_cells)
-    log(f'wrote {out_path}: {len(hpd_sectors)} sectors, {sum(len(x.nodes) for x in hpd_sectors)} nodes, '
-        f'{sum(len(x.edges) for x in hpd_sectors)} edges, {len(data)} bytes ({time.time() - t0:.0f} s)')
+    log(f'wrote {out_path}: {len(hpd_sectors)} sectors, {sum(len(sector.nodes) for sector in hpd_sectors)} nodes, '
+        f'{sum(len(sector.edges) for sector in hpd_sectors)} edges, {len(data)} bytes ({time.time() - t0:.0f} s)')
 
 
 def cells_path(hpd_path: str) -> str:
@@ -75,22 +77,23 @@ def write_cells(graphs: 'Sequence[SectorGraph]', out_path: str, data: bytes, log
     belongs to this file. Nothing is written when a sector's areas were not recorded (a caller that builds graphs
     itself)."""
     import hashlib
-    sids, pitch, count, ii, jj, yy = [], [], [], [], [], []
+    sids, pitch, count, all_i, all_j, all_y = [], [], [], [], [], []
     for sid, _b, mesh, _p, _q, _o in graphs:
-        rec = area_cells.get(sid)
-        if rec is None or len(rec) != len(mesh.areas):
+        recorded = area_cells.get(sid)
+        if recorded is None or len(recorded) != len(mesh.areas):
             log(f'cells: sector {sid:04x} not recorded; no {os.path.basename(cells_path(out_path))} written')
             return
-        for i_, j_, y_, p_ in rec:
+        for cells_i, cells_j, cells_y, cell_pitch in recorded:
             sids.append(sid)
-            pitch.append(p_)
-            count.append(len(i_))
-            ii.append(i_)
-            jj.append(j_)
-            yy.append(y_)
-    cat = lambda v, t: np.concatenate(v).astype(t) if v else np.zeros(0, t)
+            pitch.append(cell_pitch)
+            count.append(len(cells_i))
+            all_i.append(cells_i)
+            all_j.append(cells_j)
+            all_y.append(cells_y)
+    joined = lambda arrays, dtype: np.concatenate(arrays).astype(dtype) if arrays else np.zeros(0, dtype)
     np.savez_compressed(cells_path(out_path), sector=np.array(sids, np.int32), pitch=np.array(pitch, np.float32),
-                        count=np.array(count, np.int64), i=cat(ii, np.int32), j=cat(jj, np.int32), y=cat(yy, np.float32),
+                        count=np.array(count, np.int64), i=joined(all_i, np.int32), j=joined(all_j, np.int32),
+                        y=joined(all_y, np.float32),
                         hpd_sha256=np.array(hashlib.sha256(data).hexdigest()))
     log(f'cells: {len(count)} areas, {sum(count)} cells -> {cells_path(out_path)}')
 
@@ -100,16 +103,17 @@ def read_cells(hpd_path: str) -> list[tuple[int, float, npt.NDArray[np.int32], n
     """The sidecar of a build, or None when it is missing or belongs to another file: [(sector id, pitch, i, j, y)] per
     area in the file's order."""
     import hashlib
-    p = cells_path(hpd_path)
-    if not os.path.isfile(p):
+    path = cells_path(hpd_path)
+    if not os.path.isfile(path):
         return None
-    z = np.load(p)
-    h = hashlib.sha256(open(hpd_path, 'rb').read()).hexdigest()
-    if str(z['hpd_sha256']) != h:
+    archive = np.load(path)
+    digest = hashlib.sha256(open(hpd_path, 'rb').read()).hexdigest()
+    if str(archive['hpd_sha256']) != digest:
         return None
-    count = z['count']
+    count = archive['count']
     ends = np.cumsum(count)
     starts = ends - count
-    ci, cj, cy = z['i'], z['j'], z['y']                 # read once (each z[...] reads the array from the file again)
-    return [(int(s_), float(p_), ci[a:b], cj[a:b], cy[a:b])
-            for s_, p_, a, b in zip(z['sector'], z['pitch'], starts, ends)]
+    # read once (each archive[...] reads the array from the file again)
+    all_i, all_j, all_y = archive['i'], archive['j'], archive['y']
+    return [(int(sid), float(pitch), all_i[start:end], all_j[start:end], all_y[start:end])
+            for sid, pitch, start, end in zip(archive['sector'], archive['pitch'], starts, ends)]

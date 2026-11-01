@@ -30,37 +30,40 @@ BORDER = 0x80000000
 
 def check(path: str) -> dict[str, list[str]]:
     """{check name: [problem descriptions]} (empty lists: passed)."""
-    f = hpdtool.parse(open(path, 'rb').read())
+    hpd = hpdtool.parse(open(path, 'rb').read())
     out: dict[str, list[str]] = {'closed boundaries': [], 'edges': [], 'node order': [], 'zero-length edges': []}
-    for s in f.sectors:
-        m = kymesh.parse_mesh(s.mesh)
-        for ai, a in enumerate(m.areas):
-            deg: Counter[tuple[float, float]] = Counter()
-            segs = [(l[k], l[k + 1]) for l in a.outline for k in range(len(l) - 1)]
-            segs += [(b.p0, b.p1) for b in a.portals] + [(c.p0, c.p1) for c in a.border_portals]
-            for p, q in segs:
-                deg[(round(p[0], 2), round(p[2], 2))] += 1
-                deg[(round(q[0], 2), round(q[2], 2))] += 1
-            odd = [k for k, v in deg.items() if v % 2]
+    for sector in hpd.sectors:
+        mesh = kymesh.parse_mesh(sector.mesh)
+        for ai, area in enumerate(mesh.areas):
+            ends: Counter[tuple[float, float]] = Counter()      # (x, z) of a segment end -> segments ending there
+            segs = [(line[k], line[k + 1]) for line in area.outline for k in range(len(line) - 1)]
+            segs += ([(portal.p0, portal.p1) for portal in area.portals]
+                     + [(border.p0, border.p1) for border in area.border_portals])
+            for p0, p1 in segs:
+                ends[(round(p0[0], 2), round(p0[2], 2))] += 1
+                ends[(round(p1[0], 2), round(p1[2], 2))] += 1
+            odd = [point for point, count in ends.items() if count % 2]
             if odd:
-                out['closed boundaries'].append(f'sector {s.id:04x} area {ai}: {len(odd)} open end(s), e.g. {odd[0]}')
-        n = len(s.nodes)
-        for e in s.edges:
-            if not (0 <= e.src < n and 0 <= e.dst < n):
-                out['edges'].append(f'sector {s.id:04x}: edge {e.src} -> {e.dst} of {n} nodes')
+                out['closed boundaries'].append(f'sector {sector.id:04x} area {ai}: {len(odd)} open end(s), '
+                                                f'e.g. {odd[0]}')
+        node_count = len(sector.nodes)
+        for edge in sector.edges:
+            if not (0 <= edge.src < node_count and 0 <= edge.dst < node_count):
+                out['edges'].append(f'sector {sector.id:04x}: edge {edge.src} -> {edge.dst} of {node_count} nodes')
                 continue
-            a, b = s.nodes[e.src], s.nodes[e.dst]
-            if a.id != b.id and tuple(a.pos) == tuple(b.pos):
-                out['zero-length edges'].append(f'sector {s.id:04x}: nodes {a.id:08x} and {b.id:08x} at {tuple(round(v, 2) for v in a.pos)}')
-        ids = [nd.id & 0xFFFFFFFF for nd in s.nodes]
-        key = [((i & BORDER) != 0, i) for i in ids]
+            src, dst = sector.nodes[edge.src], sector.nodes[edge.dst]
+            if src.id != dst.id and tuple(src.pos) == tuple(dst.pos):
+                out['zero-length edges'].append(f'sector {sector.id:04x}: nodes {src.id:08x} and {dst.id:08x} at '
+                                                f'{tuple(round(v, 2) for v in src.pos)}')
+        ids = [node.id & 0xFFFFFFFF for node in sector.nodes]
+        key = [((node_id & BORDER) != 0, node_id) for node_id in ids]
         if key != sorted(key):
-            out['node order'].append(f'sector {s.id:04x}: nodes not sorted by id with border nodes last')
+            out['node order'].append(f'sector {sector.id:04x}: nodes not sorted by id with border nodes last')
     return out
 
 
 def main(argv: list[str]) -> int:
-    if any(a in ('-h', '--help') for a in argv[1:]):
+    if any(arg in ('-h', '--help') for arg in argv[1:]):
         print(__doc__)
         return 0
     if len(argv) < 2:
@@ -68,11 +71,11 @@ def main(argv: list[str]) -> int:
         return 1
     bad = 0
     for path in argv[1:]:
-        res = check(path)
-        fails = {k: v for k, v in res.items() if v}
+        problems = check(path)
+        fails = {name: found for name, found in problems.items() if found}
         bad += bool(fails)
         print(f'{"ok  " if not fails else "FAIL"} {os.path.basename(path)}' +
-              ''.join(f'\n       {k}: {len(v)} - {v[0]}' for k, v in fails.items()))
+              ''.join(f'\n       {name}: {len(found)} - {found[0]}' for name, found in fails.items()))
     return 1 if bad else 0
 
 

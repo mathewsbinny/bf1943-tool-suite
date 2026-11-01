@@ -1,5 +1,8 @@
 """BF1943 Navigation Studio: a BF1943 level's navigation build in 3D, with its bases, flags, spawns and ladders.
 
+Reads a level from your copy's bundles and NavKit's .hpd build of it; shows them in a window, or with --screenshot
+draws them, saves the picture and exits.
+
   python studio.py <level> [--hpd <file.hpd>] [--color island|sector|pitch|small-islands] [--game <folder>]
   python studio.py <level> --screenshot out.png [--frames N] [--color ...] [--island N] [--path "x,y,z;x,y,z"]
                    [--focus x,y,z [--distance m]] [--yaw rad] [--pitch rad] [--hide <layer>,...]
@@ -20,6 +23,8 @@ start, then the end). The camera works as in the Map Inspector.
 import colorsys
 import os
 import sys
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -36,6 +41,19 @@ from imgui_bundle import imgui  # noqa: E402
 
 from bfbc2core import game1943, level1943, navdata, navpath, viewer  # noqa: E402
 
+if TYPE_CHECKING:
+    import numpy.typing as npt
+
+    from bfbc2core.level import Entity, Level
+    from bfbc2core.terrain import Heightfield
+
+type Colour = tuple[float, float, float]
+type Vector = npt.NDArray[np.float64]
+# a spawn, base, flag or ladder: (kind, label, position, its entity)
+type MapPoint = tuple[str, str, Vector, 'Entity']
+# an overlay line: from, to, colour
+type Segment = tuple[Vector, Vector, Colour]
+
 NODE_HEIGHT = 0.9                                        # soldier1943: nodes half the soldier's 1.8 m up
 ID_AREA = 0x200000                                       # + area index
 ID_POINT = 0x100000                                      # + index into Studio.points (spawns, bases, flags)
@@ -49,291 +67,339 @@ NO_ISLAND = (0.15, 0.15, 0.15)                           # ground whose area has
 LIFT = 0.06                                              # ground cells drawn just above the surface
 SMALL = 25                                               # nodes: an island this small is a pocket, not a network
 POINT_LAYERS = [('soldier spawns, team 1 (US)', (0.2, 0.55, 1.0)), ('soldier spawns, team 2 (Japan)', (1.0, 0.3, 0.25)),
-                ('soldier spawns, at flags', (0.85, 0.85, 0.85)), ('bases', (1.0, 0.6, 0.1)), ('flags', (1.0, 0.85, 0.2))]
+                ('soldier spawns, at flags', (0.85, 0.85, 0.85)), ('bases', (1.0, 0.6, 0.1)),
+                ('flags', (1.0, 0.85, 0.2))]
+# a soldier spawn's layer by its team (others: 'at flags')
+SPAWN_LAYER: dict[int | None, str] = {1: POINT_LAYERS[0][0], 2: POINT_LAYERS[1][0]}
+STATUS_FLAGS = imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_inputs | imgui.WindowFlags_.no_background
 
 
-def hue(k, s=0.65, v=0.92):
+def hue(k: int, s: float = 0.65, v: float = 0.92) -> Colour:
+    """Colour k of a sequence of well-spread hues (golden-ratio steps); s and v: saturation and value."""
     return colorsys.hsv_to_rgb((k * 0.618034) % 1.0, s, v)
 
 
-def default_hpd(lv):
-    return os.path.join(game1943.level_work(lv), 'navkit', f'{lv}.hpd')
+def default_hpd(level: str) -> str:
+    """NavKit's build of the level, where navkit.py writes it."""
+    return os.path.join(game1943.level_work(level), 'navkit', f'{level}.hpd')
 
 
-def cell_quads(xz, y, heightfield=None, lift=LIFT):
+def cell_quads(xz: 'npt.NDArray[np.float64]', y: 'npt.NDArray[np.float64]', heightfield: 'Heightfield | None' = None,
+               lift: float = LIFT) -> 'npt.NDArray[np.float64]':
     """Two triangles per 0.8 m cell. Cells on terrain follow it (each corner at the terrain's height), so slopes
     show as a surface rather than as steps; other cells (floors, roofs, decks) are flat at their height."""
-    h = navdata.GRID / 2
+    half = navdata.GRID / 2
     x, z = xz[:, 0], xz[:, 1]
-    corners = ((-h, -h), (h, -h), (h, h), (-h, h))
+    corners = ((-half, -half), (half, -half), (half, half), (-half, half))
     on_terrain = np.zeros(len(y), dtype=bool)
     if heightfield is not None and len(y):
         on_terrain = np.abs(heightfield.height(x, z) - y) < 0.05
-    c = []
+    corner_points = []
     for dx, dz in corners:
-        cy = y.copy()
-        if on_terrain.any():
-            cy[on_terrain] = heightfield.height(x[on_terrain] + dx, z[on_terrain] + dz)
-        c.append(np.stack([x + dx, cy + lift, z + dz], axis=1))
-    return np.stack([np.stack([c[0], c[1], c[2]], 1), np.stack([c[0], c[2], c[3]], 1)], axis=1).reshape(-1, 3, 3)
+        corner_y = y.copy()
+        if on_terrain.any():            # only with a height field
+            terrain = cast('Heightfield', heightfield)
+            corner_y[on_terrain] = terrain.height(x[on_terrain] + dx, z[on_terrain] + dz)
+        corner_points.append(np.stack([x + dx, corner_y + lift, z + dz], axis=1))
+    c0, c1, c2, c3 = corner_points
+    return np.stack([np.stack([c0, c1, c2], 1), np.stack([c0, c2, c3], 1)], axis=1).reshape(-1, 3, 3)
 
 
-def box_tris(lo, hi):
+def box_tris(lo: 'npt.ArrayLike', hi: 'npt.ArrayLike') -> 'npt.NDArray[np.float32]':
+    """The 12 triangles of the axis-aligned box from corner lo to corner hi."""
     lo, hi = np.asarray(lo, np.float32), np.asarray(hi, np.float32)
-    c = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])], np.float32)
+    corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])],
+                       np.float32)
     faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
-    return np.array([t for a, b, cc, d in faces for t in (c[[a, b, cc]], c[[a, cc, d]])])
+    return np.array([triangle for a, b, c, d in faces
+                     for triangle in (corners[[a, b, c]], corners[[a, c, d]])])
 
 
 class Studio:
-    def __init__(self, lvl, nav, color='island'):
+    """The level's scene with the build's layers and points (spawns, bases, flags, ladders), and the window's panels
+    and state: selection, colour mode, path test. Each panel takes the viewer it is drawn in (`view`)."""
+
+    triangles: int                      # set by main(), for the status bar
+
+    def __init__(self, lvl: 'Level', nav: navdata.NavData, color: str = 'island') -> None:
         self.lvl, self.nav, self.color = lvl, nav, color
         self.scene = viewer.Scene()
-        L = self.scene.layer
-        self.layers = {'terrain': L('terrain', (0.40, 0.44, 0.36)), 'water': L('water', (0.18, 0.42, 0.78)),
-                       'collision': L('collision', (0.58, 0.57, 0.55))}
+        new_layer = self.scene.layer
+        self.layers = {'terrain': new_layer('terrain', (0.40, 0.44, 0.36)),
+                       'water': new_layer('water', (0.18, 0.42, 0.78)),
+                       'collision': new_layer('collision', (0.58, 0.57, 0.55))}
         if lvl.terrain is not None:
             self.scene.add_indexed(lvl.terrain[0], lvl.terrain[1], TERRAIN_ID, self.layers['terrain'])
         if lvl.water is not None and len(lvl.water):
             self.scene.add_indexed(lvl.water.vertices, lvl.water.triangles, WATER_ID, self.layers['water'])
-        for m in lvl.meshes:
-            self.scene.add_triangles(m.triangles, OBJECTS_ID, self.layers['collision'])
-        lay = {k: L(k, col) for k, col in (('ground', MAIN), ('outlines', (0.95, 0.95, 0.95)), ('portals', (0.3, 0.9, 1.0)),
-                                            ('border portals', (1.0, 0.9, 0.2)), ('route graph', (1.0, 0.4, 0.9)))}
-        self.layers.update(lay)
+        for mesh in lvl.meshes:
+            self.scene.add_triangles(mesh.triangles, OBJECTS_ID, self.layers['collision'])
+        build_layers = (('ground', MAIN), ('outlines', (0.95, 0.95, 0.95)), ('portals', (0.3, 0.9, 1.0)),
+                        ('border portals', (1.0, 0.9, 0.2)), ('route graph', (1.0, 0.4, 0.9)))
+        layer = {name: new_layer(name, colour) for name, colour in build_layers}
+        self.layers.update(layer)
         self.ground_batch = self.scene.add_triangles(cell_quads(nav.cell_xz, nav.cell_y, lvl.heightfield),
-                                                     np.repeat(ID_AREA + nav.cell_area, 2), lay['ground'])
+                                                     np.repeat(ID_AREA + nav.cell_area, 2), layer['ground'])
         drop = np.array([0, nav.y_offset - 0.12, 0])
-        lines = [(k, line) for k, a in enumerate(nav.areas) for line in a.outline]
+        lines = [(k, line) for k, area in enumerate(nav.areas) for line in area.outline]
         if lines:                                    # all outline polylines at once: segments within each line
-            pts = np.concatenate([l for _, l in lines])
-            owner = np.repeat(np.arange(len(lines)), [len(l) for _, l in lines])
+            line_points = np.concatenate([line for _, line in lines])
+            owner = np.repeat(np.arange(len(lines)), [len(line) for _, line in lines])
             keep = owner[:-1] == owner[1:]
             area_of_line = np.array([k for k, _ in lines])
-            self.scene.add_lines(np.stack([pts[:-1][keep], pts[1:][keep]], axis=1) - drop,
-                                 ID_AREA + area_of_line[owner[:-1][keep]], lay['outlines'])
+            self.scene.add_lines(np.stack([line_points[:-1][keep], line_points[1:][keep]], axis=1) - drop,
+                                 ID_AREA + area_of_line[owner[:-1][keep]], layer['outlines'])
         for key, field in (('portals', 'portals'), ('border portals', 'borders')):
-            segs = [(k, s[0], s[1]) for k, a in enumerate(nav.areas) for s in getattr(a, field)]
-            if segs:
-                self.scene.add_lines(np.array([[p0, p1] for _, p0, p1 in segs]) - drop,
-                                     np.array([ID_AREA + k for k, _, _ in segs]), lay[key])
-        lad = nav.ladder_edge if nav.ladder_edge is not None else np.zeros(len(nav.edges), bool)
+            segments = [(k, portal[0], portal[1])
+                        for k, area in enumerate(nav.areas) for portal in getattr(area, field)]
+            if segments:
+                self.scene.add_lines(np.array([[p0, p1] for _, p0, p1 in segments]) - drop,
+                                     np.array([ID_AREA + k for k, _, _ in segments]), layer[key])
+        ladder_edge = nav.ladder_edge if nav.ladder_edge is not None else np.zeros(len(nav.edges), bool)
         if len(nav.edges):
-            p = nav.node_pos - np.array([0, nav.y_offset - 0.2, 0])
-            e = nav.edges[~lad]
-            self.scene.add_lines(np.stack([p[e[:, 0]], p[e[:, 1]]], axis=1), GRAPH_ID, lay['route graph'])
-        lad_area = np.array([a.ladder for a in nav.areas], dtype=bool)
-        if lad_area.any() and len(nav.cell_area):
-            sel = lad_area[nav.cell_area]
-            self.layers['ladder ground'] = L('ladder ground', LADDER)
-            self.scene.add_triangles(cell_quads(nav.cell_xz[sel], nav.cell_y[sel], lvl.heightfield, LIFT + 0.05),
-                                     np.repeat(ID_AREA + nav.cell_area[sel], 2), self.layers['ladder ground'])
-        if lad.any():
-            self.layers['ladder links'] = L('ladder links', LADDER)
-            e = nav.edges[lad]
-            p = nav.node_pos - np.array([0, nav.y_offset - 0.3, 0])
-            self.scene.add_lines(np.stack([p[e[:, 0]], p[e[:, 1]]], axis=1), GRAPH_ID, self.layers['ladder links'])
+            raised = nav.node_pos - np.array([0, nav.y_offset - 0.2, 0])
+            edges = nav.edges[~ladder_edge]
+            self.scene.add_lines(np.stack([raised[edges[:, 0]], raised[edges[:, 1]]], axis=1), GRAPH_ID,
+                                 layer['route graph'])
+        ladder_area = np.array([area.ladder for area in nav.areas], dtype=bool)
+        if ladder_area.any() and len(nav.cell_area):
+            on_ladder = ladder_area[nav.cell_area]
+            self.layers['ladder ground'] = new_layer('ladder ground', LADDER)
+            self.scene.add_triangles(cell_quads(nav.cell_xz[on_ladder], nav.cell_y[on_ladder], lvl.heightfield,
+                                                LIFT + 0.05),
+                                     np.repeat(ID_AREA + nav.cell_area[on_ladder], 2), self.layers['ladder ground'])
+        if ladder_edge.any():
+            self.layers['ladder links'] = new_layer('ladder links', LADDER)
+            edges = nav.edges[ladder_edge]
+            raised = nav.node_pos - np.array([0, nav.y_offset - 0.3, 0])
+            self.scene.add_lines(np.stack([raised[edges[:, 0]], raised[edges[:, 1]]], axis=1), GRAPH_ID,
+                                 self.layers['ladder links'])
         # points: soldier spawns (and their alternates), bases, flags; ladders as boxes
-        for name, col in POINT_LAYERS:
-            self.layers[name] = L(name, col)
-        self.points = []                             # (kind, label, position, entity or objective)
-        roles = {o['guid']: o for o in lvl.objectives}
+        for name, colour in POINT_LAYERS:
+            self.layers[name] = new_layer(name, colour)
+        self.points: list[MapPoint] = []             # (kind, label, position, entity)
+        # level1943.load's bf1943-spawn-map objectives, by GUID
+        objectives = lvl.objectives  # pyright: ignore[reportAttributeAccessIssue]  # BF1943 only, not a Level field
+        roles: dict[str, dict[str, Any]] = {objective['guid']: objective for objective in objectives}
         for e in lvl.entities:
             if e.position is None:
                 continue
             if e.category == 'soldier spawn':
-                name = {1: POINT_LAYERS[0][0], 2: POINT_LAYERS[1][0]}.get(e.team, POINT_LAYERS[2][0])
+                name = SPAWN_LAYER.get(e.team, POINT_LAYERS[2][0])
                 self.add_point(name, 'spawn', e.name or e.short_type, e.position, 1.2, e)
             elif e.category in ('base', 'flag'):
-                o = roles.get(e.guid.lower(), {})
-                self.add_point('bases' if e.category == 'base' else 'flags', e.category, o.get('name') or e.name or '',
-                               e.position, 2.5, e, tall=25.0)
-        self.layers['ladders'] = L('ladders', (0.95, 0.9, 0.35))
+                objective = roles.get(e.guid.lower(), {})
+                self.add_point('bases' if e.category == 'base' else 'flags', e.category,
+                               objective.get('name') or e.name or '', e.position, 2.5, e, tall=25.0)
+        self.layers['ladders'] = new_layer('ladders', (0.95, 0.9, 0.35))
         for e in lvl.entities:
             if e.category == 'ladder':
-                m = next((x for x in lvl.meshes if x.entity == e.index), None)
-                if m is not None:
-                    v = m.triangles.reshape(-1, 3)
+                mesh = next((candidate for candidate in lvl.meshes if candidate.entity == e.index), None)
+                if mesh is not None:
+                    vertices = mesh.triangles.reshape(-1, 3)
                     k = len(self.points)
-                    self.points.append(('ladder', e.blueprint.rsplit('/', 1)[-1], (v.min(0) + v.max(0)) / 2, e))
-                    self.scene.add_triangles(box_tris(v.min(0) - 0.05, v.max(0) + 0.05), ID_POINT + k, self.layers['ladders'])
+                    name = cast(str, e.blueprint).rsplit('/', 1)[-1]      # a ladder is a placed blueprint
+                    self.points.append(('ladder', name, (vertices.min(0) + vertices.max(0)) / 2, e))
+                    self.scene.add_triangles(box_tris(vertices.min(0) - 0.05, vertices.max(0) + 0.05), ID_POINT + k,
+                                             self.layers['ladders'])
         self.main = 0 if nav.islands else -1         # navdata: islands largest first
-        self.point_island = [self.island_at(p[2]) for p in self.points]
-        self.selected = None
+        self.point_island = [self.island_at(point[2]) for point in self.points]
+        self.selected: tuple[str, int] | None = None     # ('area', area index) or ('point', index into points)
+        # the path test (P): on or off, its clicked points (start, end) and the route between them
+        self.path_mode = False
+        self.path_pts: list[Vector] = []
+        self.route: navpath.Route | None = None
         self.apply_colors()
 
-    def add_point(self, layer, kind, label, pos, size, ent, tall=0.0):
+    def add_point(self, layer: str, kind: str, label: str, pos: 'npt.ArrayLike', size: float, ent: 'Entity',
+                  tall: float = 0.0) -> None:
+        """A spawn, base or flag: a box of size m (or a pillar tall m high) in layer, pickable as ID_POINT + index."""
         k = len(self.points)
-        self.points.append((kind, label, np.asarray(pos, dtype=np.float64), ent))
+        position = np.asarray(pos, dtype=np.float64)
+        self.points.append((kind, label, position, ent))
         if tall:
-            self.scene.add_triangles(box_tris((pos[0] - 0.6, pos[1], pos[2] - 0.6), (pos[0] + 0.6, pos[1] + tall, pos[2] + 0.6)),
+            self.scene.add_triangles(box_tris((position[0] - 0.6, position[1], position[2] - 0.6),
+                                              (position[0] + 0.6, position[1] + tall, position[2] + 0.6)),
                                      ID_POINT + k, self.layers[layer])
         else:
             self.scene.add_box(np.asarray(pos) + np.array([0, size / 2, 0]), size, ID_POINT + k, self.layers[layer])
 
-    def island_at(self, p):
+    def island_at(self, point: Vector) -> tuple[int | None, float]:
         """(island index or None, route node distance): the nearest node within navpath's join limits."""
-        n, d = navpath.join(self.nav, p)
-        return (None, d) if n is None else (int(self.nav.node_island[n]), d)
+        node, distance = navpath.join(self.nav, point)
+        return (None, distance) if node is None else (int(self.nav.node_island[node]), distance)
 
     # --- colours ------------------------------------------------------------------------------------
-    def cell_colors(self):
+    def cell_colors(self) -> 'npt.NDArray[np.float64]':
+        """(cells, 3) RGB of each ground cell in the colour mode (self.color)."""
         nav = self.nav
-        a = nav.cell_area
-        isl = np.array([x.island for x in nav.areas])[a] if len(a) else np.zeros(0, int)
+        cell_area = nav.cell_area
+        island = np.array([area.island for area in nav.areas])[cell_area] if len(cell_area) else np.zeros(0, int)
         if self.color == 'sector':
-            sec = np.array([x.sector for x in nav.areas])[a]
-            uniq, inv = np.unique(sec, return_inverse=True)
-            return np.array([hue(k * 7 + 3, 0.5, 0.85) for k in range(len(uniq))]).reshape(-1, 3)[inv.ravel()]
+            sector = np.array([area.sector for area in nav.areas])[cell_area]
+            unique, inverse = np.unique(sector, return_inverse=True)
+            colours = np.array([hue(k * 7 + 3, 0.5, 0.85) for k in range(len(unique))]).reshape(-1, 3)
+            return colours[inverse.ravel()]
         if self.color == 'pitch':
-            det = np.array([x.detailed for x in nav.areas], dtype=bool)[a]
-            return np.where(det[:, None], np.array(DETAILED), np.array(NORMAL)).reshape(-1, 3)
+            detailed = np.array([area.detailed for area in nav.areas], dtype=bool)[cell_area]
+            return np.where(detailed[:, None], np.array(DETAILED), np.array(NORMAL)).reshape(-1, 3)
         # an area with no route node in its sector has no island (navdata: island -1): NO_ISLAND, never the main
         # network's green - that is the ground no route reaches
-        none = (isl < 0) | (isl >= max(len(nav.islands), 1))
+        none = (island < 0) | (island >= max(len(nav.islands), 1))
         if self.color == 'small islands':
             size = np.array([i.nodes for i in nav.islands] or [0])
-            n = size[np.clip(isl, 0, len(size) - 1)]
-            col = np.where((n >= SMALL)[:, None], np.array(DIMMED), np.array(WARNING)).reshape(-1, 3)
-            col[isl == 0] = MAIN
-            col[none] = NO_ISLAND
-            return col
+            nodes = size[np.clip(island, 0, len(size) - 1)]
+            colours = np.where((nodes >= SMALL)[:, None], np.array(DIMMED), np.array(WARNING)).reshape(-1, 3)
+            colours[island == 0] = MAIN
+            colours[none] = NO_ISLAND
+            return colours
         table = np.array([MAIN] + [hue(k) for k in range(1, max(len(nav.islands), 1))]).reshape(-1, 3)
-        col = table[np.clip(isl, 0, len(table) - 1)].reshape(-1, 3)
-        col[none] = NO_ISLAND
-        return col
+        colours = table[np.clip(island, 0, len(table) - 1)].reshape(-1, 3)
+        colours[none] = NO_ISLAND
+        return colours
 
-    def apply_colors(self, v=None):
-        c = np.repeat(self.cell_colors(), 2, axis=0)
-        if v is not None:
-            v.set_colors(self.ground_batch, c)
+    def apply_colors(self, view: viewer.Viewer | None = None) -> None:
+        """The ground's colours in the viewer, or in the scene before the viewer has it."""
+        colours = np.repeat(self.cell_colors(), 2, axis=0)
+        if view is not None:
+            view.set_colors(self.ground_batch, colours)
         else:
-            p, t, _ = self.scene.batches[self.ground_batch]
-            self.scene.batches[self.ground_batch] = (p, t, viewer.triangle_colors(c, len(p) // 3))
+            vertices, tags, _ = self.scene.batches[self.ground_batch]
+            self.scene.batches[self.ground_batch] = (vertices, tags,
+                                                     viewer.triangle_colors(colours, len(vertices) // 3))
 
     # --- path test (P) ------------------------------------------------------------------------------
-    def set_path_mode(self, v, on):
+    def set_path_mode(self, view: viewer.Viewer, on: bool) -> None:
         self.path_mode = on
-        v.select_on_click = not on
+        view.select_on_click = not on
 
-    def path_point(self, v, p):
+    def path_point(self, view: viewer.Viewer, clicked: 'npt.ArrayLike') -> None:
         """A click in path mode: the start, then the end (a third click starts again)."""
-        pts = self.__dict__.setdefault('path_pts', [])
-        if len(pts) >= 2:
-            pts.clear()
-        pts.append(np.asarray(p, dtype=np.float64))
-        self.route = navpath.route(self.nav, pts[0], pts[1]) if len(pts) == 2 else None
-        seg = []
-        for q in pts:
-            for d in ((0.6, 0, 0), (0, 1.5, 0), (0, 0, 0.6)):
-                seg.append((q - np.array(d), q + np.array(d), (1.0, 1.0, 1.0)))
-        r = self.route
-        if r is not None:
-            g = navpath.ground_nodes(self.nav) + np.array([0, 0.35, 0])
-            if r.found:
-                chain = g[r.nodes]
-                seg += [(chain[k], chain[k + 1], PATH) for k in range(len(chain) - 1)]
-                seg += [(pts[0], chain[0], PATH), (chain[-1], pts[1], PATH)]
-            elif r.gap:
-                a, b = g[r.gap[0]], g[r.gap[1]]
-                seg += [(a, b, MISSING), (a, a + np.array([0, 3, 0]), MISSING), (b, b + np.array([0, 3, 0]), MISSING)]
-        v.set_overlay(seg)
+        points = self.path_pts
+        if len(points) >= 2:
+            points.clear()
+        points.append(np.asarray(clicked, dtype=np.float64))
+        self.route = navpath.route(self.nav, points[0], points[1]) if len(points) == 2 else None
+        segments: list[Segment] = []
+        for point in points:
+            for arm in ((0.6, 0, 0), (0, 1.5, 0), (0, 0, 0.6)):
+                segments.append((point - np.array(arm), point + np.array(arm), (1.0, 1.0, 1.0)))
+        route = self.route
+        if route is not None:
+            ground = navpath.ground_nodes(self.nav) + np.array([0, 0.35, 0])
+            if route.found:
+                chain = ground[route.nodes]
+                segments += [(chain[k], chain[k + 1], PATH) for k in range(len(chain) - 1)]
+                segments += [(points[0], chain[0], PATH), (chain[-1], points[1], PATH)]
+            elif route.gap:
+                gap_start, gap_end = ground[route.gap[0]], ground[route.gap[1]]
+                up = np.array([0, 3, 0])
+                segments += [(gap_start, gap_end, MISSING), (gap_start, gap_start + up, MISSING),
+                             (gap_end, gap_end + up, MISSING)]
+        view.set_overlay(segments)  # pyright: ignore[reportArgumentType]  # numpy points; set_overlay only keeps them
 
-    def panel_path(self, v):
-        if not getattr(self, 'path_mode', False) and getattr(self, 'route', None) is None:
+    def panel_path(self, view: viewer.Viewer) -> None:
+        if not self.path_mode and self.route is None:
             return
         imgui.set_next_window_pos((380, 10), imgui.Cond_.first_use_ever)
         imgui.begin('Path test', flags=imgui.WindowFlags_.always_auto_resize)
-        changed, on = imgui.checkbox('path test (P): click the start, then the end', getattr(self, 'path_mode', False))
+        changed, on = imgui.checkbox('path test (P): click the start, then the end', self.path_mode)
         if changed:
-            self.set_path_mode(v, on)
+            self.set_path_mode(view, on)
         if imgui.small_button('clear##path'):
             self.path_pts, self.route = [], None
-            v.set_overlay([])
-        for label, p in zip(('start', 'end'), getattr(self, 'path_pts', [])):
-            imgui.text(f'{label}: {p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}')
-        r = getattr(self, 'route', None)
-        if r is not None:
-            if r.found:
-                imgui.text(f'route: cost {r.cost:.1f} m over {len(r.nodes)} nodes (length {r.length:.1f} m, '
-                           f'straight {r.straight:.1f} m, x{r.cost / max(r.straight, 1e-9):.2f})')
+            view.set_overlay([])
+        for label, point in zip(('start', 'end'), self.path_pts):
+            imgui.text(f'{label}: {point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}')
+        route = self.route
+        if route is not None:
+            if route.found:
+                imgui.text(f'route: cost {route.cost:.1f} m over {len(route.nodes)} nodes '
+                           f'(length {route.length:.1f} m, straight {route.straight:.1f} m, '
+                           f'x{route.cost / max(route.straight, 1e-9):.2f})')
             else:
-                imgui.text(f'no route: {r.reason}')
-                if r.gap and imgui.small_button('fly to the gap'):
-                    v.camera.focus((self.nav.node_pos[r.gap[0]] + self.nav.node_pos[r.gap[1]]) / 2, 40.0)
+                imgui.text(f'no route: {route.reason}')
+                if route.gap and imgui.small_button('fly to the gap'):
+                    view.camera.focus((self.nav.node_pos[route.gap[0]] + self.nav.node_pos[route.gap[1]]) / 2, 40.0)
         imgui.text_disabled('Over the route graph only; a runtime also smooths the route through the areas.')
         imgui.end()
 
-    def on_pick(self, v):
-        def handler(oid):
-            if getattr(self, 'path_mode', False):
-                if v.pick_point is not None:
-                    self.path_point(v, v.pick_point)
+    def on_pick(self, view: viewer.Viewer) -> Callable[[int | None], None]:
+        """The viewer's click handler: a path test point in path mode, else the clicked area or point selected."""
+        def handler(object_id: int | None) -> None:
+            if self.path_mode:
+                if view.pick_point is not None:
+                    self.path_point(view, view.pick_point)
                 return
             self.selected = None
-            if oid is not None and ID_AREA <= oid < ID_AREA + len(self.nav.areas):
-                self.selected = ('area', oid - ID_AREA)
-            elif oid is not None and ID_POINT <= oid < ID_POINT + len(self.points):
-                self.selected = ('point', oid - ID_POINT)
+            if object_id is not None and ID_AREA <= object_id < ID_AREA + len(self.nav.areas):
+                self.selected = ('area', object_id - ID_AREA)
+            elif object_id is not None and ID_POINT <= object_id < ID_POINT + len(self.points):
+                self.selected = ('point', object_id - ID_POINT)
         return handler
 
     # --- panels -------------------------------------------------------------------------------------
-    def panel_main(self, v):
+    def panel_main(self, view: viewer.Viewer) -> None:
         imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
         imgui.set_next_window_size((360, 640), imgui.Cond_.first_use_ever)
         imgui.begin('Navigation')
         imgui.text(f'{self.lvl.name}')
-        s = navdata.summary(self.nav)
+        summary = navdata.summary(self.nav)
         imgui.text_disabled(os.path.basename(self.nav.path))
-        imgui.text(f'  {s["areas"]:,} areas ({s["detailed areas"]:,} detailed), {s["cells"]:,} cells')
-        imgui.text(f'  {s["nodes"]:,} nodes, {s["edges"]:,} edges, {s["islands"]} islands ({s["large islands (25+ nodes)"]} large)')
-        if s['ladder links']:
-            imgui.text(f'  {s["ladder links"]} ladder links, {s["ladder ground cells"]:,} cells of ladder ground')
+        imgui.text(f'  {summary["areas"]:,} areas ({summary["detailed areas"]:,} detailed), {summary["cells"]:,} cells')
+        imgui.text(f'  {summary["nodes"]:,} nodes, {summary["edges"]:,} edges, {summary["islands"]} islands '
+                   f'({summary["large islands (25+ nodes)"]} large)')
+        if summary['ladder links']:
+            imgui.text(f'  {summary["ladder links"]} ladder links, {summary["ladder ground cells"]:,} cells of '
+                       f'ladder ground')
         imgui.separator()
         imgui.text('colour the ground by')
-        for m in COLOR_MODES:
+        for mode in COLOR_MODES:
             imgui.same_line()
-            if imgui.radio_button(m, self.color == m):
-                self.color = m
-                self.apply_colors(v)
+            if imgui.radio_button(mode, self.color == mode):
+                self.color = mode
+                self.apply_colors(view)
         imgui.separator()
-        for name, i in self.layers.items():
-            changed, on = imgui.checkbox(name, v.layer_visible(i))
+        for name, layer in self.layers.items():
+            changed, on = imgui.checkbox(name, view.layer_visible(layer))
             if changed:
-                v.set_layer_visible(i, on)
+                view.set_layer_visible(layer, on)
         imgui.end()
 
-    def panel_islands(self, v):
+    def panel_islands(self, view: viewer.Viewer) -> None:
         nav = self.nav
-        w = imgui.get_io().display_size.x
-        imgui.set_next_window_pos((w - 440, 10), imgui.Cond_.first_use_ever)
+        width = imgui.get_io().display_size.x
+        imgui.set_next_window_pos((width - 440, 10), imgui.Cond_.first_use_ever)
         imgui.set_next_window_size((430, 440), imgui.Cond_.first_use_ever)
         imgui.begin('Islands, spawns and flags')
-        off = [(k, p, isl) for k, (p, isl) in enumerate(zip(self.points, self.point_island))
-               if p[0] in ('spawn', 'flag', 'base') and isl[0] != self.main]
-        n = sum(1 for p in self.points if p[0] in ('spawn', 'flag', 'base'))
-        imgui.text(f'{n} spawns, bases and flags; {len(off)} not on the main network')
+        off = [(k, point, island) for k, (point, island) in enumerate(zip(self.points, self.point_island))
+               if point[0] in ('spawn', 'flag', 'base') and island[0] != self.main]
+        count = sum(1 for point in self.points if point[0] in ('spawn', 'flag', 'base'))
+        imgui.text(f'{count} spawns, bases and flags; {len(off)} not on the main network')
         imgui.text_disabled('(the carriers are their own networks: the sea divides them)')
         if off and imgui.tree_node('off the main network'):
-            for k, (kind, label, pos, _), (isl, _d) in ((k, p, i) for k, p, i in off[:150]):
-                where = f'island {isl} ({nav.islands[isl].nodes} nodes)' if isl is not None else 'no route node within 15 m'
+            for k, (kind, label, pos, _), (island, _distance) in off[:150]:
+                if island is not None:
+                    where = f'island {island} ({nav.islands[island].nodes} nodes)'
+                else:
+                    where = 'no route node within 15 m'
                 if imgui.small_button(f'fly##pt{k}'):
-                    v.camera.focus(pos, 30.0)
+                    view.camera.focus(pos, 30.0)
                 imgui.same_line()
                 imgui.text(f'{kind} {label}: {where}')
             imgui.tree_pop()
         imgui.separator()
         imgui.text(f'{len(nav.islands)} islands (largest first; island 0 is the main network)')
         imgui.begin_child('islands', (0, 0))
-        for k, isl in enumerate(nav.islands[:300]):
+        for k, island in enumerate(nav.islands[:300]):
             if imgui.small_button(f'fly##is{k}'):
-                v.camera.focus(isl.centre - np.array([0, nav.y_offset, 0]), 40.0 if k else 300.0)
+                view.camera.focus(island.centre - np.array([0, nav.y_offset, 0]), 40.0 if k else 300.0)
             imgui.same_line()
-            imgui.text(f'{k}: {isl.nodes:,} nodes, {isl.cells:,} cells')
+            imgui.text(f'{k}: {island.nodes:,} nodes, {island.cells:,} cells')
         imgui.end_child()
         imgui.end()
 
-    def panel_selection(self, v):
+    def panel_selection(self, view: viewer.Viewer) -> None:
         if self.selected is None:
             return
         io = imgui.get_io()
@@ -342,46 +408,54 @@ class Studio:
         imgui.begin('Selection')
         kind, k = self.selected
         if kind == 'point':
-            pk, label, pos, ent = self.points[k]
-            imgui.text(f'{pk} {label}')
+            point_kind, label, pos, ent = self.points[k]
+            imgui.text(f'{point_kind} {label}')
             imgui.text_disabled(f'{ent.short_type} {ent.guid}')
             imgui.text(f'at {pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f}' + (f', team {ent.team}' if ent.team else ''))
-            isl, d = self.point_island[k]
-            imgui.text('no route node within 15 m' if isl is None else
-                       f'island {isl}' + (' (main network)' if isl == self.main else '') + f', route node {d:.1f} m away')
+            island, distance = self.point_island[k]
+            imgui.text('no route node within 15 m' if island is None else
+                       f'island {island}' + (' (main network)' if island == self.main else '')
+                       + f', route node {distance:.1f} m away')
         else:
-            a = self.nav.areas[k]
-            isl = self.nav.islands[a.island] if 0 <= a.island < len(self.nav.islands) else None
-            imgui.text(f'area {k}: sector 0x{a.sector:04X}, area {a.index}, tile {a.tile[0]},{a.tile[1]}, layer {a.layer}')
-            imgui.text(f'pitch {a.pitch:.2f} m{" (detailed zone)" if a.detailed else ""}, {a.cells:,} cells, height {a.min_y:.1f} - {a.max_y:.1f} m')
-            if a.ladder:
+            area = self.nav.areas[k]
+            island = self.nav.islands[area.island] if 0 <= area.island < len(self.nav.islands) else None
+            imgui.text(f'area {k}: sector 0x{area.sector:04X}, area {area.index}, tile {area.tile[0]},{area.tile[1]}, '
+                       f'layer {area.layer}')
+            imgui.text(f'pitch {area.pitch:.2f} m{" (detailed zone)" if area.detailed else ""}, {area.cells:,} cells, '
+                       f'height {area.min_y:.1f} - {area.max_y:.1f} m')
+            if area.ladder:
                 imgui.text_colored(imgui.ImVec4(*LADDER, 1.0), 'ladder ground: reached only through a ladder link')
-            imgui.text(f'{len(a.outline)} outline lines, {len(a.portals)} portals, {len(a.borders)} border portals')
-            if isl is not None:
-                imgui.text(f'island {a.island}{" (main network)" if a.island == 0 else ""}: {isl.nodes:,} nodes, {isl.cells:,} cells')
+            imgui.text(f'{len(area.outline)} outline lines, {len(area.portals)} portals, '
+                       f'{len(area.borders)} border portals')
+            if island is not None:
+                imgui.text(f'island {area.island}{" (main network)" if area.island == 0 else ""}: '
+                           f'{island.nodes:,} nodes, {island.cells:,} cells')
         imgui.end()
 
-    def panel_status(self, v):
+    def panel_status(self, view: viewer.Viewer) -> None:
         io = imgui.get_io()
         if not io.want_capture_keyboard and imgui.is_key_pressed(imgui.Key.p):
-            self.set_path_mode(v, not getattr(self, 'path_mode', False))
-        if not io.want_capture_mouse and v.hovered != viewer.NO_ID:
-            if ID_AREA <= v.hovered < ID_AREA + len(self.nav.areas):
-                a = self.nav.areas[v.hovered - ID_AREA]
-                imgui.set_tooltip(f'area {v.hovered - ID_AREA} - sector 0x{a.sector:04X}, island {a.island}, pitch {a.pitch:.1f}')
-            elif ID_POINT <= v.hovered < ID_POINT + len(self.points):
-                pk, label, _, _ = self.points[v.hovered - ID_POINT]
-                imgui.set_tooltip(f'{pk} {label}')
+            self.set_path_mode(view, not self.path_mode)
+        if not io.want_capture_mouse and view.hovered != viewer.NO_ID:
+            if ID_AREA <= view.hovered < ID_AREA + len(self.nav.areas):
+                area = self.nav.areas[view.hovered - ID_AREA]
+                imgui.set_tooltip(f'area {view.hovered - ID_AREA} - sector 0x{area.sector:04X}, island {area.island}, '
+                                  f'pitch {area.pitch:.1f}')
+            elif ID_POINT <= view.hovered < ID_POINT + len(self.points):
+                point_kind, label, _, _ = self.points[view.hovered - ID_POINT]
+                imgui.set_tooltip(f'{point_kind} {label}')
         imgui.set_next_window_pos((10, io.display_size.y - 40), imgui.Cond_.always)
         imgui.set_next_window_size((io.display_size.x - 20, 30), imgui.Cond_.always)
-        imgui.begin('##status', flags=imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_inputs | imgui.WindowFlags_.no_background)
-        imgui.text(f'{v.fps:5.1f} fps   {self.triangles:,} triangles   {v.renderer}   colour: {self.color}   '
-                   f'camera: {"fly" if v.camera.fly else "orbit"} (F)   P: path test')
+        imgui.begin('##status', flags=STATUS_FLAGS)
+        imgui.text(f'{view.fps:5.1f} fps   {self.triangles:,} triangles   {view.renderer}   colour: {self.color}   '
+                   f'camera: {"fly" if view.camera.fly else "orbit"} (F)   P: path test')
         imgui.end()
 
 
-def main(argv):
-    opts, args, k = {}, [], 1
+def main(argv: list[str]) -> int:
+    opts: dict[str, str] = {}           # --option -> its value
+    args: list[str] = []
+    k = 1
     while k < len(argv):
         if argv[k].startswith('--'):
             if k + 1 >= len(argv):
@@ -399,10 +473,10 @@ def main(argv):
         return 2
     if not args:                                            # started without a level: ask for one
         from bfbc2core import pick
-        lv = pick.pick_level('BF1943 Navigation Studio')
-        if not lv:
+        picked = pick.pick_level('BF1943 Navigation Studio')
+        if not picked:
             return 1
-        args = [lv]
+        args = [picked]
     lvl = level1943.load(args[0], opts.get('--game'))
     hpd = opts.get('--hpd', default_hpd(lvl.lv))
     if not os.path.isfile(hpd):
@@ -411,52 +485,53 @@ def main(argv):
         return 1
     print(f'navigation: {hpd}')
     nav = navdata.load(hpd, lvl.heightfield, y_offset=NODE_HEIGHT)
-    st = Studio(lvl, nav, checked['color'])
-    st.triangles = st.scene.triangle_count()
-    v = viewer.Viewer(st.scene, f'BF1943 Navigation Studio - {lvl.name}',
-                      panels=[st.panel_main, st.panel_islands, st.panel_selection, st.panel_path, st.panel_status])
-    v.on_pick = st.on_pick(v)
+    studio = Studio(lvl, nav, checked['color'])
+    studio.triangles = studio.scene.triangle_count()
+    panels = [studio.panel_main, studio.panel_islands, studio.panel_selection, studio.panel_path, studio.panel_status]
+    view = viewer.Viewer(studio.scene, f'BF1943 Navigation Studio - {lvl.name}', panels=panels)
+    view.on_pick = studio.on_pick(view)
     hide = set(opts.get('--hide', 'collision,outlines,portals,border portals,route graph').split(','))
-    for name, i in st.layers.items():
+    for name, layer in studio.layers.items():
         if name in hide:
-            v.set_layer_visible(i, False)
+            view.set_layer_visible(layer, False)
     if checked['island'] is not None and checked['island'] < len(nav.islands):
-        v.camera.focus(nav.islands[checked['island']].centre, 60.0)
+        view.camera.focus(nav.islands[checked['island']].centre, 60.0)
     if checked['path'] is not None:                         # tests: a path test between two points
-        st.set_path_mode(v, True)
-        for p in checked['path']:
-            st.path_point(v, p)
-        r = st.route
-        print('path: ' + (f'cost {r.cost:.1f} m, {len(r.nodes)} nodes' if r.found else f'none - {r.reason}'))
+        studio.set_path_mode(view, True)
+        for point in checked['path']:
+            studio.path_point(view, point)
+        route = cast(navpath.Route, studio.route)           # two points given: a route was searched
+        print('path: ' + (f'cost {route.cost:.1f} m, {len(route.nodes)} nodes' if route.found
+                          else f'none - {route.reason}'))
     if checked['focus'] is not None:                        # tests: the camera on a point
-        v.camera.focus(np.array(checked['focus']), checked['distance'])
+        view.camera.focus(np.array(checked['focus']), checked['distance'])
     if checked['yaw'] is not None:                          # the orbit camera's angles (radians; pitch 1.5 looks down)
-        v.camera.yaw = checked['yaw']
+        view.camera.yaw = checked['yaw']
     if checked['pitch'] is not None:
-        v.camera.pitch = max(-1.55, min(1.55, checked['pitch']))
+        view.camera.pitch = max(-1.55, min(1.55, checked['pitch']))
     if '--screenshot' in opts:
-        v.exit_after = checked['frames']
-    v.run()
+        view.exit_after = checked['frames']
+    view.run()
     if '--screenshot' in opts:
-        return save_screenshot(opts['--screenshot'], v.screenshot)
+        return save_screenshot(opts['--screenshot'], view.screenshot)
     return 0
 
 
-def check_options(opts):
+def check_options(opts: dict[str, str]) -> dict[str, Any]:
     """The options' values, checked before the level loads: {'color', 'island', 'frames', 'path', 'focus', 'distance',
     'yaw', 'pitch'} (None where not given); ValueError naming the option otherwise."""
-    def number(key, default=None):
+    def number(key: str, default: float | None = None) -> float | None:
         if key not in opts:
             return default
         try:
-            v = float(opts[key])
+            value = float(opts[key])
         except ValueError:
-            v = float('nan')
-        if not np.isfinite(v):
+            value = float('nan')
+        if not np.isfinite(value):
             raise ValueError(f'{key} {opts[key]!r}: give a number')
-        return v
+        return value
 
-    def whole(key, default=None, low=0):
+    def whole(key: str, default: int | None = None, low: int = 0) -> int | None:
         if key not in opts:
             return default
         try:
@@ -468,7 +543,8 @@ def check_options(opts):
         return n
     color = opts.get('--color', 'island').replace('-', ' ')   # small-islands: the 'small islands' mode
     if color not in COLOR_MODES:
-        raise ValueError(f'--color {opts["--color"]!r}: give one of {", ".join(m.replace(" ", "-") for m in COLOR_MODES)}')
+        modes = ', '.join(mode.replace(' ', '-') for mode in COLOR_MODES)
+        raise ValueError(f'--color {opts["--color"]!r}: give one of {modes}')
     focus = None
     if '--focus' in opts:
         focus = points(opts['--focus'], 1, '--focus', '"x,y,z"')[0]
@@ -477,23 +553,23 @@ def check_options(opts):
             'distance': number('--distance', 45.0), 'yaw': number('--yaw'), 'pitch': number('--pitch')}
 
 
-def points(text, count, key, form):
+def points(text: str, count: int, key: str, form: str) -> list[list[float]]:
     """count points "x,y,z" separated by ";", all finite; ValueError otherwise."""
     try:
-        pts = [[float(c) for c in p.split(',')] for p in text.split(';') if p.strip()]
+        parsed = [[float(coordinate) for coordinate in point.split(',')] for point in text.split(';') if point.strip()]
     except ValueError:
-        pts = []
-    if len(pts) != count or any(len(p) != 3 or not all(np.isfinite(p)) for p in pts):
+        parsed = []
+    if len(parsed) != count or any(len(point) != 3 or not all(np.isfinite(point)) for point in parsed):
         raise ValueError(f'{key} {text!r}: give {form}')
-    return pts
+    return parsed
 
 
-def path_points(text):
+def path_points(text: str) -> list[list[float]]:
     """--path "x,y,z;x,y,z": exactly two points (the start and the end); ValueError otherwise."""
     return points(text, 2, '--path', 'two points, "x,y,z;x,y,z"')
 
 
-def save_screenshot(path, shot):
+def save_screenshot(path: str, shot: 'npt.ArrayLike | None') -> int:
     """Writes the viewer's screenshot to path: exit code 0, or 1 when the viewer took none (nothing written)."""
     if shot is None:
         print(f'error: no screenshot was taken - {path} not written')
@@ -505,5 +581,7 @@ def save_screenshot(path, shot):
 
 
 if __name__ == '__main__':
-    with errors.guard():                         # a crash: logged, explained in a window, exit code 1
+    # a crash: logged, explained in a window, exit code 1 (errors: imported by the bootstrap above, under the same
+    # condition)
+    with errors.guard():  # pyright: ignore[reportPossiblyUnboundVariable]
         sys.exit(main(sys.argv))

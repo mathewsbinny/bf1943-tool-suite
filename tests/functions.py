@@ -22,35 +22,39 @@ import pathlib  # noqa: E402
 import tempfile  # noqa: E402
 import traceback  # noqa: E402
 import unittest  # noqa: E402
+from types import ModuleType  # noqa: E402
 
 FIXTURES = {'tmp_path'}
 
 
-def load(path):
+def load(path: str) -> ModuleType:
     """The test file as a module of its own name (its folder is not put on sys.path)."""
     name = 'functions_' + pathlib.Path(path).stem
     spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f'{path} cannot be loaded as a Python module')
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def run(module):
+def run(module: ModuleType) -> tuple[int, int, list[str]]:
     """(passed, failed, skipped) after running and reporting each test function."""
-    passed, failed, skipped = 0, 0, []
-    for name, fn in list(vars(module).items()):      # a list: a test may add a global (a warning registry)
-        if not (name.startswith('test') and inspect.isfunction(fn) and fn.__module__ == module.__name__):
+    passed, failed = 0, 0
+    skipped: list[str] = []
+    for name, function in list(vars(module).items()):      # a list: a test may add a global (a warning registry)
+        if not (name.startswith('test') and inspect.isfunction(function) and function.__module__ == module.__name__):
             continue
-        params = list(inspect.signature(fn).parameters)
-        unknown = [p for p in params if p not in FIXTURES]
+        params = list(inspect.signature(function).parameters)
+        unknown = [param for param in params if param not in FIXTURES]
         if unknown:
             print(f'FAIL {name}: needs pytest (fixture {", ".join(unknown)}; here only {", ".join(sorted(FIXTURES))})')
             failed += 1
             continue
         try:
             with tempfile.TemporaryDirectory(prefix='bf1943test_') as tmp:
-                fn(**({'tmp_path': pathlib.Path(tmp)} if 'tmp_path' in params else {}))
+                function(**({'tmp_path': pathlib.Path(tmp)} if 'tmp_path' in params else {}))
         except unittest.SkipTest as e:
             print(f'skip {name}: {e}')
             skipped.append(f'{name}: {e}')
@@ -64,7 +68,7 @@ def run(module):
     return passed, failed, skipped
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print('usage: python -B tests\\functions.py <test file>')
         return 2

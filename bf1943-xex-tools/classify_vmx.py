@@ -1,4 +1,11 @@
-"""Classify explicit VX128-table encodings; preserve ambiguous/unknown candidates."""
+"""Classify explicit VX128-table encodings; preserve ambiguous/unknown candidates.
+
+  python -B classify_vmx.py         (from the research workspace, or with BF1943_RESEARCH set)
+
+Reads the checked image, work/xex-analysis/functions.tsv and XenonRecomp's ppc-dis.c (xenonrecomp_reference.py);
+writes work/vmx128/classified.tsv (CRLF: a VMX fingerprint input, pinned by evidence) and
+research/evidence/vmx128-classification.json.
+"""
 import collections
 import csv
 import hashlib
@@ -16,7 +23,7 @@ FORM_MASKS = {'VX128': 0x3d0, 'VX128_1': 0x7f3, 'VX128_2': 0x210, 'VX128_3': 0x7
               'VX128_5': 0x10}
 
 
-def vx128_table(ppc_dis):
+def vx128_table(ppc_dis: bytes) -> list[tuple[str, int, int]]:
     """[(mnemonic, mask, value)] for every VX128 entry of ppc-dis.c's opcode table."""
     table = []
     for line in ppc_dis.decode().splitlines():
@@ -28,23 +35,23 @@ def vx128_table(ppc_dis):
     return table
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     data = (root / 'work/xex-analysis/default.checked.memory.bin').read_bytes()
     assert hashlib.sha256(data).hexdigest() == IMAGE_SHA256
     member, ppc_dis = xenonrecomp_reference.read('/ppc-dis.c', root)
     table = vx128_table(ppc_dis)
-    counts = collections.Counter()
+    counts: collections.Counter[str] = collections.Counter()
     ambiguous = 0
     unknown = 0
-    functions = collections.Counter()
+    functions: collections.Counter[str] = collections.Counter()
     with (root / 'work/vmx128/classified.tsv').open('w', encoding='utf-8', newline='') as out:
         # CRLF, as recorded: vmx_inputs.INPUTS and evidence pin these bytes
         writer = csv.writer(out, delimiter='\t', lineterminator='\r\n')
         writer.writerow(['address', 'function', 'word', 'matches'])
         for function in csv.DictReader((root / 'work/xex-analysis/functions.tsv').open(), delimiter='\t'):
-            for at in range(int(function['start'], 16), int(function['end'], 16), 4):
-                word = struct.unpack_from('>I', data, at - 0x82000000)[0]
+            for address in range(int(function['start'], 16), int(function['end'], 16), 4):
+                word = struct.unpack_from('>I', data, address - 0x82000000)[0]
                 if word >> 26 not in (4, 5, 6):
                     continue
                 names = [name for name, mask, value in table if word & mask == value]
@@ -56,12 +63,14 @@ def main():
                 else:
                     counts[names[0]] += 1
                 functions[function['start']] += 1
-                writer.writerow([f'{at:08x}', function['start'], f'{word:08x}', ','.join(names)])
+                writer.writerow([f'{address:08x}', function['start'], f'{word:08x}', ','.join(names)])
     report = dict(reference_member=member, reference_sha256=hashlib.sha256(ppc_dis).hexdigest(), definitions=len(table),
                   counts=dict(counts.most_common()), ambiguous=ambiguous, unmatched_primary_4_5_6=unknown,
                   functions=len(functions),
-                  limitations=['Mask candidates in declared function ranges; embedded data and reserved operand combinations are not excluded.',
-                               'Only explicit VX128 table entries; unmatched words may be standard AltiVec, data or unsupported instructions.'])
+                  limitations=['Mask candidates in declared function ranges; embedded data and reserved operand '
+                               'combinations are not excluded.',
+                               'Only explicit VX128 table entries; unmatched words may be standard AltiVec, data or '
+                               'unsupported instructions.'])
     (root / 'research/evidence/vmx128-classification.json').write_text(json.dumps(report, indent=2) + '\n',
                                                                        encoding='utf-8', newline='\n')
     print(json.dumps(report, indent=2))

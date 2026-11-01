@@ -16,53 +16,56 @@ if TYPE_CHECKING:
     from .config import GraphPoint, Log, Points, SectorGraph, StageResult
 
 
-def merge_detailed(a: 'StageResult', detailed: dict[str, Any], xoff: int, zoff: int, seeds: 'Points | None',
+def merge_detailed(normal: 'StageResult', detailed: dict[str, Any], xoff: int, zoff: int, seeds: 'Points | None',
                    common: dict[str, Any], log: 'Log') -> 'list[SectorGraph]':
-    """The second pass: DICE's detailed-zone sectors built at pitch 0.2 from their own sampling run (stage b),
-    merged with the normal build a. Stage b is seeded from a's walkable ground in those sectors (ground joined to the
-    rest of the level only through normal sectors would otherwise be lost) and continues a's node ids. Shared nodes
-    on the seams between a detailed and a normal sector come from a and are attached to b's ground (dropped from
-    both sides where b has none there); neighbour links across those seams are found by position on the other grid.
-    common: stage()'s arguments, the build's Settings and BuildState among them.
-    Returns the merged graphs (normal sectors from a, detailed from b)."""
+    """The second pass: DICE's detailed-zone sectors built at pitch 0.2 from their own sampling run (the fine stage,
+    "stage b"), merged with the normal build (normal, "stage a"). The fine stage is seeded from the normal stage's
+    walkable ground in those sectors (ground joined to the rest of the level only through normal sectors would
+    otherwise be lost) and continues its node ids. Shared nodes on the seams between a detailed and a normal sector
+    come from the normal stage and are attached to the fine stage's ground (dropped from both sides where it has none
+    there); neighbour links across those seams are found by position on the other grid. detailed: build()'s
+    {'samples', 'high', 'sectors'}; common: stage()'s arguments, the build's Settings and BuildState among them.
+    Returns the merged graphs (normal sectors from the normal stage, detailed ones from the fine stage)."""
     settings, state = common['settings'], common['state']
-    dset = set(detailed['sectors']) & a['sectors']
-    if not dset:
+    detailed_set = set(detailed['sectors']) & normal['sectors']
+    if not detailed_set:
         log('detailed pass: none of its sectors has ground in the normal build - nothing built at pitch 0.2')
-        return a['graphs']
-    alv = a['level']
-    sa = alv.s
+        return normal['graphs']
+    normal_level = normal['level']
+    samples = normal_level.s
     owners = defaultdict(set)
-    for sec, nodes in a['border_nodes'].items():
+    for sec, nodes in normal['border_nodes'].items():
         for nid, _pos, _k in nodes:
             owners[nid].add(sec)
-    grid_min = (min(X for X, _ in a['sectors']), min(Y for _, Y in a['sectors']))
-    kept = np.nonzero(alv.keep)[0]
-    kept_sec = list(zip(*column_sectors(sa, alv.col_of[kept], xoff, zoff, settings, sa.pitch)))
+    grid_min = (min(X for X, _ in normal['sectors']), min(Y for _, Y in normal['sectors']))
+    kept = np.nonzero(normal_level.keep)[0]
+    kept_sec = list(zip(*column_sectors(samples, normal_level.col_of[kept], xoff, zoff, settings, samples.pitch)))
     # a discarded attempt's order nodes and ladder counts must not stay: the retry reuses its node ids
     # (id_start), and an ordinary node with a stale order id was pruned as an order node (2026-10-31)
     order_ids, ladder_stats = set(state.order_ids), dict(state.ladder_stats)
     while True:
         state.order_ids, state.ladder_stats = set(order_ids), dict(ladder_stats)
-        # seeds: a's kept ground in the detailed sectors
-        pts = []
+        # seeds: the normal stage's kept ground in the detailed sectors
+        seed_pts = []
         for k, sec in zip(kept, kept_sec):
-            if sec in dset:
-                c = alv.col_of[k]
-                x, z = sa.min_x + (c % sa.nx) * sa.pitch, sa.min_z + (c // sa.nx) * sa.pitch
-                pts.append((x, float(alv.y[k]), z))
-        # a's shared nodes on the seams between a detailed and a normal sector, per detailed sector
+            if sec in detailed_set:
+                col = normal_level.col_of[k]
+                x = samples.min_x + (col % samples.nx) * samples.pitch
+                z = samples.min_z + (col // samples.nx) * samples.pitch
+                seed_pts.append((x, float(normal_level.y[k]), z))
+        # the normal stage's shared nodes on the seams between a detailed and a normal sector, per detailed sector
         carried = defaultdict(list)
-        for sec in dset:
-            for nid, pos, _k in a['border_nodes'].get(sec, ()):
-                if owners[nid] - dset:
+        for sec in detailed_set:
+            for nid, pos, _k in normal['border_nodes'].get(sec, ()):
+                if owners[nid] - detailed_set:
                     carried[sec].append((nid, pos))
-        log(f'detailed pass: {len(dset)} sectors at pitch {DETAILED_PITCH}, {len(pts)} seed points from the normal '
-            f'build, {sum(len(v) for v in carried.values())} shared nodes on mixed seams')
-        b = stage(detailed['samples'], detailed.get('high'), xoff, zoff, seeds=seeds, **common,
-                  grid=grid_at(DETAILED_PITCH, settings), sector_filter=dset, grid_min=grid_min, id_start=a['next_id'],
-                  carried=carried, seed_points=pts)
-        missing = dset - b['sectors']
+        n_carried = sum(len(sector_nodes) for sector_nodes in carried.values())
+        log(f'detailed pass: {len(detailed_set)} sectors at pitch {DETAILED_PITCH}, {len(seed_pts)} seed points from '
+            f'the normal build, {n_carried} shared nodes on mixed seams')
+        fine_stage = stage(detailed['samples'], detailed.get('high'), xoff, zoff, seeds=seeds, **common,
+                           grid=grid_at(DETAILED_PITCH, settings), sector_filter=detailed_set, grid_min=grid_min,
+                           id_start=normal['next_id'], carried=carried, seed_points=seed_pts)
+        missing = detailed_set - fine_stage['sectors']
         if not missing:
             break
         # a sector without ground at 0.2 stays at the normal pitch: its seams are then normal seams (with their
@@ -70,55 +73,62 @@ def merge_detailed(a: 'StageResult', detailed: dict[str, Any], xoff: int, zoff: 
         # again without it, which carries those seams' nodes too (dropping them unlinked the sector, 2026-10-30)
         log(f'detailed pass: {len(missing)} sectors without ground at pitch {DETAILED_PITCH} kept at the normal pitch: '
             + ', '.join(f'{(X & 0xFF) << 8 | (Y & 0xFF):04x}' for X, Y in sorted(missing)) + ' - pass made again')
-        dset -= missing
-        if not dset:
+        detailed_set -= missing
+        if not detailed_set:
             log('detailed pass: no sector left at pitch 0.2 - the normal build is kept')
-            return a['graphs']
-    dset = b['sectors']
-    drop = b['dropped']
+            return normal['graphs']
+    detailed_set = fine_stage['sectors']
+    drop = fine_stage['dropped']
     log(f'detailed pass: {len(drop)} mixed-seam shared nodes without ground at pitch {DETAILED_PITCH} dropped')
-    # links across mixed seams: b's sectors to a's normal neighbours, a's normal sectors to b's detailed ones
-    a_norm = {sec: g for sec, g in zip(sorted(a['sectors']), a['graphs']) if sec not in dset}
-    b_det = {sec: g for sec, g in zip(sorted(b['sectors']), b['graphs'])}
-    a_view = dict(a, info={s_: i for s_, i in a['info'].items() if s_ not in dset})
-    # a's links between its own normal sectors are found again here with the detailed grid's pitch in the step rule
-    # (a's surfaces, b's grid): until 2026-10-31 this ran while set_pitch(DETAILED_PITCH) was in force, and the
-    # refactor kept the builds byte-identical. The 0.8 m grid (alv itself) is likely what was meant: to check
-    a_links_level = alv.on_grid(b['level'].grid)
-    for here, there, mine in ((b, a_view, b_det), (a, b, a_norm)):
-        for (X, Y), g in mine.items():
-            areas, mesh = here['info'][(X, Y)]['areas'], g[2]
-            same = same_grid_resolver(b['level'] if here is b else a_links_level,
-                                      {s_: i for s_, i in here['info'].items() if s_ in mine}, X, Y)
-            cross = cross_grid_resolver(here, there, X, Y)
+    # links across mixed seams: the fine stage's sectors to their normal neighbours, the normal sectors to their
+    # detailed ones
+    normal_graphs = {sec: graph for sec, graph in zip(sorted(normal['sectors']), normal['graphs'])
+                     if sec not in detailed_set}
+    detailed_graphs = {sec: graph for sec, graph in zip(sorted(fine_stage['sectors']), fine_stage['graphs'])}
+    normal_view = dict(normal, info={sector: sector_info for sector, sector_info in normal['info'].items()
+                                     if sector not in detailed_set})
+    # the normal stage's links between its own normal sectors are found again here with the detailed grid's pitch in
+    # the step rule (the normal stage's surfaces, the fine stage's grid): until 2026-10-31 this ran while
+    # set_pitch(DETAILED_PITCH) was in force, and the refactor kept the builds byte-identical. The 0.8 m grid
+    # (normal_level itself) is likely what was meant: to check
+    normal_links_level = normal_level.on_grid(fine_stage['level'].grid)
+    for here, there, mine in ((fine_stage, normal_view, detailed_graphs), (normal, fine_stage, normal_graphs)):
+        for (X, Y), graph in mine.items():
+            areas, mesh = here['info'][(X, Y)]['areas'], graph[2]
+            mine_info = {sector: sector_info for sector, sector_info in here['info'].items() if sector in mine}
+            same_resolve = same_grid_resolver(fine_stage['level'] if here is fine_stage else normal_links_level,
+                                              mine_info, X, Y)
+            cross_resolve = cross_grid_resolver(here, there, X, Y)
+            # a neighbour on this sector's own grid (mine), else across the seam on the other grid
             mesh.links = sector_links(X, Y, areas, mesh.areas,
-                                      lambda other, ar, bd, s=same, c=cross: s(other, ar, bd) if other in mine else c(other, ar, bd))
+                                      lambda other, area, border, same=same_resolve, cross=cross_resolve:
+                                      same(other, area, border) if other in mine else cross(other, area, border))
     merged = []
-    for sec in sorted(set(a_norm) | set(b_det)):
-        sid, bnd, mesh, pts_, pairs, origin = a_norm[sec] if sec in a_norm else b_det[sec]
-        if drop and sec in a_norm:
-            # a's normal sector: drop the mixed-seam shared nodes stage b had no ground for
-            gone = {q for q, p in enumerate(pts_) if p[0] in drop}
-            pairs = [p for p in pairs if p[0] not in gone and p[1] not in gone]
-        merged.append((sid, bnd, mesh, pts_, pairs, origin))
+    for sec in sorted(set(normal_graphs) | set(detailed_graphs)):
+        sid, bounds, mesh, pts, pairs, origin = normal_graphs[sec] if sec in normal_graphs else detailed_graphs[sec]
+        if drop and sec in normal_graphs:
+            # a normal sector: drop the mixed-seam shared nodes the fine stage had no ground for
+            gone = {index for index, point in enumerate(pts) if point[0] in drop}
+            pairs = [pair for pair in pairs if pair[0] not in gone and pair[1] not in gone]
+        merged.append((sid, bounds, mesh, pts, pairs, origin))
     if settings.seam_gap_nodes:
-        by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
-        added, runs, one_side = seam_gap_nodes(a, b, by_sec, set(b_det), xoff, zoff, state)
+        by_sec = dict(zip(sorted(set(normal_graphs) | set(detailed_graphs)), merged))
+        added, runs, one_side = seam_gap_nodes(normal, fine_stage, by_sec, set(detailed_graphs), xoff, zoff, state)
         log(f'detailed pass: {added} seam gap nodes on mixed seams ({runs} stretches of shared ground with no linked '
             f'shared node; {one_side} joined on one side only)')
     if settings.seam_fine_links:
-        by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
-        n_links = seam_fine_links(a, b, by_sec, set(b_det), xoff, zoff, state)
+        by_sec = dict(zip(sorted(set(normal_graphs) | set(detailed_graphs)), merged))
+        n_links = seam_fine_links(normal, fine_stage, by_sec, set(detailed_graphs), xoff, zoff, state)
         log(f'detailed pass: {n_links} fine-resolved link(s) in normal sectors beside mixed seams')
-        for p, q in (state.fine_links[-n_links:] if n_links else []):
-            log(f'  fine link {p} - {q}')
+        for end_a, end_b in (state.fine_links[-n_links:] if n_links else []):
+            log(f'  fine link {end_a} - {end_b}')
     if settings.seam_far_links:
-        by_sec = dict(zip(sorted(set(a_norm) | set(b_det)), merged))
-        n_far = seam_far_links(a, b, by_sec, set(b_det), xoff, zoff, state)
+        by_sec = dict(zip(sorted(set(normal_graphs) | set(detailed_graphs)), merged))
+        n_far = seam_far_links(normal, fine_stage, by_sec, set(detailed_graphs), xoff, zoff, state)
         log(f'detailed pass: {n_far} fine-resolved link(s) two 0.8 m columns apart beside mixed seams')
-        for p, q in (state.far_links[-n_far:] if n_far else []):
-            log(f'  far link {p} - {q}')
-    log(f'merged: {len(a_norm)} normal + {len(b_det)} detailed sectors')
+        for end_a, end_b in (state.far_links[-n_far:] if n_far else []):
+            log(f'  far link {end_a} - {end_b}')
+    log(f'merged: {len(normal_graphs)} normal + {len(detailed_graphs)} detailed sectors')
     return merged
 
 
@@ -127,49 +137,49 @@ def merge_coincident_border(graphs: 'list[SectorGraph]', log: 'Log' = print) -> 
     mixed-pitch seam onto a nearby surface: zero-length edges, which hpdcheck refuses): border nodes there become one
     id, the lowest, in every sector, and an ordinary node there becomes that border node. Returns the graphs."""
     parent: dict[int, int] = {}
-    key = lambda p: tuple(round(float(v), 3) for v in p[1])
+    spot_of = lambda point: tuple(round(float(coord), 3) for coord in point[1])
 
     def find(x: int) -> int:
         while parent.get(x, x) != x:
             x = parent[x]
         return x
     for _sid, _b, _m, pts, _pairs, _o in graphs:
-        at = {}
-        for p in pts:
-            if p[0] & 0x80000000:
-                if key(p) in at and find(at[key(p)]) != find(p[0]):
-                    lo, hi = sorted((find(at[key(p)]), find(p[0])))
+        first_at = {}
+        for point in pts:
+            if point[0] & 0x80000000:
+                if spot_of(point) in first_at and find(first_at[spot_of(point)]) != find(point[0]):
+                    lo, hi = sorted((find(first_at[spot_of(point)]), find(point[0])))
                     parent[hi] = lo
-                at.setdefault(key(p), p[0])
+                first_at.setdefault(spot_of(point), point[0])
     out, folded = [], 0
-    for sid, bnd, mesh, pts, pairs, origin in graphs:
+    for sid, bounds, mesh, pts, pairs, origin in graphs:
         border_at = {}
-        for q, p in enumerate(pts):
-            if p[0] & 0x80000000:
-                border_at.setdefault(key(p), q)
+        for entry, point in enumerate(pts):
+            if point[0] & 0x80000000:
+                border_at.setdefault(spot_of(point), entry)
         ids = []
-        for _q, p in enumerate(pts):
-            if p[0] & 0x80000000:
-                ids.append(find(p[0]))
-            elif key(p) in border_at:
-                ids.append(find(pts[border_at[key(p)]][0]))
+        for _entry, point in enumerate(pts):
+            if point[0] & 0x80000000:
+                ids.append(find(point[0]))
+            elif spot_of(point) in border_at:
+                ids.append(find(pts[border_at[spot_of(point)]][0]))
                 folded += 1
             else:
-                ids.append(p[0])
-        rep = {}                                    # id -> the entry kept (a border entry where there is one)
-        for q, nid in enumerate(ids):
-            if nid not in rep or (pts[q][0] & 0x80000000 and not pts[rep[nid]][0] & 0x80000000):
-                rep[nid] = q
+                ids.append(point[0])
+        kept = {}                                    # id -> the entry kept (a border entry where there is one)
+        for entry, nid in enumerate(ids):
+            if nid not in kept or (pts[entry][0] & 0x80000000 and not pts[kept[nid]][0] & 0x80000000):
+                kept[nid] = entry
         order = list(dict.fromkeys(ids))
-        index = {nid: n for n, nid in enumerate(order)}
-        new_pts = [cast('GraphPoint', (nid,) + tuple(pts[rep[nid]][1:])) for nid in order]
+        index = {nid: position for position, nid in enumerate(order)}
+        new_pts = [cast('GraphPoint', (nid,) + tuple(pts[kept[nid]][1:])) for nid in order]
         seen, new_pairs = set(), []
-        for a_, b_, d in pairs:
-            u, v = index[ids[a_]], index[ids[b_]]
-            if u != v and (min(u, v), max(u, v)) not in seen:
-                seen.add((min(u, v), max(u, v)))
-                new_pairs.append((u, v, d))
-        out.append((sid, bnd, mesh, new_pts, new_pairs, origin))
+        for node_a, node_b, dist in pairs:
+            u, coord = index[ids[node_a]], index[ids[node_b]]
+            if u != coord and (min(u, coord), max(u, coord)) not in seen:
+                seen.add((min(u, coord), max(u, coord)))
+                new_pairs.append((u, coord, dist))
+        out.append((sid, bounds, mesh, new_pts, new_pairs, origin))
     if parent or folded:
         log(f'nodes at one position merged: {len(parent)} border id(s), {folded} ordinary node(s)')
     return out

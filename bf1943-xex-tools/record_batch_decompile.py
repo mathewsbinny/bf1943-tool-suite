@@ -1,5 +1,13 @@
-"""Record the batch decompilation run: per-file hashes, counts and the validation it depends on."""
+"""Record the batch decompilation run: per-file hashes, counts and the validation it depends on.
+
+  python -B record_batch_decompile.py   (from the research workspace, or with BF1943_RESEARCH set)
+
+Reads the run's tables under work/xex-analysis (decompiled-index.tsv, batch-decompile.txt, saved-validation.txt, the
+decompiled files, and the newest batch-baseline-* and batch-leaf-* runs when present); writes
+work/xex-analysis/decompiled-manifest.tsv and research/evidence/xex-batch-decompile.json.
+"""
 from pathlib import Path
+from typing import Any
 import collections
 import csv
 import hashlib
@@ -16,42 +24,48 @@ HASHED = ['bf1943-xex-tools/export_all_decompiled.java', 'bf1943-xex-tools/run_b
           'work/xex-analysis/batch-project-identity.txt', 'work/vmx128/XenonVMX128/data/languages/xenon.sla']
 LIMITS = ['Pseudocode, not recovered source; no types, signatures or calling conventions were recovered',
           'Remaining opaque calls (VMX128_*, vector2RaisedToThe*/vectorLog2*) are unknown values',
-          'FP/vector counts: an instruction is opaque when its p-code holds a CALLOTHER other than a stream hint (dst/dss)',
-          'Opaque counts cover flow-reached listing instructions only; words reached only via unrecovered jump tables are not counted',
-          'Terminal-call overrides infer non-returning calls from .pdata layout; they bound decompilation, they do not prove noreturn',
+          'FP/vector counts: an instruction is opaque when its p-code holds a CALLOTHER other than a stream hint '
+          '(dst/dss)',
+          'Opaque counts cover flow-reached listing instructions only; words reached only via unrecovered jump tables '
+          'are not counted',
+          'Terminal-call overrides infer non-returning calls from .pdata layout; they bound decompilation, they do not '
+          'prove noreturn',
           'Main project opened read-only; language switch and overrides exist only in-session']
 
 
-def path_of(name, root):
+type Row = dict[str, str]           # a row of decompiled-index.tsv
+
+
+def path_of(name: str, root: Path) -> Path:
     """A HASHED name's file: the suite's own tools are here, the rest are in the research workspace."""
     if name.startswith('bf1943-xex-tools/'):
         return HERE / name[len('bf1943-xex-tools/'):]
     return root / name
 
 
-def sha(path):
+def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def read_index(folder):
+def read_index(folder: Path) -> list[Row]:
     return list(csv.DictReader((folder / 'decompiled-index.tsv').open(), delimiter='\t'))
 
 
-def failed(row):
+def failed(row: Row) -> bool:
     return row['decoded'] != 'true' or row['decompiled'] != 'true'
 
 
-def opaque_count(row):
+def opaque_count(row: Row) -> int:
     return int(row['fp_opaque']) + int(row['vector_opaque'])
 
 
-def diagnostics(rows):
+def diagnostics(rows: list[Row]) -> list[str]:
     return [row['address'] + ' ' + row['diagnostic'] for row in rows if row['diagnostic']]
 
 
 # Floating-point / vector coverage, and the before/after comparison with a baseline run (run_batch_decompile.ps1
 # -Out batch-baseline-<date> -Module <saved language>) when one exists.
-def fpvmx(rows):
+def fpvmx(rows: list[Row]) -> dict[str, Any]:
     has = [row for row in rows if int(row.get('fp_instructions') or 0) + int(row.get('vector_instructions') or 0) > 0]
     opaque_names = collections.Counter(name for row in has for name in row['fpvmx_opaque_op_names'].split(',') if name)
     return dict(functions_with_fp_or_vector=len(has),
@@ -64,13 +78,13 @@ def fpvmx(rows):
                 opaque_ops_by_functions=dict(opaque_names.most_common()))
 
 
-def seconds(summary):
+def seconds(summary: str) -> dict[str, float]:
     """The seconds_*=<value> fields of a batch-decompile.txt summary line."""
     fields = (item.split('=') for item in summary.split() if '=' in item)
     return {key: float(value) for key, value in fields if key.startswith('seconds_')}
 
 
-def baseline_comparison(root, work, rows, report):
+def baseline_comparison(root: Path, work: Path, rows: list[Row], report: dict[str, Any]) -> None:
     """The newest batch-baseline-* run, and what changed from it to this run (adds 'baseline' and 'before_after')."""
     baselines = sorted(work.glob('batch-baseline-*/batch-decompile.txt'))
     if not baselines:
@@ -98,7 +112,7 @@ def baseline_comparison(root, work, rows, report):
 
 
 # Functions created in-session from extra= (e.g. the leaf functions without .pdata), when such a run exists.
-def extra_functions(root, work):
+def extra_functions(root: Path, work: Path) -> dict[str, Any] | None:
     """The newest batch-leaf-* run's record, or None."""
     leaves = sorted(work.glob('batch-leaf-*/batch-decompile.txt'))
     if not leaves:
@@ -107,7 +121,8 @@ def extra_functions(root, work):
     leaf_rows = read_index(leaf)
     created = list(csv.DictReader((leaf / 'extra-functions.tsv').open(), delimiter='\t'))
     edges = work / 'callgraph/callgraph-edges.tsv'
-    edge_kinds = collections.defaultdict(set)              # caller -> the kinds of its call graph edges
+    # caller -> the kinds of its call graph edges
+    edge_kinds: collections.defaultdict[str, set[str]] = collections.defaultdict(set)
     if edges.exists():
         for edge in csv.DictReader(edges.open(), delimiter='\t'):
             edge_kinds[edge['caller']].add(edge['kind'])
@@ -127,7 +142,7 @@ def extra_functions(root, work):
         index_sha256=sha(leaf / 'decompiled-index.tsv'), extra_functions_sha256=sha(leaf / 'extra-functions.tsv'))
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     work = root / 'work/xex-analysis'
     assert sha(work / 'default.checked.memory.bin') == IMAGE_SHA256 and sha(work / 'default.memory.bin') == IMAGE_SHA256
@@ -141,13 +156,13 @@ def main():
             if row['file']:
                 out.write(f"{row['file']}\t{sha(work / 'decompiled' / row['file'])}\n")
 
-    def count(key, value):
+    def count(key: str, value: str) -> int:
         return sum(row[key] == value for row in rows)
 
     failures = [dict(address=row['address'], name=row['name'], decoded=row['decoded'], decompiled=row['decompiled'],
                      style=row['style'], diagnostic=row['diagnostic'])
                 for row in rows if failed(row)]
-    report = dict(
+    report: dict[str, Any] = dict(
         summary=(work / 'batch-decompile.txt').read_text().strip(), image_sha256=IMAGE_SHA256,
         saved_validation=saved.strip(), language='PowerPC:BE:64:XenonVMX128',
         functions=len(rows), decoded=count('decoded', 'true'), decompiled_full_style=count('decompiled', 'true'),

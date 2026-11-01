@@ -20,23 +20,49 @@ if TYPE_CHECKING:
     from .inputs import Level
 
 
-def line_walkable(level: 'Level', k0: int, a: tuple[int, int], b: tuple[int, int], gi0: int, gj0: int, k1: int) -> bool:
-    """Straight line from local sample a to b (i, j) over connected kept surfaces, starting on k0, ending on k1."""
-    (i0, j0), (i1, j1) = a, b
-    n = max(abs(i1 - i0), abs(j1 - j0))
-    k, ci, cj = k0, i0, j0
-    for t in range(1, n + 1):
-        ti = i0 + round((i1 - i0) * t / n)
-        tj = j0 + round((j1 - j0) * t / n)
-        di, dj = ti - ci, tj - cj
+def line_walkable(level: 'Level', k0: int, start: tuple[int, int], end: tuple[int, int], gi0: int, gj0: int, k1: int
+                  ) -> bool:
+    """Straight line from local sample start to end (i, j) over connected kept surfaces, starting on k0, ending on
+    k1."""
+    (i0, j0), (i1, j1) = start, end
+    steps = max(abs(i1 - i0), abs(j1 - j0))
+    k, cur_i, cur_j = k0, i0, j0
+    for t in range(1, steps + 1):
+        next_i = i0 + round((i1 - i0) * t / steps)
+        next_j = j0 + round((j1 - j0) * t / steps)
+        di, dj = next_i - cur_i, next_j - cur_j
         if di or dj:
-            nk = level.neighbour(k, gi0 + ci, gj0 + cj, di, dj)
+            next_k = level.neighbour(k, gi0 + cur_i, gj0 + cur_j, di, dj)
         else:
             continue
-        if nk is None:
+        if next_k is None:
             return False
-        k, ci, cj = nk, ti, tj
+        k, cur_i, cur_j = next_k, next_i, next_j
     return k == k1 or abs(level.y[k] - level.y[k1]) <= 0.6
+
+
+def _walkable_between(level: 'Level', a: 'GraphPoint', b: 'GraphPoint', gi0: int, gj0: int) -> bool:
+    """line_walkable from route node a to route node b, each (id, pos, surface k, local i, local j)."""
+    return line_walkable(level, a[2], (a[3], a[4]), (b[3], b[4]), gi0, gj0, b[2])
+
+
+def _string_pull(level: 'Level', path: list[int], cell_ij: dict[int, tuple[int, int]], gi0: int, gj0: int
+                 ) -> list[int]:
+    """String pulling: the surfaces of path (a walk from surface to surface) where its straight walkable legs (each at
+    most DIST_EDGE_MAX) meet - the first, then from each the farthest one a leg reaches."""
+    pitch = level.grid.pitch
+    way = [path[0]]
+    pull_from = 0
+    while pull_from < len(path) - 1:
+        pull_to = len(path) - 1
+        while pull_to > pull_from + 1 and not (
+                math.dist(cell_ij[path[pull_from]], cell_ij[path[pull_to]]) * pitch <= DIST_EDGE_MAX and
+                line_walkable(level, path[pull_from], cell_ij[path[pull_from]], cell_ij[path[pull_to]], gi0, gj0,
+                              path[pull_to])):
+            pull_to -= 1
+        way.append(path[pull_to])
+        pull_from = pull_to
+    return way
 
 
 def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoint]', pairs: 'list[GraphPair]',
@@ -55,20 +81,20 @@ def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoi
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
-    for a_, b_, _ in pairs:
-        parent[find(a_)] = find(b_)
+    for node_a, node_b, _ in pairs:
+        parent[find(node_a)] = find(node_b)
     node_at = {}
-    for idx, p in enumerate(pts):
-        node_at.setdefault(p[2], idx)
-    cell_ij = {c[2]: (c[0], c[1]) for a in areas for c in a['cells']}
-    for p in pts:
-        cell_ij.setdefault(p[2], (p[3], p[4]))
+    for idx, point in enumerate(pts):
+        node_at.setdefault(point[2], idx)
+    cell_ij = {c[2]: (c[0], c[1]) for area in areas for c in area['cells']}
+    for point in pts:
+        cell_ij.setdefault(point[2], (point[3], point[4]))
     # the flood's bounds: the sector's window, and the settings' join_margin beyond it (ground joined only round a
     # corner of the neighbour sector - Coral Sea's strip beside the South Base bunker, closed inside 0b0a's window and
     # joined 1 m past it, 2026-10-26)
-    m_ = int(math.ceil((level.settings.join_margin or 0.0) / pitch - 1e-9))
-    wi, wj = join.window if join is not None and join.window else (grid.window, grid.window)
-    lo_i, hi_i, lo_j, hi_j = wi[0] - m_, wi[-1] + m_, wj[0] - m_, wj[-1] + m_
+    margin = int(math.ceil((level.settings.join_margin or 0.0) / pitch - 1e-9))
+    range_i, range_j = join.window if join is not None and join.window else (grid.window, grid.window)
+    lo_i, hi_i, lo_j, hi_j = range_i[0] - margin, range_i[-1] + margin, range_j[0] - margin, range_j[-1] + margin
 
     def beyond_ok(i: int, j: int) -> bool:
         # past the window only into a sector of this stage (this grid's pitch): a 0.2 m flood into a 0.8 m sector
@@ -76,8 +102,8 @@ def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoi
         if join is None:
             return False
         X, Y = join.sector
-        t = (X + i // grid.sector_samples, Y + j // grid.sector_samples)
-        return t in join.sectors and (t in join.detailed_sectors) == grid.detailed
+        sector = (X + i // grid.sector_samples, Y + j // grid.sector_samples)
+        return sector in join.sectors and (sector in join.detailed_sectors) == grid.detailed
     changed = True
     while changed:
         changed = False
@@ -86,20 +112,20 @@ def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoi
             groups[find(idx)].append(idx)
         if len(groups) < 2:
             break
-        for root, members in sorted(groups.items(), key=lambda g: len(g[1])):
+        for root, members in sorted(groups.items(), key=lambda group: len(group[1])):
             if find(members[0]) != root:
                 continue
-            prev: dict[int, int | None] = {pts[m][2]: None for m in members}
-            q = deque(pts[m][2] for m in members)
+            prev: dict[int, int | None] = {pts[member][2]: None for member in members}
+            queue = deque(pts[member][2] for member in members)
             target = None
-            while q and target is None:
-                k = q.popleft()
+            while queue and target is None:
+                k = queue.popleft()
                 i, j = cell_ij[k]
                 for di in (-1, 0, 1):
                     for dj in (-1, 0, 1):
                         if not (di or dj) or not (lo_i <= i + di <= hi_i and lo_j <= j + dj <= hi_j):
                             continue
-                        if not (i + di in wi and j + dj in wj) and not beyond_ok(i + di, j + dj):
+                        if not (i + di in range_i and j + dj in range_j) and not beyond_ok(i + di, j + dj):
                             continue
                         n = level.neighbour(k, gi0 + i, gj0 + j, di, dj)
                         if n is None or n in prev:
@@ -109,7 +135,7 @@ def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoi
                         if n in node_at and find(node_at[n]) != root:
                             target = n
                             break
-                        q.append(n)
+                        queue.append(n)
                     if target is not None:
                         break
             if target is None:
@@ -118,16 +144,7 @@ def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoi
             while prev[path[-1]] is not None:
                 path.append(cast(int, prev[path[-1]]))   # not None: the loop's test
             path.reverse()                       # from a member's surface to the target's surface
-            # string pulling
-            way = [path[0]]
-            a = 0
-            while a < len(path) - 1:
-                b = len(path) - 1
-                while b > a + 1 and not (math.dist(cell_ij[path[a]], cell_ij[path[b]]) * pitch <= DIST_EDGE_MAX and
-                                         line_walkable(level, path[a], cell_ij[path[a]], cell_ij[path[b]], gi0, gj0, path[b])):
-                    b -= 1
-                way.append(path[b])
-                a = b
+            way = _string_pull(level, path, cell_ij, gi0, gj0)
             chain = []
             for k in way:
                 if k in node_at:
@@ -172,21 +189,21 @@ def build_graph(level: 'Level', areas: 'Sequence[AreaDict]', area_of: dict[int, 
                 return
             taken.add(k)
         pts.append((new_id(), (ox + i * pitch, float(level.y[k]) + yoff, oz + j * pitch), k, i, j))
-    for a in areas:
-        if len(a['cells']) < 4:
+    for area in areas:
+        if len(area['cells']) < 4:
             continue
-        ci = sum(c[0] for c in a['cells']) / len(a['cells'])
-        cj = sum(c[1] for c in a['cells']) / len(a['cells'])
-        i, j, k = min(a['cells'], key=lambda c: (c[0] - ci) ** 2 + (c[1] - cj) ** 2)
+        centre_i = sum(c[0] for c in area['cells']) / len(area['cells'])
+        centre_j = sum(c[1] for c in area['cells']) / len(area['cells'])
+        i, j, k = min(area['cells'], key=lambda c: (c[0] - centre_i) ** 2 + (c[1] - centre_j) ** 2)
         add(i, j, k)
-    cell_of = {c[2]: (c[0], c[1]) for a in areas for c in a['cells']}
+    cell_of = {c[2]: (c[0], c[1]) for area in areas for c in area['cells']}
     for ai, (portals, _b, _o) in enumerate(traced):
-        for p in portals:
-            if p.target < ai:
+        for portal in portals:
+            if portal.target < ai:
                 continue          # one node per portal pair
-            mx, mz = (p.p0[0] + p.p1[0]) / 2, (p.p0[2] + p.p1[2]) / 2
-            best = min(areas[ai]['cells'], key=lambda c: (ox + c[0] * pitch - mx) ** 2 + (oz + c[1] * pitch - mz) ** 2)
-            i, j, k = best
+            mid_x, mid_z = (portal.p0[0] + portal.p1[0]) / 2, (portal.p0[2] + portal.p1[2]) / 2
+            i, j, k = min(areas[ai]['cells'],
+                          key=lambda c: (ox + c[0] * pitch - mid_x) ** 2 + (oz + c[1] * pitch - mid_z) ** 2)
             add(i, j, k)
     for nid, pos, k in borders:
         # the node's own surface cell (a node carried from another pitch's build sits up to CARRY_RADIUS from it;
@@ -197,29 +214,29 @@ def build_graph(level: 'Level', areas: 'Sequence[AreaDict]', area_of: dict[int, 
     if cover:
         add_cover_nodes(level, areas, pts, add, ox, oz, cover)
     # edges: pairs within DIST_EDGE_MAX whose straight line is walkable
-    cell = DIST_EDGE_MAX
+    bucket_size = DIST_EDGE_MAX
     buckets = defaultdict(list)
-    for idx, p in enumerate(pts):
-        buckets[(int(p[1][0] // cell), int(p[1][2] // cell))].append(idx)
+    for idx, point in enumerate(pts):
+        buckets[(int(point[1][0] // bucket_size), int(point[1][2] // bucket_size))].append(idx)
     pairs: list[GraphPair] = []
-    for idx, p in enumerate(pts):
-        gx, gz = int(p[1][0] // cell), int(p[1][2] // cell)
+    for idx, point in enumerate(pts):
+        bucket_x, bucket_z = int(point[1][0] // bucket_size), int(point[1][2] // bucket_size)
         for dx in (-1, 0, 1):
             for dz in (-1, 0, 1):
-                for q in buckets.get((gx + dx, gz + dz), ()):
-                    if q <= idx:
+                for other in buckets.get((bucket_x + dx, bucket_z + dz), ()):
+                    if other <= idx:
                         continue
-                    d = math.dist(p[1], pts[q][1])
-                    if d <= DIST_EDGE_MAX and line_walkable(level, p[2], (p[3], p[4]), (pts[q][3], pts[q][4]), gi0, gj0, pts[q][2]):
-                        pairs.append((idx, q, d))
+                    dist = math.dist(point[1], pts[other][1])
+                    if dist <= DIST_EDGE_MAX and _walkable_between(level, point, pts[other], gi0, gj0):
+                        pairs.append((idx, other, dist))
     if GABRIEL_EDGES == 'all' or (GABRIEL_EDGES == 'detailed' and grid.detailed):
         pairs = gabriel_prune(pts, pairs)
-    for kf, kt in ladders:
+    for k_foot, k_top in ladders:
         # a ladder link: a node on the ground at its foot and at its top, joined directly (the climb is no walkable
         # line); the runtime's mover walks the bot into the ladder, which takes any soldier who walks into it
         ends = []
-        for k in (kf, kt):
-            idx = next((q for q, p in enumerate(pts) if p[2] == k), None)
+        for k in (k_foot, k_top):
+            idx = next((other for other, point in enumerate(pts) if point[2] == k), None)
             if idx is None:
                 i, j = cell_of[k]
                 pts.append((new_id(), (ox + i * pitch, float(level.y[k]) + yoff, oz + j * pitch), k, i, j))
@@ -230,9 +247,9 @@ def build_graph(level: 'Level', areas: 'Sequence[AreaDict]', area_of: dict[int, 
     # connect remaining groups (join_groups)
     node_at, cell_ij = join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join)
     if DETOUR_REPAIR:
-        for p in range(DETOUR_PASSES):
+        for repair_pass in range(DETOUR_PASSES):
             added = repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id)
-            state.repair_stats[p] = state.repair_stats.get(p, 0) + added
+            state.repair_stats[repair_pass] = state.repair_stats.get(repair_pass, 0) + added
     if ORDER_NODES and orders:
         added = add_order_nodes(level, pts, pairs, node_at, area_of, orders, gi0, gj0, ox, oz, new_id, state.order_ids)
         state.order_stats['added'] = state.order_stats.get('added', 0) + added
@@ -241,45 +258,50 @@ def build_graph(level: 'Level', areas: 'Sequence[AreaDict]', area_of: dict[int, 
 
 def add_cover_nodes(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoint]',
                     add: Callable[[int, int, int], None], ox: float, oz: float, cover: float) -> None:
-    """NODE_COVER: in every area of 4+ cells, add route nodes (through add, so one per surface) at the cell farthest from
-    all nodes on the same floor (|dy| < 2.5 m) until no cell is farther than cover metres."""
+    """NODE_COVER: in every area of 4+ cells, add route nodes (through add, so one per surface) at the cell farthest
+    from all nodes on the same floor (|dy| < 2.5 m) until no cell is farther than cover metres."""
     pitch, yoff = level.grid.pitch, level.settings.y_offset
-    for a in areas:
-        if len(a['cells']) < 4:
+    for area in areas:
+        if len(area['cells']) < 4:
             continue
-        C = np.array([(ox + i * pitch, float(level.y[k]) + yoff, oz + j * pitch) for i, j, k in a['cells']])
-        x0, x1, z0, z1 = C[:, 0].min() - cover, C[:, 0].max() + cover, C[:, 2].min() - cover, C[:, 2].max() + cover
-        P = np.array([p[1] for p in pts if x0 <= p[1][0] <= x1 and z0 <= p[1][2] <= z1], float).reshape(-1, 3)
-        d = np.full(len(C), np.inf)
-        for q in P:
-            same = np.abs(C[:, 1] - q[1]) < 2.5
-            d = np.where(same, np.minimum(d, np.hypot(C[:, 0] - q[0], C[:, 2] - q[2])), d)
+        cells_xyz = np.array([(ox + i * pitch, float(level.y[k]) + yoff, oz + j * pitch) for i, j, k in area['cells']])
+        lo_x, hi_x = cells_xyz[:, 0].min() - cover, cells_xyz[:, 0].max() + cover
+        lo_z, hi_z = cells_xyz[:, 2].min() - cover, cells_xyz[:, 2].max() + cover
+        nearby = [point[1] for point in pts if lo_x <= point[1][0] <= hi_x and lo_z <= point[1][2] <= hi_z]
+        nodes_xyz = np.array(nearby, float).reshape(-1, 3)
+        dist = np.full(len(cells_xyz), np.inf)
+        for node in nodes_xyz:
+            same = np.abs(cells_xyz[:, 1] - node[1]) < 2.5
+            flat = np.hypot(cells_xyz[:, 0] - node[0], cells_xyz[:, 2] - node[2])
+            dist = np.where(same, np.minimum(dist, flat), dist)
         while True:
-            w = int(np.argmax(d))
-            if d[w] <= cover:
+            farthest = int(np.argmax(dist))
+            if dist[farthest] <= cover:
                 break
-            i, j, k = a['cells'][w]
-            n = len(pts)
+            i, j, k = area['cells'][farthest]
+            count_before = len(pts)
             add(i, j, k)
-            q = C[w]
-            d[w] = 0.0                               # placed (or the surface already held a node)
-            if len(pts) > n:
-                same = np.abs(C[:, 1] - q[1]) < 2.5
-                d = np.where(same, np.minimum(d, np.hypot(C[:, 0] - q[0], C[:, 2] - q[2])), d)
+            placed = cells_xyz[farthest]
+            dist[farthest] = 0.0                               # placed (or the surface already held a node)
+            if len(pts) > count_before:
+                same = np.abs(cells_xyz[:, 1] - placed[1]) < 2.5
+                flat = np.hypot(cells_xyz[:, 0] - placed[0], cells_xyz[:, 2] - placed[2])
+                dist = np.where(same, np.minimum(dist, flat), dist)
 
 
 def gabriel_prune(pts: 'Sequence[GraphPoint]', pairs: 'Iterable[GraphPair]') -> 'list[GraphPair]':
     """The pairs that are Gabriel edges of the sector's nodes (no other node within 2.5 m of height inside the circle
     with the pair as diameter), plus the shortest dropped pairs needed to keep every group of nodes the full pair set
     joins joined (so pruning never splits a route)."""
-    P = np.array([p[1] for p in pts], float)
+    positions = np.array([point[1] for point in pts], float)
     keep, rest = [], []
-    for a_, b_, d in pairs:
-        m = (P[a_] + P[b_]) / 2
-        r2 = (d / 2) ** 2 - 1e-9
-        near = (np.abs(P[:, 1] - m[1]) < 2.5) & (((P[:, 0] - m[0]) ** 2 + (P[:, 2] - m[2]) ** 2) < r2)
-        near[[a_, b_]] = False
-        (rest if near.any() else keep).append((a_, b_, d))
+    for node_a, node_b, dist in pairs:
+        mid = (positions[node_a] + positions[node_b]) / 2
+        radius2 = (dist / 2) ** 2 - 1e-9
+        in_circle = ((positions[:, 0] - mid[0]) ** 2 + (positions[:, 2] - mid[2]) ** 2) < radius2
+        near = (np.abs(positions[:, 1] - mid[1]) < 2.5) & in_circle
+        near[[node_a, node_b]] = False
+        (rest if near.any() else keep).append((node_a, node_b, dist))
     parent = list(range(len(pts)))
 
     def find(x: int) -> int:
@@ -287,12 +309,12 @@ def gabriel_prune(pts: 'Sequence[GraphPoint]', pairs: 'Iterable[GraphPair]') -> 
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
-    for a_, b_, _d in keep:
-        parent[find(a_)] = find(b_)
-    for a_, b_, d in sorted(rest, key=lambda e: e[2]):
-        if find(a_) != find(b_):
-            parent[find(a_)] = find(b_)
-            keep.append((a_, b_, d))
+    for node_a, node_b, _d in keep:
+        parent[find(node_a)] = find(node_b)
+    for node_a, node_b, dist in sorted(rest, key=lambda e: e[2]):
+        if find(node_a) != find(node_b):
+            parent[find(node_a)] = find(node_b)
+            keep.append((node_a, node_b, dist))
     return keep
 
 
@@ -312,12 +334,12 @@ def prune_order_nodes(graphs: 'list[SectorGraph]', state: BuildState) -> 'list[S
             x = parent[x]
         return x
     for _sid, _b, _m, pts, pairs, _o in graphs:
-        for p in pts:
-            find(p[0])
-        for a_, b_, _d in pairs:
-            ra, rb = find(pts[a_][0]), find(pts[b_][0])
-            if ra != rb:
-                parent[ra] = rb
+        for point in pts:
+            find(point[0])
+        for node_a, node_b, _d in pairs:
+            root_a, root_b = find(pts[node_a][0]), find(pts[node_b][0])
+            if root_a != root_b:
+                parent[root_a] = root_b
     size = defaultdict(int)
     for x in list(parent):
         size[find(x)] += 1
@@ -326,13 +348,14 @@ def prune_order_nodes(graphs: 'list[SectorGraph]', state: BuildState) -> 'list[S
     drop = {i for i in state.order_ids if size[find(i)] < ORDER_MIN_ISLAND}
     seen = set()
     for _sid, _b, _m, pts, _pairs, _o in graphs:
-        for p in pts:
-            if p[0] in drop and p[0] not in seen:
-                seen.add(p[0])
-                state.order_stats.setdefault('removed', []).append((p[0], tuple(round(v, 2) for v in p[1]),
-                                                                    size[find(p[0])]))
-    return [(sid, b, m, pts, [q for q in pairs if pts[q[0]][0] not in drop and pts[q[1]][0] not in drop], o)
-            for sid, b, m, pts, pairs, o in graphs]
+        for point in pts:
+            if point[0] in drop and point[0] not in seen:
+                seen.add(point[0])
+                rounded = tuple(round(coord, 2) for coord in point[1])
+                state.order_stats.setdefault('removed', []).append((point[0], rounded, size[find(point[0])]))
+    return [(sid, bounds, mesh, pts,
+             [pair for pair in pairs if pts[pair[0]][0] not in drop and pts[pair[1]][0] not in drop], origin)
+            for sid, bounds, mesh, pts, pairs, origin in graphs]
 
 
 def add_order_nodes(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPair]', node_at: dict[int, int],
@@ -349,25 +372,26 @@ def add_order_nodes(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphP
     added = 0
     for x, y, z in orders:
         gi, gj = int(round((x - s.min_x) / pitch)), int(round((z - s.min_z) / pitch))
-        cands = [k for k in level.surfaces(gi, gj) if k in area_of and abs(level.y[k] - y) <= 1.0]
-        if not cands:
+        candidates = [k for k in level.surfaces(gi, gj) if k in area_of and abs(level.y[k] - y) <= 1.0]
+        if not candidates:
             continue
-        k = min(cands, key=lambda q: abs(level.y[q] - y))
+        k = min(candidates, key=lambda cand: abs(level.y[cand] - y))
         if k in node_at:
             continue
         pos = (ox + (gi - gi0) * pitch, float(level.y[k]) + yoff, oz + (gj - gj0) * pitch)
-        near = [math.hypot(p[1][0] - pos[0], p[1][2] - pos[2]) for p in pts if abs(p[1][1] - pos[1]) < 1.5]
+        near = [math.hypot(point[1][0] - pos[0], point[1][2] - pos[2])
+                for point in pts if abs(point[1][1] - pos[1]) < 1.5]
         if near and min(near) <= ORDER_NODE_MIN:
             continue
-        u = len(pts)
+        new = len(pts)
         pts.append((new_id(), pos, k, gi - gi0, gj - gj0))
-        order_ids.add(pts[u][0])
-        node_at[k] = u
+        order_ids.add(pts[new][0])
+        node_at[k] = new
         added += 1
-        for q in range(u):
-            d = math.dist(pos, pts[q][1])
-            if d <= DIST_EDGE_MAX and line_walkable(level, k, (gi - gi0, gj - gj0), (pts[q][3], pts[q][4]), gi0, gj0, pts[q][2]):
-                pairs.append((u, q, d))
+        for other in range(new):
+            dist = math.dist(pos, pts[other][1])
+            if dist <= DIST_EDGE_MAX and _walkable_between(level, pts[new], pts[other], gi0, gj0):
+                pairs.append((new, other, dist))
     return added
 
 
@@ -383,20 +407,20 @@ def repair_detours(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPa
     grid, yoff = level.grid, level.settings.y_offset
     pitch = grid.pitch
     adj = defaultdict(dict)
-    for a_, b_, d in pairs:
-        adj[a_][b_] = adj[b_][a_] = min(d, adj[a_].get(b_, 1e18))
+    for node_a, node_b, dist in pairs:
+        adj[node_a][node_b] = adj[node_b][node_a] = min(dist, adj[node_a].get(node_b, 1e18))
 
     def routes(src: int, limit: float) -> dict[int, float]:
         best = {src: 0.0}
-        q = [(0.0, src)]
-        while q:
-            d, u = heapq.heappop(q)
-            if d > best[u] or d > limit:
+        heap = [(0.0, src)]
+        while heap:
+            dist, node = heapq.heappop(heap)
+            if dist > best[node] or dist > limit:
                 continue
-            for v, w in adj[u].items():
-                if d + w < best.get(v, 1e18):
-                    best[v] = d + w
-                    heapq.heappush(q, (d + w, v))
+            for nbr, length in adj[node].items():
+                if dist + length < best.get(nbr, 1e18):
+                    best[nbr] = dist + length
+                    heapq.heappush(heap, (dist + length, nbr))
         return best
 
     def walk(k0: int, k1: int, limit: float) -> list[int] | None:
@@ -404,15 +428,15 @@ def repair_detours(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPa
         surfaces or None."""
         best = {k0: 0.0}
         prev: dict[int, int | None] = {k0: None}
-        q = [(0.0, k0)]
-        while q:
-            d, k = heapq.heappop(q)
+        heap = [(0.0, k0)]
+        while heap:
+            dist, k = heapq.heappop(heap)
             if k == k1:
                 path = [k]
                 while prev[path[-1]] is not None:
                     path.append(cast(int, prev[path[-1]]))   # not None: the loop's test
                 return path[::-1]
-            if d > best[k]:
+            if dist > best[k]:
                 continue
             i, j = cell_ij[k]
             for di in (-1, 0, 1):
@@ -422,45 +446,38 @@ def repair_detours(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPa
                     n = level.neighbour(k, gi0 + i, gj0 + j, di, dj)
                     if n is None:
                         continue
-                    nd = d + (1.4142 if di and dj else 1.0) * pitch
-                    if nd <= limit and nd < best.get(n, 1e18):
-                        best[n], prev[n] = nd, k
+                    next_dist = dist + (1.4142 if di and dj else 1.0) * pitch
+                    if next_dist <= limit and next_dist < best.get(n, 1e18):
+                        best[n], prev[n] = next_dist, k
                         cell_ij.setdefault(n, (i + di, j + dj))
-                        heapq.heappush(q, (nd, n))
+                        heapq.heappush(heap, (next_dist, n))
         return None
 
     def link(u: int) -> None:
-        for q_ in range(len(pts)):
-            if q_ == u or q_ in adj[u]:
+        for other in range(len(pts)):
+            if other == u or other in adj[u]:
                 continue
-            d = math.dist(pts[u][1], pts[q_][1])
-            if d <= DIST_EDGE_MAX and line_walkable(level, pts[u][2], (pts[u][3], pts[u][4]), (pts[q_][3], pts[q_][4]),
-                                                    gi0, gj0, pts[q_][2]):
-                pairs.append((u, q_, d))
-                adj[u][q_] = adj[q_][u] = d
+            dist = math.dist(pts[u][1], pts[other][1])
+            if dist <= DIST_EDGE_MAX and _walkable_between(level, pts[u], pts[other], gi0, gj0):
+                pairs.append((u, other, dist))
+                adj[u][other] = adj[other][u] = dist
 
     added = 0
-    n0 = len(pts)
-    for a in range(n0):
-        best = routes(a, DETOUR_TRIGGER * DIST_EDGE_MAX)
-        for b in range(a + 1, n0):
-            straight = math.dist(pts[a][1], pts[b][1])
+    original_count = len(pts)
+    for first in range(original_count):
+        best = routes(first, DETOUR_TRIGGER * DIST_EDGE_MAX)
+        for second in range(first + 1, original_count):
+            straight = math.dist(pts[first][1], pts[second][1])
             if straight > DIST_EDGE_MAX or straight < 1e-3:
                 continue
-            route = best.get(b, 1e18)
+            route = best.get(second, 1e18)
             if route <= DETOUR_TRIGGER * straight:
                 continue
-            path = walk(pts[a][2], pts[b][2], DETOUR_MAX * straight)   # the walk itself within DETOUR_MAX x straight
+            # the walk itself within DETOUR_MAX x straight
+            path = walk(pts[first][2], pts[second][2], DETOUR_MAX * straight)
             if path is None:
                 continue
-            way, s = [path[0]], 0
-            while s < len(path) - 1:
-                e = len(path) - 1
-                while e > s + 1 and not (math.dist(cell_ij[path[s]], cell_ij[path[e]]) * pitch <= DIST_EDGE_MAX and
-                                         line_walkable(level, path[s], cell_ij[path[s]], cell_ij[path[e]], gi0, gj0, path[e])):
-                    e -= 1
-                way.append(path[e])
-                s = e
+            way = _string_pull(level, path, cell_ij, gi0, gj0)
             chain = []
             for k in way:
                 if k in node_at:
@@ -473,14 +490,14 @@ def repair_detours(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPa
                     added += 1
             for u, v in zip(chain, chain[1:]):
                 if v not in adj[u]:
-                    d = math.dist(pts[u][1], pts[v][1])
-                    pairs.append((u, v, d))
-                    adj[u][v] = adj[v][u] = d
+                    dist = math.dist(pts[u][1], pts[v][1])
+                    pairs.append((u, v, dist))
+                    adj[u][v] = adj[v][u] = dist
             if DETOUR_LINK_ALL:
                 for u in chain:
-                    if u >= n0:
+                    if u >= original_count:
                         link(u)
-            best = routes(a, DETOUR_TRIGGER * DIST_EDGE_MAX)
+            best = routes(first, DETOUR_TRIGGER * DIST_EDGE_MAX)
     return added
 
 
@@ -488,48 +505,48 @@ def finalize_graph(pts: 'Sequence[GraphPoint]', pairs: 'Iterable[GraphPair]', li
                    origin: tuple[float, float] | None = None) -> tuple[list[hpdtool.Node], list[hpdtool.Edge]]:
     """Nodes and edges of a sector. Nodes without an edge in any sector (lone nodes on slivers and tiny islands
     the group joining cannot reach; border ids count edges of both sectors) are dropped - DICE's data has none."""
-    keep = [idx for idx, p in enumerate(pts) if p[0] in linked_ids]
+    keep = [idx for idx, point in enumerate(pts) if point[0] in linked_ids]
     if SORT_NODES_BY_ID:
         # DICE writes a sector's nodes sorted by id as an unsigned 32-bit value - ordinary nodes, then border nodes
         # (flag 80000000h) - in 40 of 40 sp_004_b sectors (masked to 31 bits: 0 of 40); the runtime binary-searches
         # these arrays for a path's start / destination ids (0x0108D5E0 / 0x0108D550). NavKit interleaved border
         # nodes (0 of 40 sorted) - 2026-10-20
         keep.sort(key=lambda idx: pts[idx][0] & 0xFFFFFFFF)
-    new = {old: q for q, old in enumerate(keep)}
+    index_of = {old: position for position, old in enumerate(keep)}
     out_edges = defaultdict(list)
-    for a_, b_, d in pairs:
-        if a_ in new and b_ in new:
+    for node_a, node_b, dist in pairs:
+        if node_a in index_of and node_b in index_of:
             # the cost from the positions as stored (32-bit floats), as every DICE edge is: from the unrounded
             # positions, 138 of sp_004_b's 60,142 costs came out one unit off
-            d = math.dist(*(tuple(float(np.float32(v)) for v in pts[i][1]) for i in (a_, b_)))
-            cost = 0x80000000 | int(math.floor(d * 16))
-            out_edges[new[a_]].append((cost, new[b_]))
-            out_edges[new[b_]].append((cost, new[a_]))
+            dist = math.dist(*(tuple(float(np.float32(coord)) for coord in pts[i][1]) for i in (node_a, node_b)))
+            cost = 0x80000000 | int(math.floor(dist * 16))
+            out_edges[index_of[node_a]].append((cost, index_of[node_b]))
+            out_edges[index_of[node_b]].append((cost, index_of[node_a]))
     nodes, edges = [], []
-    for q, idx in enumerate(keep):
+    for position, idx in enumerate(keep):
         nid, pos = pts[idx][0], pts[idx][1]
-        nodes.append(hpdtool.Node(nid, pos, 0x80000000, DIST_EDGE_MAX if q == 0 else 0.0, 0, 0, 0))
+        nodes.append(hpdtool.Node(nid, pos, 0x80000000, DIST_EDGE_MAX if position == 0 else 0.0, 0, 0, 0))
     for idx in range(len(nodes)):
         first = len(edges)
         for cost, dst in sorted(out_edges[idx], key=lambda e: e[1]):
             edges.append(hpdtool.Edge(cost, idx, dst))
         nodes[idx].a = first + 1 if out_edges[idx] else 0     # DICE: 0 = no outgoing edges
-    def foreign(nd: hpdtool.Node) -> bool:
+    def foreign(node: hpdtool.Node) -> bool:
         # bit 16 of c: a border node's copy in a sector that does not own it. DICE: one copy per border id is the
         # owner (bit clear) - the sector whose 100 m square holds the node (1,379 of 1,445 sp_004_b ids), the
         # others set; ordinary nodes never. NavKit set the bit on every border copy, so no border node had an
         # owner (2026-10-20)
-        if not nd.id & 0x80000000:
+        if not node.id & 0x80000000:
             return False
         if not BORDER_OWNER or origin is None:
             return True
         ox, oz = origin
-        return not (ox <= nd.pos[0] < ox + 100 and oz <= nd.pos[2] < oz + 100)
+        return not (ox <= node.pos[0] < ox + 100 and oz <= node.pos[2] < oz + 100)
     n = len(nodes)
-    by_x = sorted(range(n), key=lambda q: nodes[q].pos[0])
-    by_y = sorted(range(n), key=lambda q: nodes[q].pos[1])
-    by_z = sorted(range(n), key=lambda q: nodes[q].pos[2])
-    for q in range(n):
-        nodes[q].b = by_x[q] | (by_y[q] << 16)
-        nodes[q].c = by_z[q] | (0x10000 if foreign(nodes[q]) else 0)
+    by_x = sorted(range(n), key=lambda position: nodes[position].pos[0])
+    by_y = sorted(range(n), key=lambda position: nodes[position].pos[1])
+    by_z = sorted(range(n), key=lambda position: nodes[position].pos[2])
+    for position in range(n):
+        nodes[position].b = by_x[position] | (by_y[position] << 16)
+        nodes[position].c = by_z[position] | (0x10000 if foreign(nodes[position]) else 0)
     return nodes, edges

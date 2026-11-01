@@ -1,5 +1,8 @@
 """Read and write BF1943 Xenon FbRB bundles (directory version 2).
 
+Reads a .fbrb bundle; lists or describes its entries, extracts them as files with a manifest, or writes a copy with
+entries replaced. Bundle(raw) is the library form (.entries, .payload, .data(name), .build(replace)).
+
 Layout, as observed in 82 of this build's 85 bundles (the reader refuses the other three, whose payload
 size or entry layout differs: async/ondemand_awards-00, async/ondemand_sounds-00, build_overlay-00): "FbRB", u32 size of the gzip directory, the gzip
 directory, then the payload (gzip when the directory's tail flag is 1). The directory is: u32 version (2),
@@ -44,17 +47,23 @@ import struct
 import sys
 import tempfile
 import zlib
+from collections.abc import Iterable
+from typing import Any, cast
 
 sys.dont_write_bytecode = True
 
+# a directory entry: name, type, flags, offset, size and size2 (the size again)
+type Entry = dict[str, Any]
 
-def gzip_member(data, template_header):
+
+def gzip_member(data: bytes, template_header: bytes) -> bytes:
     """gzip bytes with the template's 10-byte header (mtime, flags and OS byte as the game's tools wrote)."""
-    c = zlib.compressobj(9, zlib.DEFLATED, -15, 9)
-    return template_header + c.compress(data) + c.flush() + struct.pack('<II', zlib.crc32(data), len(data) & 0xFFFFFFFF)
+    compressor = zlib.compressobj(9, zlib.DEFLATED, -15, 9)
+    trailer = struct.pack('<II', zlib.crc32(data), len(data) & 0xFFFFFFFF)
+    return template_header + compressor.compress(data) + compressor.flush() + trailer
 
 
-def gunzip(data, what):
+def gunzip(data: bytes, what: str) -> bytes:
     """gzip.decompress, its errors as ValueError (a bundle cut short or damaged: 2026-10-31 fuzzing found BadGzipFile,
     EOFError and zlib.error passing through Bundle)."""
     try:
@@ -67,37 +76,39 @@ class Bundle:
     """A bundle's directory, entries and payload. ValueError for anything but a whole bundle in the layout this
     reader knows (README; game1943 raises BundleError for a level bundle it refuses)."""
 
-    def __init__(self, raw):
+    def __init__(self, raw: bytes) -> None:
         if raw[:4] != b'FbRB':
             raise ValueError('not an FbRB bundle')
         if len(raw) < 8:                    # 2026-10-31 fuzzing: struct.error on a cut header
             raise ValueError(f'damaged bundle: {len(raw)} bytes, cut inside its 8-byte header')
         cut = struct.unpack_from('>I', raw, 4)[0]
         if 8 + cut > len(raw):
-            raise ValueError(f'damaged bundle: a directory of {cut} bytes runs past the end of the file ({len(raw)} bytes)')
+            raise ValueError(f'damaged bundle: a directory of {cut} bytes runs past the end of the file '
+                             f'({len(raw)} bytes)')
         self.raw, self.dir_header = raw, raw[8:18]
         self.directory = gunzip(raw[8:8 + cut], 'directory')
-        d = self.directory
-        if len(d) < 12 or struct.unpack_from('>I', d, 0)[0] != 2:
+        directory = self.directory
+        if len(directory) < 12 or struct.unpack_from('>I', directory, 0)[0] != 2:
             raise ValueError('unsupported directory version')
-        strlen = struct.unpack_from('>I', d, 4)[0]
-        if 12 + strlen > len(d):            # 2026-10-31 fuzzing: struct.error
+        strlen = struct.unpack_from('>I', directory, 4)[0]
+        if 12 + strlen > len(directory):    # 2026-10-31 fuzzing: struct.error
             raise ValueError(f'damaged bundle: a string table of {strlen} bytes runs past its directory')
-        self.strings_at, count = 8, struct.unpack_from('>I', d, 8 + strlen)[0]
+        self.strings_at, count = 8, struct.unpack_from('>I', directory, 8 + strlen)[0]
         self.entries_at = 12 + strlen
         self.tail_at = self.entries_at + 24 * count
-        if self.tail_at + 5 != len(d):
+        if self.tail_at + 5 != len(directory):
             raise ValueError('unexpected directory length')
-        self.compressed = bool(d[self.tail_at])
+        self.compressed = bool(directory[self.tail_at])
         body = raw[8 + cut:]
         self.payload_header = body[:10] if self.compressed else None
         self.payload = gunzip(body, 'payload') if self.compressed else body
-        if struct.unpack_from('>I', d, self.tail_at + 1)[0] != len(self.payload):
+        if struct.unpack_from('>I', directory, self.tail_at + 1)[0] != len(self.payload):
             raise ValueError('payload size differs from the directory')
-        self.entries = []
+        self.entries: list[Entry] = []
         for k in range(count):
-            name, flags, off, size, size2, kind = struct.unpack_from('>6I', d, self.entries_at + 24 * k)
-            self.entries.append(dict(name=self.cstr(name), type=self.cstr(kind), flags=flags, offset=off, size=size, size2=size2))
+            name, flags, offset, size, size2, kind = struct.unpack_from('>6I', directory, self.entries_at + 24 * k)
+            self.entries.append(dict(name=self.cstr(name), type=self.cstr(kind), flags=flags, offset=offset, size=size,
+                                     size2=size2))
         pos = 0
         for e in self.entries:
             if e['offset'] != pos or e['size'] != e['size2']:
@@ -106,24 +117,26 @@ class Bundle:
         if pos != len(self.payload):
             raise ValueError('entries do not cover the payload')
 
-    def cstr(self, o):
-        """The string at offset o of the directory's string table. ValueError unless it ends inside the table and is
+    def cstr(self, offset: int) -> str:
+        """The string at offset of the directory's string table. ValueError unless it ends inside the table and is
         ASCII (2026-10-31 review: an offset past the table read a 'name' out of the entries after it)."""
-        d = self.directory
-        end = d.find(0, 8 + o, self.entries_at - 4)
+        directory = self.directory
+        end = directory.find(0, 8 + offset, self.entries_at - 4)
         if end < 0:
-            raise ValueError(f'damaged bundle: a name at {o} of the string table does not end inside it')
+            raise ValueError(f'damaged bundle: a name at {offset} of the string table does not end inside it')
         try:
-            return d[8 + o:end].decode('ascii')
+            return directory[8 + offset:end].decode('ascii')
         except UnicodeDecodeError:
-            raise ValueError(f'damaged bundle: the name at {o} of the string table is not ASCII') from None
+            raise ValueError(f'damaged bundle: the name at {offset} of the string table is not ASCII') from None
 
-    def data(self, name):
-        e = next(e for e in self.entries if e['name'] == name)
-        return self.payload[e['offset']:e['offset'] + e['size']]
+    def data(self, name: str) -> bytes:
+        """The bytes of the first entry named name (StopIteration when there is none)."""
+        entry = next(e for e in self.entries if e['name'] == name)
+        return self.payload[entry['offset']:entry['offset'] + entry['size']]
 
-    def build(self, replace=None):
-        """Bundle bytes with entries replaced by name ({name: bytes}); every other byte layout is kept."""
+    def build(self, replace: dict[str, bytes] | None = None) -> tuple[bytes, bytes, bytes]:
+        """(bundle bytes, directory, payload) with entries replaced by name ({name: bytes}); every other byte layout is
+        kept."""
         replace = dict(replace or {})
         missing = set(replace) - {e['name'] for e in self.entries}
         if missing:
@@ -134,75 +147,79 @@ class Bundle:
             if header is not None and (len(header) < 10 or header[:3] != b'\x1f\x8b\x08' or header[3] != 0):
                 raise ValueError(f'the {what}\'s gzip header ({header.hex()}) is not the plain one this tool rebuilds '
                                  f'(flag byte {header[3] if len(header) > 3 else "-"}, not 0); not rebuilt')
-        d = bytearray(self.directory)
+        new_directory = bytearray(self.directory)
         payload, pos = bytearray(), 0
         for k, e in enumerate(self.entries):
             data = replace.get(e['name'], self.payload[e['offset']:e['offset'] + e['size']])
             payload += data
-            struct.pack_into('>III', d, self.entries_at + 24 * k + 8, pos, len(data), len(data))
+            struct.pack_into('>III', new_directory, self.entries_at + 24 * k + 8, pos, len(data), len(data))
             pos += len(data)
-        struct.pack_into('>I', d, self.tail_at + 1, len(payload))
-        directory = gzip_member(bytes(d), self.dir_header)
-        body = gzip_member(bytes(payload), self.payload_header) if self.compressed else bytes(payload)
-        return b'FbRB' + struct.pack('>I', len(directory)) + directory + body, bytes(d), bytes(payload)
+        struct.pack_into('>I', new_directory, self.tail_at + 1, len(payload))
+        packed_directory = gzip_member(bytes(new_directory), self.dir_header)
+        if self.compressed:     # payload_header is set whenever the payload is compressed
+            body = gzip_member(bytes(payload), cast(bytes, self.payload_header))
+        else:
+            body = bytes(payload)
+        bundle = b'FbRB' + struct.pack('>I', len(packed_directory)) + packed_directory + body
+        return bundle, bytes(new_directory), bytes(payload)
 
 
-def safe_path(out_dir, name):
+def safe_path(out_dir: str, name: str) -> str:
     """Where entry <name> goes under out_dir; refuses names that would leave it."""
-    p = os.path.normpath(os.path.join(out_dir, *name.replace('\\', '/').split('/')))
-    if os.path.commonpath([os.path.abspath(p), os.path.abspath(out_dir)]) != os.path.abspath(out_dir):
+    path = os.path.normpath(os.path.join(out_dir, *name.replace('\\', '/').split('/')))
+    if os.path.commonpath([os.path.abspath(path), os.path.abspath(out_dir)]) != os.path.abspath(out_dir):
         raise ValueError(f'entry name leaves the output folder: {name}')
-    return p
+    return path
 
 
-def canonical(path):
+def canonical(path: str) -> str:
     """path as Windows resolves it: links followed, case folded (C:\\Game and c:\\game are one folder)."""
     return os.path.normcase(os.path.realpath(path))
 
 
-def identity(path):
+def identity(path: str) -> tuple[int, int] | None:
     """(volume serial, file index) of an existing file or folder (os.stat follows links and junctions), or None."""
     try:
-        st = os.stat(path)
+        status = os.stat(path)
     except (OSError, ValueError):
         return None
-    return (st.st_dev, st.st_ino) if st.st_ino else None
+    return (status.st_dev, status.st_ino) if status.st_ino else None
 
 
-def contains(folder, path):
+def contains(folder: str, path: str) -> bool:
     """True when path is folder or lies in it. By name (links followed, case folded), and by file identity: folder's
     identity is looked for along path's existing folders, so another spelling of the same folder (\\\\localhost\\C$\\...,
     \\\\127.0.0.1\\C$\\..., \\\\?\\C:\\...; 2026-10-30 second review: realpath keeps those apart) is the same folder. False on
     another drive or volume."""
-    f, p = canonical(folder), canonical(path)
+    resolved_folder, resolved_path = canonical(folder), canonical(path)
     try:
-        if os.path.commonpath([f, p]) == f:
+        if os.path.commonpath([resolved_folder, resolved_path]) == resolved_folder:
             return True
     except ValueError:
         pass
     want = identity(folder)
     if want is None:
         return False
-    cur = p                     # the resolved path: a junction inside folder leading out of it must not count as in it
+    cur = resolved_path         # the resolved path: a junction inside folder leading out of it must not count as in it
     while True:
         if identity(cur) == want:
             return True
-        up = os.path.dirname(cur)
-        if up == cur:
+        parent = os.path.dirname(cur)
+        if parent == cur:
             return False
-        cur = up
+        cur = parent
 
 
-def same_file(a, b):
+def same_file(a: str, b: str) -> bool:
     """True when a and b name one file: by name (links followed, case folded) or by identity (another spelling, a
     hard link)."""
     if canonical(a) == canonical(b):
         return True
-    ia = identity(a)
-    return ia is not None and ia == identity(b)
+    identity_a = identity(a)
+    return identity_a is not None and identity_a == identity(b)
 
 
-def game_folder():
+def game_folder() -> str | None:
     """The BF1943 game folder (game1943.find_game), which the tools only read; None when there is none."""
     try:
         from bfbc2core import game1943
@@ -211,13 +228,13 @@ def game_folder():
         return None
 
 
-def inside_game(path):
+def inside_game(path: str) -> bool:
     """True when path lies in the BF1943 game folder (game1943.find_game), which the tools only read."""
     game = game_folder()
     return game is not None and contains(game, path)
 
 
-def foreign_layout(path):
+def foreign_layout(path: str) -> bool:
     """True when path is an FbRB bundle whose directory lists its entries out of the contiguous order every bundle
     this tool writes has (the game's build_overlay-00.fbrb is one: the reader refuses it); False otherwise. Reads
     the gzip directory only."""
@@ -229,15 +246,15 @@ def foreign_layout(path):
             cut = struct.unpack_from('>I', head, 4)[0]
             if cut > 1 << 26:
                 return False
-            d = gzip.decompress(f.read(cut))
-        if struct.unpack_from('>I', d, 0)[0] != 2:
+            directory = gzip.decompress(f.read(cut))
+        if struct.unpack_from('>I', directory, 0)[0] != 2:
             return False
-        strlen = struct.unpack_from('>I', d, 4)[0]
-        count = struct.unpack_from('>I', d, 8 + strlen)[0]
+        strlen = struct.unpack_from('>I', directory, 4)[0]
+        count = struct.unpack_from('>I', directory, 8 + strlen)[0]
         pos = 0
         for k in range(count):
-            _, _, off, size, size2, _ = struct.unpack_from('>6I', d, 12 + strlen + 24 * k)
-            if off != pos or size != size2:
+            _, _, offset, size, size2, _ = struct.unpack_from('>6I', directory, 12 + strlen + 24 * k)
+            if offset != pos or size != size2:
                 return True
             pos += size
         return False
@@ -245,7 +262,7 @@ def foreign_layout(path):
         return False
 
 
-def is_game_copy(folder):
+def is_game_copy(folder: str) -> bool:
     """True when folder is the root of a BF1943 game copy (dist\\xenon as the Xenia kit extracts it): it holds
     config.zz, levels\\levels-common-00.fbrb, and a build_overlay-00.fbrb in the game's own layout (foreign_layout) -
     the last is what a folder of bundles this tool wrote (a mod folder) cannot have."""
@@ -254,35 +271,39 @@ def is_game_copy(folder):
             and foreign_layout(os.path.join(folder, 'build_overlay-00.fbrb')))
 
 
-def own_game_root(bundle):
+def own_game_root(bundle: str) -> str | None:
     """The game copy the input bundle belongs to, or None: the nearest folder above it that is a game copy
     (is_game_copy). 2026-10-30: only find_game's copy was protected, so a bundle of another copy could be written into
     that copy; 2026-10-30 second review: any folder with levels\\*.fbrb counted, so a mod folder laid out as the game
     (a replaced bundle in levels\\<level>\\) refused every output inside it."""
-    d = os.path.dirname(canonical(bundle))
+    folder = os.path.dirname(canonical(bundle))
     while True:
-        if is_game_copy(d):
-            return d
-        up = os.path.dirname(d)
-        if up == d:
+        if is_game_copy(folder):
+            return folder
+        parent = os.path.dirname(folder)
+        if parent == folder:
             return None
-        d = up
+        folder = parent
 
 
-def protected(bundle):
+def protected(bundle: str) -> list[str]:
     """The game folders the tool only reads: find_game's copy and the input bundle's own (own_game_root)."""
-    return [g for g in (game_folder(), own_game_root(bundle)) if g is not None]
+    return [folder for folder in (game_folder(), own_game_root(bundle)) if folder is not None]
 
 
-def in_protected(game, path):
+# the game folders a check is given: one folder, a list of them, or None
+type GameFolders = str | Iterable[str] | None
+
+
+def in_protected(game: GameFolders, path: str) -> str | None:
     """The game folder (or one of the list of them) that holds path, or None."""
-    for g in ([game] if isinstance(game, str) else game or ()):
-        if contains(g, path):
-            return g
+    for folder in ([game] if isinstance(game, str) else game or ()):
+        if contains(folder, path):
+            return folder
     return None
 
 
-def checked(out, path, game, name):
+def checked(out: str, path: str, game: GameFolders, name: str) -> str:
     """path, when it resolves (links and junctions followed) inside out and outside the game folder (game: one folder,
     a list of them, or None); ValueError otherwise. A link already inside out would send a write elsewhere although
     the name stays inside it."""
@@ -294,7 +315,7 @@ def checked(out, path, game, name):
     return path
 
 
-def write_file(dst, data):
+def write_file(dst: str, data: bytes) -> None:
     """dst holding data, or as it was: written to a temporary file beside it, then put in its place (os.replace).
     An existing dst is never opened for writing, so a hard link there (which realpath cannot see) to a file
     elsewhere, the game folder included, only loses its name in dst; the file it linked to is left as it was."""
@@ -309,31 +330,33 @@ def write_file(dst, data):
         raise
 
 
-def extract_target(out, name, game):
+def extract_target(out: str, name: str, game: GameFolders) -> str:
     """Where entry <name> is written under out (an existing folder), its folders made one at a time: each folder,
     and then the file, is resolved and checked (checked()) before anything is made in or written through it."""
-    p = safe_path(out, name)
+    path = safe_path(out, name)
     cur = out
-    for part in os.path.relpath(os.path.dirname(p), out).split(os.sep):
+    for part in os.path.relpath(os.path.dirname(path), out).split(os.sep):
         if part in ('', '.'):
             continue
         cur = checked(out, os.path.join(cur, part), game, name)
         if not os.path.isdir(cur):
             os.mkdir(cur)
             checked(out, cur, game, name)
-    return checked(out, p, game, name)
+    return checked(out, path, game, name)
 
 
 MANIFEST = 'fbrb.manifest.json'
 
 
-def extract_plan(b, out, flt):
+def extract_plan(bundle: Bundle, out: str, flt: str) -> list[Entry]:
     """The entries extract writes (filtered); ValueError, before anything is written, when two would be one file on
     this system (names equal, or equal but for case: the second replaced the first, 2026-10-30), when a file would
     stand where another entry's folder goes, or when an entry is named as the manifest."""
     root = os.path.normcase(os.path.abspath(out))
-    owner, folders, plan = {}, {}, []
-    for e in b.entries:
+    owner: dict[str, str] = {}          # file (normcased) -> entry name
+    folders: dict[str, str] = {}        # folder (normcased) -> the first entry name under it
+    plan: list[Entry] = []
+    for e in bundle.entries:
         if flt not in e['name'].lower():
             continue
         key = os.path.normcase(os.path.abspath(safe_path(out, e['name'])))
@@ -343,10 +366,10 @@ def extract_plan(b, out, flt):
             raise ValueError(f'entries {owner[key]!r} and {e["name"]!r} would be one file on this system; nothing '
                              f'was extracted')
         owner[key] = e['name']
-        d = os.path.dirname(key)
-        while len(d) > len(root):
-            folders.setdefault(d, e['name'])
-            d = os.path.dirname(d)
+        folder = os.path.dirname(key)
+        while len(folder) > len(root):
+            folders.setdefault(folder, e['name'])
+            folder = os.path.dirname(folder)
         plan.append(e)
     for key, name in owner.items():
         if key in folders or key == root:
@@ -355,7 +378,7 @@ def extract_plan(b, out, flt):
     return plan
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if any(a in ('-h', '--help') for a in argv[1:]):
         print(__doc__)
         return 0
@@ -365,20 +388,20 @@ def main(argv):
     cmd, path = argv[1], argv[2]
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
-    b = Bundle(open(path, 'rb').read())
+    bundle = Bundle(open(path, 'rb').read())
     if cmd == 'list':
         flt = argv[3].lower() if len(argv) > 3 else ''
-        for e in b.entries:
+        for e in bundle.entries:
             if flt in e['name'].lower():
                 print(f"{e['size']:10d}  {e['type']:24s}  {e['name']}")
     elif cmd == 'info':
-        types = {}
-        for e in b.entries:
+        types: dict[str, int] = {}
+        for e in bundle.entries:
             types[e['type']] = types.get(e['type'], 0) + 1
-        print(f'{os.path.basename(path)}: {len(b.entries)} entries, payload {len(b.payload):,} bytes '
-              f'({"gzip" if b.compressed else "stored"}), file {len(b.raw):,} bytes')
-        for t, n in sorted(types.items(), key=lambda kv: -kv[1]):
-            print(f'  {n:5d}  {t}')
+        print(f'{os.path.basename(path)}: {len(bundle.entries)} entries, payload {len(bundle.payload):,} bytes '
+              f'({"gzip" if bundle.compressed else "stored"}), file {len(bundle.raw):,} bytes')
+        for type_name, count in sorted(types.items(), key=lambda item: -item[1]):
+            print(f'  {count:5d}  {type_name}')
     elif cmd == 'extract':
         if len(argv) < 4:
             print(__doc__)
@@ -388,17 +411,17 @@ def main(argv):
         if in_protected(game, out):
             raise ValueError(f'{out} is in the game folder {in_protected(game, out)}, which the tools only read; '
                              f'extract elsewhere')
-        plan = extract_plan(b, out, flt)                    # collisions refused before anything is written
+        plan = extract_plan(bundle, out, flt)               # collisions refused before anything is written
         os.makedirs(out, exist_ok=True)
         manifest = []
         for e in plan:
-            data = b.payload[e['offset']:e['offset'] + e['size']]
-            p = extract_target(out, e['name'], game)       # every destination resolved and checked before writing
-            write_file(p, data)                             # a new file moved into place: a hard link is not written through
+            data = bundle.payload[e['offset']:e['offset'] + e['size']]
+            target = extract_target(out, e['name'], game)   # every destination resolved and checked before writing
+            write_file(target, data)        # a new file moved into place: a hard link is not written through
             manifest.append(dict(name=e['name'], type=e['type'], flags=e['flags'], size=len(data),
                                  sha256=hashlib.sha256(data).hexdigest()))
-        text = json.dumps(dict(bundle=os.path.abspath(path), sha256=hashlib.sha256(b.raw).hexdigest(), entries=manifest),
-                          indent=1)
+        text = json.dumps(dict(bundle=os.path.abspath(path), sha256=hashlib.sha256(bundle.raw).hexdigest(),
+                               entries=manifest), indent=1)
         write_file(checked(out, os.path.join(out, MANIFEST), game, MANIFEST),
                    text.encode('utf-8'))                    # UTF-8 with \n newlines on every system
         print(f'extracted {len(manifest)} entries into {out}')
@@ -412,22 +435,22 @@ def main(argv):
         if in_protected(protected(path), out):
             raise ValueError(f'{out} is in the game folder {in_protected(protected(path), out)}, which the tools only '
                              f'read; write the bundle elsewhere')
-        rep = {}
+        replacements: dict[str, bytes] = {}
         for spec in argv[4:]:
             name, _, file = spec.partition('=')
             if not file:
                 raise ValueError(f'expected <entry name>=<file>, got {spec!r}')
-            rep[name] = open(file, 'rb').read()
-        for name in rep:
+            replacements[name] = open(file, 'rb').read()
+        for name in replacements:
             # 2026-10-30 second review: build() replaced every entry of the name, while extract refuses two entries that
             # would be one file (equal names, or equal but for case); refused here too
-            same = [e['name'] for e in b.entries if e['name'].lower() == name.lower()]
+            same = [e['name'] for e in bundle.entries if e['name'].lower() == name.lower()]
             if len(same) > 1:
                 raise ValueError(f'{name!r} names {len(same)} entries of the bundle ({", ".join(map(repr, same))}); '
                                  f'which one to replace is not clear, so nothing was written')
-        raw, _, _ = b.build(rep)
+        raw, _, _ = bundle.build(replacements)
         write_file(out, raw)                                # never written through a hard link at out
-        print(f'wrote {out}: {len(rep)} entries replaced')
+        print(f'wrote {out}: {len(replacements)} entries replaced')
     return 0
 
 

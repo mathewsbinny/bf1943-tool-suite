@@ -1,5 +1,10 @@
 """Experiment: server-side bots for BF1943 in Xenia, as a second Xenia patch file.
 
+Input: a list of bots, (side, class) each (DEFAULT_BOTS: a full 12 v 12 match). Output: build() assembles the guest
+code below (ppcasm) with its bot table and names, and gives the patch words; patch_toml() gives the patch file's text
+(`python -B bots.py` prints it). The mailbox layout names (MBOX_MAGIC ... BLOCK_SIZE) are shared with the host
+programs that drive the bots.
+
 BF1943's AI was stripped (no AI controller, orders or navigation), but its server still creates players with no
 network connection: the leftover AI spawner (SoldierSpawnEntity, 8236bc98) does so. The bots here are created the
 same way, then given what a human player gets from the network, and spawned through the human spawn path:
@@ -50,6 +55,7 @@ but ignored all input.) Evidence and addresses: operation-rising-sun/research/AG
 """
 import struct
 import sys
+from collections.abc import Callable, Iterable, Sequence
 
 sys.dont_write_bytecode = True
 import ppcasm  # noqa: E402
@@ -137,7 +143,7 @@ BLOCK_SIZE = FLAG0 + FLAG_SIZE * MAX_FLAGS
 # of a neutral frame, which released held buttons for that tick (a spurious edge for toggles such as ChangePose).
 G0 = BLOCK_SIZE - BOT0
 G_STAMP, G_THROTTLE, G_STRAFE, G_YAW, G_PITCH, G_BUTTONS_HI, G_BUTTONS_LO = (
-    G0 + o for o in (C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO))
+    G0 + field for field in (C_STAMP, C_THROTTLE, C_STRAFE, C_YAW, C_PITCH, C_BUTTONS_HI, C_BUTTONS_LO))
 ALLOC_SIZE = BLOCK_SIZE + BOT_SIZE * MAX_BOTS
 CP_TYPE = 0x82D57850         # ServerCapturePointEntity's type (research/evidence/bot-interfaces.json)
 # the mailbox's names, for the assembler and for readers that check their own copy of the layout (navhost's rsmbox.h)
@@ -657,7 +663,13 @@ FMT_MAILBOX:
 '''
 
 
-def string_record(text, at):
+type Side = int                         # FRIENDLY or ENEMY
+type Bot = tuple[Side, str]             # (side, class: a KITS key)
+type PatchWord = tuple[int, int, str]   # (guest address, big-endian word, comment)
+type WordReader = Callable[[int], int]  # a record's word at an offset
+
+
+def string_record(text: str, at: int) -> bytes:
     """A {begin, end, capacity end} string (end past the NUL, as the game's own strings) followed by its text."""
     raw = text.encode('ascii') + b'\0'
     raw += b'\0' * (-len(raw) % 4)
@@ -665,20 +677,27 @@ def string_record(text, at):
     return struct.pack('>III', chars, chars + len(text) + 1, chars + len(text) + 1) + raw
 
 
-def assembler_symbols(table=0):
+def assembler_symbols(table: int = 0) -> dict[str, int]:
     """The names CODE_SOURCE uses: the data area's, the stack frame's and the mailbox's; BOTS is the table's address."""
-    symbols = {'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS, 'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4,
-               'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12, 'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98,
-               'BUF_80': BUF + 0x80, 'DT': DT, 'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'BUF_STRAFE': BUF + 0x0C,
-               'BUF_BUTTONS_HI': BUF + 0x78, 'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84, 'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table,
-               'TRIES': TRIES, 'LWSYNC': LWSYNC, 'HOST_PLAYER': HOST_PLAYER, 'HOLD': HOLD, 'ALLOC_SIZE': ALLOC_SIZE,
-               'G_STAMP': G_STAMP, 'G_THROTTLE': G_THROTTLE, 'G_STRAFE': G_STRAFE, 'G_YAW': G_YAW, 'G_PITCH': G_PITCH,
-               'G_BUTTONS_HI': G_BUTTONS_HI, 'G_BUTTONS_LO': G_BUTTONS_LO}
+    symbols = {
+        # the data area
+        'DATA': DATA, 'STATE': STATE, 'MANAGER': MANAGER, 'TICK': TICK, 'SLOTS_ADDR': DATA + SLOTS,
+        'HANDLE': HANDLE, 'HANDLE_4': HANDLE + 4, 'HANDLE_8': HANDLE + 8, 'HANDLE_C': HANDLE + 12,
+        # the stack frame and its input frame buffer
+        'FRAME': FRAME, 'BUF': BUF, 'BUF_98': BUF + 0x98, 'BUF_80': BUF + 0x80, 'DT': DT,
+        'BUF_THROTTLE': BUF + 8, 'BUF_BUTTONS_LO': BUF + 0x7C, 'BUF_STRAFE': BUF + 0x0C, 'BUF_BUTTONS_HI': BUF + 0x78,
+        'BUF_YAW': BUF + 0x88, 'BUF_PITCH': BUF + 0x8C, 'BUF_84': BUF + 0x84,
+        'MAX_BOTS': MAX_BOTS, 'FRIENDLY': FRIENDLY, 'BOTS': table,
+        'TRIES': TRIES, 'LWSYNC': LWSYNC, 'HOST_PLAYER': HOST_PLAYER, 'HOLD': HOLD, 'ALLOC_SIZE': ALLOC_SIZE,
+        # the guest-only copy of each bot's last whole command
+        'G_STAMP': G_STAMP, 'G_THROTTLE': G_THROTTLE, 'G_STRAFE': G_STRAFE, 'G_YAW': G_YAW, 'G_PITCH': G_PITCH,
+        'G_BUTTONS_HI': G_BUTTONS_HI, 'G_BUTTONS_LO': G_BUTTONS_LO,
+    }
     symbols.update({name: globals()[name] for name in MAILBOX_NAMES})
     return symbols
 
 
-def guest_command(word, tick, last=None):
+def guest_command(word: WordReader, tick: int, last: list[int] | None = None) -> tuple[int, ...] | None:
     """The bot code's command read, in Python, for the hosts' tests (tests/test_bots.py checks it against the code):
     word(offset) gives a word of the bot's record (C_SEQ, C_STAMP, ...). last is the bot's guest-only copy of its last
     whole command (a list of 7 words, updated in place; None: none yet, all zero, as in a new block): a whole read
@@ -688,33 +707,34 @@ def guest_command(word, tick, last=None):
     copy = last if last is not None else [0] * len(fields)
     for _ in range(TRIES):
         seq = word(C_SEQ)
-        record = tuple(word(o) for o in fields)
+        record = tuple(word(offset) for offset in fields)
         if word(C_SEQ) == seq and not seq & 1:
             copy[:] = record
             break
     record = tuple(copy)
-    return record if record[0] and (tick - record[0]) & 0xFFFFFFFF <= STALE else None
+    stamp = record[0]
+    return record if stamp and (tick - stamp) & 0xFFFFFFFF <= STALE else None
 
 
-def guest_record(first, last, tick, fields):
+def guest_record(first: int, last: int, tick: int, fields: dict[int, int]) -> list[tuple[int, int]]:
     """The bot code's writes of a state or flag record, in Python, for the hosts' tests (tests/test_bots.py checks them
     against the code): [(offset, word)] in its order, the tick at first, the fields ({offset: word}), the tick at last."""
     return [(first, tick)] + sorted(fields.items()) + [(last, tick)]
 
 
-def host_record(word, first, last, offsets):
+def host_record(word: WordReader, first: int, last: int, offsets: Iterable[int]) -> dict[int, int] | None:
     """A host's read of a state or flag record under its two-word lock: word(offset) gives a word of the record, each
     read after the one before. The closing tick (last), the fields, the opening tick (first), TRIES times in all:
     {offset: word} with both ticks, or None when no read was whole."""
     for _ in range(TRIES):
         end = word(last)
-        record = {o: word(o) for o in offsets}
+        record = {offset: word(offset) for offset in offsets}
         if word(first) == end:
             return {**record, first: end, last: end}
     return None
 
 
-def build(bots=DEFAULT_BOTS):
+def build(bots: Sequence[Bot] = DEFAULT_BOTS) -> tuple[list[PatchWord], bytes, bytes]:
     """(patch words [(address, value, comment)], code bytes, data bytes) for the given [(team, class)]."""
     if not 1 <= len(bots) <= MAX_BOTS:
         raise ValueError(f'1 to {MAX_BOTS} bots')
@@ -726,8 +746,8 @@ def build(bots=DEFAULT_BOTS):
     table_at = CODE + len(code)
     strings_at = table_at + 16 * len(bots) + 4
     strings, table = b'', b''
-    kit_strings = {}
-    for kit in sorted(set(k for _, k in bots)):    # each kit's name for team 1 and team 2, once
+    kit_strings: dict[tuple[str, int], int] = {}
+    for kit in sorted(set(kit for _, kit in bots)):    # each kit's name for team 1 and team 2, once
         for team, folder in TEAMS.items():
             kit_strings[kit, team] = strings_at + len(strings)
             strings += string_record(f'Objects/Soldiers/{folder}/{KITS[kit]}', kit_strings[kit, team])
@@ -748,21 +768,27 @@ def build(bots=DEFAULT_BOTS):
     hook, _ = ppcasm.assemble(f'bl {CODE:#x}', HOOK)
     words = [(HOOK, struct.unpack('>I', hook)[0], f'bl bot code (was {HOOK_ORIGINAL:#010x}, bl 0x8238eb68)')]
     for k in range(0, len(blob), 4):
-        words.append((CODE + k, struct.unpack_from('>I', blob, k)[0], 'bot code' if k < len(code) else 'bot table and names'))
+        what = 'bot code' if k < len(code) else 'bot table and names'
+        words.append((CODE + k, struct.unpack_from('>I', blob, k)[0], what))
     return words, code, table + strings
 
 
-def patch_toml(bots=DEFAULT_BOTS):
-    words, code, _ = build(bots)
-    friendly = sum(1 for s, _ in bots if s == FRIENDLY)
+def patch_toml(bots: Sequence[Bot] = DEFAULT_BOTS) -> str:
+    """The bots experiment's Xenia patch file: a header naming the module hash, then one be32 entry per word."""
+    words, _code, _ = build(bots)
+    friendly = sum(1 for side, _ in bots if side == FRIENDLY)
     names = f'{friendly} on the host side, {len(bots) - friendly} against'
+    description = (f'{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; '
+                   'they move only on a host program\'s commands (navhost, guestmem.py).')
     lines = [HEADER + ' Experimental; addresses are for module hash 872BBE31C0FBA21B.',
              'title_name = "Battlefield 1943"', 'title_id = "5841097E"', 'hash = "872BBE31C0FBA21B"', '',
-             '[[patch]]', '    name = "Experiment: offline bots (they stand until a host program drives them; no decisions yet)"',
-             f'    desc = "{len(bots)} server-side bots: {names}. They join, take their team\'s kit and spawn; they move only on a host program\'s commands (navhost, guestmem.py)."',
+             '[[patch]]',
+             '    name = "Experiment: offline bots (they stand until a host program drives them; no decisions yet)"',
+             f'    desc = "{description}"',
              '    author = "bf1943-xenia-kit"', '    is_enabled = true', '']
     for address, value, comment in words:
-        lines += ['    [[patch.be32]]', f'        # {comment}', f'        address = {address:#010x}', f'        value = {value:#010x}', '']
+        lines += ['    [[patch.be32]]', f'        # {comment}', f'        address = {address:#010x}',
+                  f'        value = {value:#010x}', '']
     return '\n'.join(lines)
 
 

@@ -1,4 +1,11 @@
-"""Record decoded-image provenance, PE layout, and bounded ASCII leads."""
+"""Record decoded-image provenance, PE layout, and bounded ASCII leads.
+
+  python -B inspect_decoded.py      (from the research workspace, or with BF1943_RESEARCH set)
+
+Reads work/extracted/default.xex, the decoded images (default.checked.memory.bin, default.memory.bin) and the
+XEXLoaderWV sources under work/tools; writes research/evidence/decoded-xex-pilot.json (hashes of this folder's
+files included, so any change here changes it).
+"""
 import hashlib
 import json
 from pathlib import Path
@@ -10,11 +17,11 @@ from workspace import research_root  # noqa: E402
 LEAD_TERMS = re.compile(r'kynapse|mapbuilder|pathfind|pathdata|navmesh|bot|AiSystem', re.I)
 
 
-def digest(path):
+def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def main():
+def main() -> None:
     root = research_root()              # the research workspace (workspace.py)
     source = root / 'work/extracted/default.xex'
     image = root / 'work/xex-analysis/default.checked.memory.bin'
@@ -44,8 +51,11 @@ def main():
         compressed_block_sha1_verified=80, pe_machine=hex(machine), sections=sections,
         base='0x82000000', entry='0x827d78b0', ascii_leads=leads,
         limitations=['Block integrity is not signature authentication.',
-          'XEX page digests: all 219 pages verified by verify_xex_image.py (each digest covers the next page and its descriptor; research/evidence/xex-image-integrity.json). The earlier naive same-page comparison matched 0/219.',
-          '.reloc: within_image is false because the XEX image ends at the page after .XBLD; the 65,024 mapped .reloc bytes are zero (verify_xex_image.py).',
+          'XEX page digests: all 219 pages verified by verify_xex_image.py (each digest covers the next page and its '
+          'descriptor; research/evidence/xex-image-integrity.json). The earlier naive same-page comparison matched '
+          '0/219.',
+          '.reloc: within_image is false because the XEX image ends at the page after .XBLD; the 65,024 mapped .reloc '
+          'bytes are zero (verify_xex_image.py).',
           'Raw memory image import does not yet model PE section permissions, imports, relocations or VMX128.',
           'ASCII hits are leads, not implemented-feature evidence.'])
     output = root / 'research/evidence/decoded-xex-pilot.json'

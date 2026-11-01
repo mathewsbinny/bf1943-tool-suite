@@ -93,22 +93,30 @@ class Mesh:
     links_null_offset: int = NULL
 
 
-def _at(fmt: str, m: bytes, o: int) -> tuple[Any, ...]:
-    """struct.unpack_from(fmt, m, o); ValueError when it runs past the record (2026-10-31 fuzzing: struct.error, and
-    a negative offset read from the end)."""
+def _at(fmt: str, rec: bytes, at: int) -> tuple[Any, ...]:
+    """struct.unpack_from(fmt, rec, at); ValueError when it runs past the record (2026-10-31 fuzzing: struct.error,
+    and a negative offset read from the end)."""
     size = struct.calcsize(fmt)
-    if o < 0 or o + size > len(m):
-        raise ValueError(f'damaged runtime mesh: {size} bytes at {o:#x} lie outside the {len(m)}-byte record')
-    return struct.unpack_from(fmt, m, o)
+    if at < 0 or at + size > len(rec):
+        raise ValueError(f'damaged runtime mesh: {size} bytes at {at:#x} lie outside the {len(rec)}-byte record')
+    return struct.unpack_from(fmt, rec, at)
 
 
-def _u32(m: bytes, o: int) -> int: return _at('<I', m, o)[0]
-def _f32(m: bytes, o: int) -> float: return _at('<f', m, o)[0]
-def _v3(m: bytes, o: int) -> Vec3: return _at('<3f', m, o)
+def _u32(rec: bytes, at: int) -> int:
+    return _at('<I', rec, at)[0]
 
 
-def _points(m: bytes, a: int, b: int) -> list[Vec3]:
-    return [_v3(m, q) for q in range(a, b, 12)]
+def _f32(rec: bytes, at: int) -> float:
+    return _at('<f', rec, at)[0]
+
+
+def _v3(rec: bytes, at: int) -> Vec3:
+    return _at('<3f', rec, at)
+
+
+def _points(rec: bytes, start: int, end: int) -> list[Vec3]:
+    """The 12-byte points from start to end."""
+    return [_v3(rec, at) for at in range(start, end, 12)]
 
 
 class _Budget:
@@ -117,8 +125,8 @@ class _Budget:
     before it is read many times over (2026-10-31 review, while fuzzing: reading time grew with the square of the
     record's size)."""
 
-    def __init__(self, m: bytes) -> None:
-        self.left = len(m)
+    def __init__(self, rec: bytes) -> None:
+        self.left = len(rec)
 
     def take(self, size: int, what: str) -> None:
         self.left -= max(0, size)
@@ -127,216 +135,223 @@ class _Budget:
                              f'overlap)')
 
 
-def parse_mesh(m: bytes) -> Mesh:
+def parse_mesh(rec: bytes) -> Mesh:
     """The record as a Mesh. ValueError for a record that is not one write_mesh could make: cut short, a count or
     offset past its end, tables that overlap, a reference to no area."""
-    if not m.startswith(MARKER):
+    if not rec.startswith(MARKER):
         raise ValueError('not a KynogonRuntimeMesh record')
-    budget = _Budget(m)
-    version, flags = _at('<HH', m, 0x14)
-    loaded, sector_id = _u32(m, 0x18), _u32(m, 0x1C)
-    resolution, pitch = _f32(m, 0x20), _f32(m, 0x24)
-    rect = _at('<4f', m, 0x28)
-    tx, tz = _u32(m, 0x38), _u32(m, 0x3C)
-    radius = _f32(m, 0x40)
-    tile_tab, n_links, links_off = _u32(m, 0x44), _u32(m, 0x48), _u32(m, 0x4C)
-    ntiles = tx * tz
-    budget.take(4 * (ntiles + 1), f'a tile table of {tx} x {tz} tiles')
-    tile_offs = [_u32(m, tile_tab + i * 4) for i in range(ntiles + 1)]
+    budget = _Budget(rec)
+    version, flags = _at('<HH', rec, 0x14)
+    loaded, sector_id = _u32(rec, 0x18), _u32(rec, 0x1C)
+    resolution, pitch = _f32(rec, 0x20), _f32(rec, 0x24)
+    rect = _at('<4f', rec, 0x28)
+    tiles_x, tiles_z = _u32(rec, 0x38), _u32(rec, 0x3C)
+    radius = _f32(rec, 0x40)
+    tile_table, link_count, links_at = _u32(rec, 0x44), _u32(rec, 0x48), _u32(rec, 0x4C)
+    tile_count = tiles_x * tiles_z
+    budget.take(4 * (tile_count + 1), f'a tile table of {tiles_x} x {tiles_z} tiles')
+    tile_offs = [_u32(rec, tile_table + i * 4) for i in range(tile_count + 1)]
 
     area_index: dict[int, int] = {}           # object offset -> index
     area_offsets: list[int] = []
     tiles_raw: list[list[tuple[Any, ...]]] = []
-    for t in range(ntiles):
-        to = tile_offs[t]
-        n = _u32(m, to)
-        budget.take(4 + 12 * n, f'the {n} items of tile {t}')
-        items = [_at('<Iff', m, to + 4 + k * 12) for k in range(n)]
+    for tile in range(tile_count):
+        tile_at = tile_offs[tile]
+        count = _u32(rec, tile_at)
+        budget.take(4 + 12 * count, f'the {count} items of tile {tile}')
+        items = [_at('<Iff', rec, tile_at + 4 + k * 12) for k in range(count)]
         for ptr, _, _ in items:
             if ptr not in area_index:
                 area_index[ptr] = len(area_offsets)
                 area_offsets.append(ptr)
         tiles_raw.append(items)
-    tiles = [[TileItem(area_index[p], a, b) for p, a, b in items] for items in tiles_raw]
+    tiles = [[TileItem(area_index[ptr], low, high) for ptr, low, high in items] for items in tiles_raw]
 
     areas: list[Area] = []
-    for o in area_offsets:
-        budget.take(0x50, f'the area at {o:#x}')
-        hdr = _at('<4I4f', m, o)
-        cnt = {k: _u32(m, o + k) for k in (0x20, 0x28, 0x30, 0x38, 0x40, 0x48)}
-        offs = {k: _u32(m, o + k + 4) for k in cnt}
-        null_offsets = {k: offs[k] for k in cnt if cnt[k] == 0}
-        area = Area(hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7], null_offsets=null_offsets)
-        if cnt[0x20]:
+    for area_at in area_offsets:
+        budget.take(0x50, f'the area at {area_at:#x}')
+        header = _at('<4I4f', rec, area_at)
+        # the area's tables: count at area_at + key, offset (from the area's start) at area_at + key + 4
+        counts = {key: _u32(rec, area_at + key) for key in (0x20, 0x28, 0x30, 0x38, 0x40, 0x48)}
+        offsets = {key: _u32(rec, area_at + key + 4) for key in counts}
+        null_offsets = {key: offsets[key] for key in counts if counts[key] == 0}
+        area = Area(header[0], header[1], header[2], header[3], header[4], header[5], header[6], header[7],
+                    null_offsets=null_offsets)
+        if counts[0x20]:
             raise ValueError('A records present (never seen before)')
-        budget.take(0x20 * cnt[0x28] + 0x2C * cnt[0x30], f'the portals of the area at {o:#x}')
-        pos = o + offs[0x28] if cnt[0x28] else None
-        for k in range(cnt[0x28]):
-            r = cast(int, pos) + k * 0x20      # not None: cnt[0x28] > 0
-            area.portals.append(Portal(_v3(m, r), _v3(m, r + 12), _u32(m, r + 0x18)))   # target resolved below
-        pos = o + offs[0x30] if cnt[0x30] else None
-        for k in range(cnt[0x30]):
-            r = cast(int, pos) + k * 0x2C      # not None: cnt[0x30] > 0
-            area.border_portals.append(BorderPortal(_v3(m, r), _v3(m, r + 12), _v3(m, r + 0x20),
-                                                    (_u32(m, r + 0x18), _u32(m, r + 0x1C))))
+        budget.take(0x20 * counts[0x28] + 0x2C * counts[0x30], f'the portals of the area at {area_at:#x}')
+        table_at = area_at + offsets[0x28] if counts[0x28] else None
+        for k in range(counts[0x28]):
+            record_at = cast(int, table_at) + k * 0x20      # not None: counts[0x28] > 0
+            area.portals.append(Portal(_v3(rec, record_at), _v3(rec, record_at + 12),
+                                       _u32(rec, record_at + 0x18)))   # target resolved below
+        table_at = area_at + offsets[0x30] if counts[0x30] else None
+        for k in range(counts[0x30]):
+            record_at = cast(int, table_at) + k * 0x2C      # not None: counts[0x30] > 0
+            area.border_portals.append(BorderPortal(_v3(rec, record_at), _v3(rec, record_at + 12),
+                                                    _v3(rec, record_at + 0x20),
+                                                    (_u32(rec, record_at + 0x18), _u32(rec, record_at + 0x1C))))
         for key, target in ((0x38, area.d_lines), (0x40, area.outline)):
-            if cnt[key]:
-                tab = o + offs[key]
-                budget.take(4 * (cnt[key] + 1), f'the point lists of the area at {o:#x}')
-                idx = [_u32(m, tab + j * 4) for j in range(cnt[key] + 1)]
-                for j in range(cnt[key]):
-                    budget.take(idx[j + 1] - idx[j], f'the points of the area at {o:#x}')
-                    target.append(_points(m, o + idx[j], o + idx[j + 1]))
-        if cnt[0x48]:
-            tab = o + offs[0x48]
-            budget.take(16 * (cnt[0x48] + 1), f'the cells of the area at {o:#x}')
-            rows = [_at('<I3f', m, tab + j * 16) for j in range(cnt[0x48] + 1)]
-            for j in range(cnt[0x48]):
-                budget.take(rows[j + 1][0] - rows[j][0], f'the cell points of the area at {o:#x}')
-                area.cells.append(Cell(rows[j][1:], _points(m, o + rows[j][0], o + rows[j + 1][0])))
+            if counts[key]:
+                list_table = area_at + offsets[key]
+                budget.take(4 * (counts[key] + 1), f'the point lists of the area at {area_at:#x}')
+                list_starts = [_u32(rec, list_table + j * 4) for j in range(counts[key] + 1)]
+                for j in range(counts[key]):
+                    budget.take(list_starts[j + 1] - list_starts[j], f'the points of the area at {area_at:#x}')
+                    target.append(_points(rec, area_at + list_starts[j], area_at + list_starts[j + 1]))
+        if counts[0x48]:
+            cell_table = area_at + offsets[0x48]
+            budget.take(16 * (counts[0x48] + 1), f'the cells of the area at {area_at:#x}')
+            rows = [_at('<I3f', rec, cell_table + j * 16) for j in range(counts[0x48] + 1)]
+            for j in range(counts[0x48]):
+                budget.take(rows[j + 1][0] - rows[j][0], f'the cell points of the area at {area_at:#x}')
+                area.cells.append(Cell(rows[j][1:], _points(rec, area_at + rows[j][0], area_at + rows[j + 1][0])))
             area.end_row = rows[-1][1:]
         areas.append(area)
     for k, area in enumerate(areas):
-        for p in area.portals:
-            if p.target not in area_index:
-                raise ValueError(f'area {k}: portal target {p.target:#x} is not the start of an area')
-            p.target = area_index[p.target]
+        for portal in area.portals:
+            if portal.target not in area_index:
+                raise ValueError(f'area {k}: portal target {portal.target:#x} is not the start of an area')
+            portal.target = area_index[portal.target]
 
     starts = sorted(area_offsets)
     links: list[NeighbourLink] = []
-    budget.take(12 * n_links, f'{n_links} neighbour links')
-    for k in range(n_links):
-        sid, cnt, lst = _at('<3I', m, links_off + k * 12)
-        budget.take(4 * cnt, f'the list of link {sid:#x}')
+    budget.take(12 * link_count, f'{link_count} neighbour links')
+    for k in range(link_count):
+        sid, object_count, list_at = _at('<3I', rec, links_at + k * 12)
+        budget.take(4 * object_count, f'the list of link {sid:#x}')
         objs: list[LinkObject] = []
-        for j in range(cnt):
-            lo = _u32(m, lst + j * 4)
-            h = _at('<3I', m, lo)
-            c = _u32(m, lo + 0xC)
-            budget.take(0x10 + 4 * c, f'link {sid:#x}/{j}')
+        for j in range(object_count):
+            object_at = _u32(rec, list_at + j * 4)
+            link_header = _at('<3I', rec, object_at)
+            ref_count = _u32(rec, object_at + 0xC)
+            budget.take(0x10 + 4 * ref_count, f'link {sid:#x}/{j}')
             refs: list[tuple[int, int]] = []
-            for q in range(c):
-                ptr = _u32(m, lo + 0x10 + q * 4)
-                at = bisect.bisect_right(starts, ptr)       # the area that starts last at or before ptr
-                if not at:
+            for ref in range(ref_count):
+                ptr = _u32(rec, object_at + 0x10 + ref * 4)
+                after = bisect.bisect_right(starts, ptr)       # the area that starts last at or before ptr
+                if not after:
                     raise ValueError(f'link {sid:#x}/{j}: reference {ptr:#x} lies before the first area')
-                owner = starts[at - 1]
+                owner = starts[after - 1]
                 refs.append((area_index[owner], ptr - owner))
-            objs.append(LinkObject(h, refs))
+            objs.append(LinkObject(link_header, refs))
         links.append(NeighbourLink(sid, objs))
-    end_slot = m[tile_offs[ntiles]:tile_offs[ntiles] + 4]
-    return Mesh(version, flags, loaded, sector_id, resolution, pitch, rect, tx, tz, radius, tiles, areas, links,
-                end_slot, links_off if n_links == 0 else NULL)
+    end_slot = rec[tile_offs[tile_count]:tile_offs[tile_count] + 4]
+    return Mesh(version, flags, loaded, sector_id, resolution, pitch, rect, tiles_x, tiles_z, radius, tiles, areas,
+                links, end_slot, links_at if link_count == 0 else NULL)
 
 
 def write_mesh(mesh: Mesh) -> bytes:
+    """The record's bytes, every offset computed again."""
     # Pass 1: serialise areas without B target fields to learn their sizes; pass 2: lay out and patch.
-    bodies = [_area_body(a) for a in mesh.areas]
+    bodies = [_area_body(area) for area in mesh.areas]
     out = bytearray(MARKER)
     out += struct.pack('<HHII', mesh.version, mesh.flags, mesh.loaded, mesh.sector_id)
     out += struct.pack('<2f4f2If', mesh.resolution, mesh.pitch, *mesh.rect, mesh.tiles_x, mesh.tiles_z, mesh.radius)
     out += b'\0' * 12                      # tile table offset, link count, link offset (patched below)
-    ntiles = mesh.tiles_x * mesh.tiles_z
-    tab = len(out)
-    out += b'\0' * ((ntiles + 1) * 4)
+    tile_count = mesh.tiles_x * mesh.tiles_z
+    tile_table = len(out)
+    out += b'\0' * ((tile_count + 1) * 4)
     tile_offs: list[int] = []
-    area_off: dict[int, int] = {}
+    area_at: dict[int, int] = {}           # area index -> its offset in the record
     for items in mesh.tiles:
-        to = len(out)
-        tile_offs.append(to)
+        tile_at = len(out)
+        tile_offs.append(tile_at)
         out += struct.pack('<I', len(items))
         item_pos = len(out)
         out += b'\0' * (len(items) * 12)
         if items:
             out += b'\0' * 4               # end offset, patched below
-        for it in items:
-            if it.area not in area_off:
-                area_off[it.area] = len(out)
-                out += bodies[it.area][0]
-        for k, it in enumerate(items):
-            struct.pack_into('<Iff', out, item_pos + k * 12, area_off[it.area], it.a, it.b)
+        for item in items:
+            if item.area not in area_at:
+                area_at[item.area] = len(out)
+                out += bodies[item.area][0]
+        for k, item in enumerate(items):
+            struct.pack_into('<Iff', out, item_pos + k * 12, area_at[item.area], item.a, item.b)
         if items:
             struct.pack_into('<I', out, item_pos + len(items) * 12, len(out))
-    unplaced = [i for i in range(len(mesh.areas)) if i not in area_off]
+    unplaced = [i for i in range(len(mesh.areas)) if i not in area_at]
     if unplaced:
         raise ValueError(f'areas {unplaced[:5]} are in no tile: every area must be listed by a tile to be written')
     end_slot_off = len(out)
     out += mesh.end_slot
     tile_offs.append(end_slot_off)
-    for i, to in enumerate(tile_offs):
-        struct.pack_into('<I', out, tab + i * 4, to)
+    for i, tile_at in enumerate(tile_offs):
+        struct.pack_into('<I', out, tile_table + i * 4, tile_at)
     # Patch B portal targets (offset and size of the target area).
-    sizes = [len(b[0]) for b in bodies]
+    sizes = [len(body[0]) for body in bodies]
     for i, (_body, portal_pos) in enumerate(bodies):
-        base = area_off[i]
-        for k, p in enumerate(mesh.areas[i].portals):
-            struct.pack_into('<II', out, base + portal_pos + k * 0x20 + 0x18, area_off[p.target], sizes[p.target])
+        base = area_at[i]
+        for k, portal in enumerate(mesh.areas[i].portals):
+            struct.pack_into('<II', out, base + portal_pos + k * 0x20 + 0x18, area_at[portal.target],
+                             sizes[portal.target])
     # Neighbour links.
     links_off = len(out) if mesh.links else mesh.links_null_offset
     if mesh.links:
         table = len(out)
         out += b'\0' * (len(mesh.links) * 12)
         for k, link in enumerate(mesh.links):
-            lst = len(out)
+            list_at = len(out)
             out += b'\0' * (len(link.objects) * 4)
-            struct.pack_into('<3I', out, table + k * 12, link.sector_id, len(link.objects), lst)
-            for j, lo in enumerate(link.objects):
-                struct.pack_into('<I', out, lst + j * 4, len(out))
-                out += struct.pack('<4I', *lo.header, len(lo.refs))
-                for ai, rel in lo.refs:
-                    out += struct.pack('<I', area_off[ai] + rel)
-    struct.pack_into('<3I', out, 0x44, tab, len(mesh.links), links_off)
+            struct.pack_into('<3I', out, table + k * 12, link.sector_id, len(link.objects), list_at)
+            for j, obj in enumerate(link.objects):
+                struct.pack_into('<I', out, list_at + j * 4, len(out))
+                out += struct.pack('<4I', *obj.header, len(obj.refs))
+                for ai, rel in obj.refs:
+                    out += struct.pack('<I', area_at[ai] + rel)
+    struct.pack_into('<3I', out, 0x44, tile_table, len(mesh.links), links_off)
     out += struct.pack('<II', len(out), 0)   # trailer
     return bytes(out)
 
 
-def _area_body(a: Area) -> tuple[bytes, int]:
+def _area_body(area: Area) -> tuple[bytes, int]:
     """Bytes of one area object with B target fields zeroed; returns (bytes, offset of the B records)."""
     hdr_size = 0x50
     blob = bytearray()
-    off: dict[int, int] = {}
+    offsets: dict[int, int] = {}            # header key -> the table's offset from the area's start
     pos = hdr_size
     portal_pos = pos
-    off[0x28] = pos if a.portals else a.null_offsets.get(0x28, NULL)
-    for p in a.portals:
-        blob += struct.pack('<6fII', *p.p0, *p.p1, 0, 0)
+    offsets[0x28] = pos if area.portals else area.null_offsets.get(0x28, NULL)
+    for portal in area.portals:
+        blob += struct.pack('<6fII', *portal.p0, *portal.p1, 0, 0)
     pos = hdr_size + len(blob)
-    off[0x30] = pos if a.border_portals else a.null_offsets.get(0x30, NULL)
-    for c in a.border_portals:
-        blob += struct.pack('<6f2I3f', *c.p0, *c.p1, *c.runtime, *c.direction)
-    for key, lists in ((0x38, a.d_lines), (0x40, a.outline)):
+    offsets[0x30] = pos if area.border_portals else area.null_offsets.get(0x30, NULL)
+    for border in area.border_portals:
+        blob += struct.pack('<6f2I3f', *border.p0, *border.p1, *border.runtime, *border.direction)
+    for key, lists in ((0x38, area.d_lines), (0x40, area.outline)):
         if not lists:
-            off[key] = a.null_offsets.get(key, NULL)
+            offsets[key] = area.null_offsets.get(key, NULL)
             continue
-        tab = hdr_size + len(blob)
-        off[key] = tab
-        data_start = tab + (len(lists) + 1) * 4
-        idx, q = [], data_start
-        for pts in lists:
-            idx.append(q)
-            q += len(pts) * 12
-        idx.append(q)
-        blob += struct.pack(f'<{len(idx)}I', *idx)
-        for pts in lists:
-            for pt in pts:
-                blob += struct.pack('<3f', *pt)
-    if a.cells:
-        tab = hdr_size + len(blob)
-        off[0x48] = tab
-        q = tab + (len(a.cells) + 1) * 16
-        for c in a.cells:
-            blob += struct.pack('<I3f', q, *c.direction)
-            q += len(c.points) * 12
-        blob += struct.pack('<I3f', q, *a.end_row)
-        for c in a.cells:
-            for pt in c.points:
-                blob += struct.pack('<3f', *pt)
+        table = hdr_size + len(blob)
+        offsets[key] = table
+        data_start = table + (len(lists) + 1) * 4
+        list_starts, next_at = [], data_start
+        for points in lists:
+            list_starts.append(next_at)
+            next_at += len(points) * 12
+        list_starts.append(next_at)
+        blob += struct.pack(f'<{len(list_starts)}I', *list_starts)
+        for points in lists:
+            for point in points:
+                blob += struct.pack('<3f', *point)
+    if area.cells:
+        table = hdr_size + len(blob)
+        offsets[0x48] = table
+        next_at = table + (len(area.cells) + 1) * 16
+        for cell in area.cells:
+            blob += struct.pack('<I3f', next_at, *cell.direction)
+            next_at += len(cell.points) * 12
+        blob += struct.pack('<I3f', next_at, *area.end_row)
+        for cell in area.cells:
+            for point in cell.points:
+                blob += struct.pack('<3f', *point)
     else:
-        off[0x48] = a.null_offsets.get(0x48, NULL)
-    off[0x20] = a.null_offsets.get(0x20, NULL)
-    header = struct.pack('<4I4f', a.sector_id, a.tile_x, a.tile_z, a.layer, a.radius, a.pitch, a.max_y, a.min_y)
-    counts = {0x20: 0, 0x28: len(a.portals), 0x30: len(a.border_portals), 0x38: len(a.d_lines),
-              0x40: len(a.outline), 0x48: len(a.cells)}
-    for k in (0x20, 0x28, 0x30, 0x38, 0x40, 0x48):
-        header += struct.pack('<II', counts[k], off[k])
+        offsets[0x48] = area.null_offsets.get(0x48, NULL)
+    offsets[0x20] = area.null_offsets.get(0x20, NULL)
+    header = struct.pack('<4I4f', area.sector_id, area.tile_x, area.tile_z, area.layer, area.radius, area.pitch,
+                         area.max_y, area.min_y)
+    counts = {0x20: 0, 0x28: len(area.portals), 0x30: len(area.border_portals), 0x38: len(area.d_lines),
+              0x40: len(area.outline), 0x48: len(area.cells)}
+    for key in (0x20, 0x28, 0x30, 0x38, 0x40, 0x48):
+        header += struct.pack('<II', counts[key], offsets[key])
     return bytes(header + blob), portal_pos

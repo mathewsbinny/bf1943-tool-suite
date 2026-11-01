@@ -208,10 +208,12 @@ dependencies; a major version comes as its own pull request, checked by CI befor
 
 ### Types
 
-The shared library code is annotated (Python 3.13 syntax: `list[int]`, `X | None`, numpy arrays as
+Every library and tool module is annotated (Python 3.13 syntax: `list[int]`, `X | None`, numpy arrays as
 `npt.NDArray[np.float32]` and the like) and checked by [pyright](https://github.com/microsoft/pyright) at its
-`standard` strictness: `core/bfbc2core` and `bf1943-auto-navkit-common/tools` (the navbuild package included). The
-settings are `pyproject.toml` `[tool.pyright]`: the folders checked (`include`), and where their imports are found
+`standard` strictness (2026-11-01: core, all three NavKit folders, the Xenia kit and harness, the xex-tools, the
+readers, the 3D tools, the runner and the hub). Two things are left out: the tests (`**/tests`), and the VMX
+validation's inputs, which are never edited; `bf1943-xex-tools` is therefore listed file by file. The
+settings are `pyproject.toml` `[tool.pyright]`: the folders and files checked (`include`), and where their imports are found
 (`extraPaths`: the folders `suitepath.use` puts on `sys.path`, both NavKit variants included). pyright is pinned in the
 `ci` group with its `nodejs` extra, which brings Node.js as a PyPI wheel, so nothing outside PyPI is downloaded. CI's
 `quick` job runs it after the lint. From the suite folder, in the Python that has the `ci` group:

@@ -22,6 +22,7 @@ type Point = tuple[float, float, float]
 
 
 def member(name: str, offset: int, mtype: int, subtype: int = 0) -> dict[str, Any]:
+    """A class member in hkpack's form (no member class, not a C array)."""
     return {'name': name, 'class': None, 'type': mtype, 'subtype': subtype, 'carray': 0, 'offset': offset}
 
 
@@ -48,36 +49,37 @@ def convex_vertices(pf: 'hkpack.Packfile', off: int) -> list[Point]:
     centre (hkVector4), +0x40 rotatedVertices (hkArray of 'four transposed points': x0..3, y0..3, z0..3, 48 bytes
     each), +0x4c the vertex count, +0x50 planeEquations (hkArray of hkVector4). Layout from the files (2026-10-23)."""
     import struct
-    e, d = pf.e, pf.d
-    p = pf.deref(off + 0x40)
-    if off < 0 or off + 0x50 > len(d):          # 2026-10-31 fuzzing: struct.error before
+    endian, data = pf.e, pf.d
+    groups_at = pf.deref(off + 0x40)
+    if off < 0 or off + 0x50 > len(data):          # 2026-10-31 fuzzing: struct.error before
         raise ValueError(f'damaged Havok packfile: a convex shape at {off:#x} runs past the end of the file')
-    groups = struct.unpack_from(e + 'i', d, off + 0x44)[0]
-    n = struct.unpack_from(e + 'i', d, off + 0x4C)[0]
-    if not p or groups <= 0 or not 0 < n <= 4 * groups:
+    groups = struct.unpack_from(endian + 'i', data, off + 0x44)[0]
+    count = struct.unpack_from(endian + 'i', data, off + 0x4C)[0]
+    if not groups_at or groups <= 0 or not 0 < count <= 4 * groups:
         return []
-    if p < 0 or p + 48 * groups > len(d):
-        raise ValueError(f'damaged Havok packfile: {groups} vertex groups at {p:#x} run past the end of the file')
+    if groups_at < 0 or groups_at + 48 * groups > len(data):
+        raise ValueError(f'damaged Havok packfile: {groups} vertex groups at {groups_at:#x} run past the end of the '
+                         f'file')
     out: list[Point] = []
-    for g in range(groups):
-        x = struct.unpack_from(e + '4f', d, p + 48 * g)
-        y = struct.unpack_from(e + '4f', d, p + 48 * g + 16)
-        z = struct.unpack_from(e + '4f', d, p + 48 * g + 32)
+    for group in range(groups):
+        x = struct.unpack_from(endian + '4f', data, groups_at + 48 * group)
+        y = struct.unpack_from(endian + '4f', data, groups_at + 48 * group + 16)
+        z = struct.unpack_from(endian + '4f', data, groups_at + 48 * group + 32)
         out += list(zip(x, y, z))
-    return out[:n]
+    return out[:count]
 
 
 def convex_box(pf: 'hkpack.Packfile', off: int) -> tuple[list[list[Point]], Point, Point]:
     """(the 12 triangles of an hkConvexVerticesShape's vertex bounding box as [[(x, y, z)] * 3],
     stored half-extents, stored centre) - NavKit's BFBC2 reader uses the same box for convex shapes."""
     import struct
-    v = convex_vertices(pf, off)                # checks that the shape's 0x50 bytes are in the file
+    vertices = convex_vertices(pf, off)                # checks that the shape's 0x50 bytes are in the file
     half = struct.unpack_from(pf.e + '3f', pf.d, off + 0x20)
     centre = struct.unpack_from(pf.e + '3f', pf.d, off + 0x30)
-    if not v:
+    if not vertices:
         return [], half, centre
-    lo = [min(c[k] for c in v) for k in range(3)]
-    hi = [max(c[k] for c in v) for k in range(3)]
+    lo = [min(vertex[k] for vertex in vertices) for k in range(3)]
+    hi = [max(vertex[k] for vertex in vertices) for k in range(3)]
     corners = [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
     return [[corners[a], corners[b], corners[c]] for a, b, c in BOX_FACES], half, centre
 
@@ -86,15 +88,15 @@ def triangles(pf: 'hkpack.Packfile', off: int) -> tuple[list[tuple[float, ...]],
     """(vertices [(x, y, z)], triangles [(a, b, c)]) of an hkStorageExtendedMeshShapeMeshSubpartStorage. ValueError
     when a triangle names a vertex the storage does not have (2026-10-31 fuzzing: read, then an IndexError in
     levelobjects1943.collision; on BF1943's files every index is below the vertex count, tests/test_havok461.py)."""
-    o = pf.read_object(off, 'hkStorageExtendedMeshShapeMeshSubpartStorage')
-    vertices = [v[:3] for v in o['vertices']]
-    if o['indices16']:
-        i = o['indices16']
-        tris = [tuple(i[k:k + 3]) for k in range(0, len(i) - 2, 4)]     # a last triangle without padding is kept
+    fields = pf.read_object(off, 'hkStorageExtendedMeshShapeMeshSubpartStorage')
+    vertices = [vertex[:3] for vertex in fields['vertices']]
+    if fields['indices16']:
+        indices = fields['indices16']
+        tris = [tuple(indices[k:k + 3]) for k in range(0, len(indices) - 2, 4)]     # a last one without padding kept
     else:
-        i = o['indices32']
-        tris = [tuple(i[k:k + 3]) for k in range(0, len(i) - 2, 3)]
-    top = max((max(t) for t in tris), default=-1)
+        indices = fields['indices32']
+        tris = [tuple(indices[k:k + 3]) for k in range(0, len(indices) - 2, 3)]
+    top = max((max(tri) for tri in tris), default=-1)
     if top >= len(vertices):
         raise ValueError(f'damaged Havok packfile: a triangle at {off:#x} names vertex {top} of {len(vertices)}')
     return vertices, tris

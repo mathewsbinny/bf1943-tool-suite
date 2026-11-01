@@ -6,6 +6,7 @@ Each function takes the research workspace as `root`; by default it is the one w
 else the current folder), looked up when the function is called rather than when this module is imported.
 """
 from pathlib import Path
+from typing import Any
 import hashlib
 import zipfile
 
@@ -21,15 +22,15 @@ MEMBERS = {
 }
 
 
-def archive_path(root=None):
+def archive_path(root: str | Path | None = None) -> Path:
     return Path(root or research_root()) / 'Tools/XenonRecomp.zip'
 
 
-def folder_path(root=None):
+def folder_path(root: str | Path | None = None) -> Path:
     return Path(root or research_root()) / 'Tools/XenonRecomp'
 
 
-def source(root=None):
+def source(root: str | Path | None = None) -> str:
     """'archive' when the original ZIP is present and intact, else 'folder'."""
     archive = archive_path(root)
     if archive.exists():
@@ -41,10 +42,10 @@ def source(root=None):
     return 'folder'
 
 
-def read(suffix, root=None):
+def read(suffix: str, root: str | Path | None = None) -> tuple[str, bytes]:
     """Return (member name, bytes) for the pinned member ending in suffix, verified against its recorded hash."""
     root = root or research_root()
-    member = next(m for m in MEMBERS if m.endswith(suffix))
+    member = next(name for name in MEMBERS if name.endswith(suffix))
     if source(root) == 'archive':
         with zipfile.ZipFile(archive_path(root)) as archive:
             data = archive.read(member)
@@ -55,6 +56,6 @@ def read(suffix, root=None):
     return member, data
 
 
-def provenance(root=None):
+def provenance(root: str | Path | None = None) -> dict[str, Any]:
     """Evidence record of where the reference bytes came from."""
     return dict(source=source(root), archive_sha256=ARCHIVE_SHA256, members_verified=sorted(MEMBERS))

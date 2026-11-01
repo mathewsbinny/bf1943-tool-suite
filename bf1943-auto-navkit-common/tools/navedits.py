@@ -26,50 +26,54 @@ WALKABILITY = ('walkable', 'unwalkable', 'seed', 'unseed')
 def surface_positions(s: 'navsample.Samples'
                       ) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating]]:
     """(x, z, y) of every sampled surface."""
-    col = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start[:s.nx * s.nz + 1]))
-    x = s.min_x + (col % s.nx) * s.pitch
-    z = s.min_z + (col // s.nx) * s.pitch
+    column_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start[:s.nx * s.nz + 1]))
+    x = s.min_x + (column_of % s.nx) * s.pitch
+    z = s.min_z + (column_of // s.nx) * s.pitch
     return x, z, s.y.astype(np.float64)
 
 
 def region_mask(x: npt.NDArray[np.floating], z: npt.NDArray[np.floating], y: npt.NDArray[np.floating],
                 region: dict[str, Any]) -> npt.NDArray[np.bool]:
+    """The surfaces (x, z, y per surface) inside a region: its 'box' (x0, y0, z0, x1, y1, z1), or its 'polygon' in
+    x/z and its 'y' range."""
     if 'box' in region:
         x0, y0, z0, x1, y1, z1 = region['box']
         return (x >= x0) & (x <= x1) & (z >= z0) & (z <= z1) & (y >= y0) & (y <= y1)
     lo, hi = region['y']
     poly = np.asarray(region['polygon'], dtype=np.float64)
-    m = (y >= lo) & (y <= hi) & (x >= poly[:, 0].min()) & (x <= poly[:, 0].max()) & (z >= poly[:, 1].min()) & (z <= poly[:, 1].max())
-    if m.any():
-        idx = np.nonzero(m)[0]
-        inside = Path(poly).contains_points(np.stack([x[idx], z[idx]], axis=1))
-        m[idx] = inside
-    return m
+    mask = ((y >= lo) & (y <= hi) & (x >= poly[:, 0].min()) & (x <= poly[:, 0].max())
+            & (z >= poly[:, 1].min()) & (z <= poly[:, 1].max()))
+    if mask.any():
+        in_box = np.nonzero(mask)[0]
+        inside = Path(poly).contains_points(np.stack([x[in_box], z[in_box]], axis=1))
+        mask[in_box] = inside
+    return mask
 
 
 def edits_for(s: 'navsample.Samples', operations: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """dict(force_walkable, force_unwalkable: bool per surface; seeds, unseeds: lists of (x, y, z); counts)."""
     x, z, y = surface_positions(s)
-    fw = np.zeros(len(y), dtype=bool)
-    fu = np.zeros(len(y), dtype=bool)
+    force_walkable = np.zeros(len(y), dtype=bool)
+    force_unwalkable = np.zeros(len(y), dtype=bool)
     seeds, unseeds = [], []
     counts: dict[str, int] = {}
-    for o in operations:
-        name = o.get('op')
+    for operation in operations:
+        name = operation.get('op')
         if name not in WALKABILITY:
             continue
         counts[name] = counts.get(name, 0) + 1
         if name in ('walkable', 'unwalkable'):
-            m = region_mask(x, z, y, o['region'])
+            mask = region_mask(x, z, y, operation['region'])
             if name == 'walkable':
-                fw |= m
-                fu &= ~m
+                force_walkable |= mask
+                force_unwalkable &= ~mask
             else:
-                fu |= m
-                fw &= ~m
+                force_unwalkable |= mask
+                force_walkable &= ~mask
         elif name == 'seed':
-            seeds.append(tuple(o['at']))
+            seeds.append(tuple(operation['at']))
         else:
-            unseeds.append(tuple(o['at']))
-    return {'force_walkable': fw, 'force_unwalkable': fu, 'seeds': seeds, 'unseeds': unseeds, 'counts': counts,
-            'surfaces_walkable': int(fw.sum()), 'surfaces_unwalkable': int(fu.sum())}
+            unseeds.append(tuple(operation['at']))
+    return {'force_walkable': force_walkable, 'force_unwalkable': force_unwalkable, 'seeds': seeds,
+            'unseeds': unseeds, 'counts': counts, 'surfaces_walkable': int(force_walkable.sum()),
+            'surfaces_unwalkable': int(force_unwalkable.sum())}

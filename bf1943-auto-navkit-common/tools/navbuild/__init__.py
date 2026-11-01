@@ -115,8 +115,8 @@ def build(samples_path: str, tris_path: str | None, xoff: int, zoff: int, out_pa
                                   exclude_foot_path=exclude_foot_path, edits=edits, water=water,
                                   max_water_depth=max_water_depth, bounds=bounds, order_points=order_points, t0=t0,
                                   ladders=ladders, settings=settings, state=state)
-    a = stage(samples_path, high_path, xoff, zoff, seeds=seeds, grid=grid_at(PITCH, settings), **common)
-    graphs = merge_detailed(a, detailed, xoff, zoff, seeds, common, log) if detailed else a['graphs']
+    normal = stage(samples_path, high_path, xoff, zoff, seeds=seeds, grid=grid_at(PITCH, settings), **common)
+    graphs = merge_detailed(normal, detailed, xoff, zoff, seeds, common, log) if detailed else normal['graphs']
     if ladders:
         log(f'ladders: {len(ladders)}; links made {state.ladder_stats.get("linked", 0)} (counted per stage), ends in '
             f'two sectors {state.ladder_stats.get("split", 0)}')

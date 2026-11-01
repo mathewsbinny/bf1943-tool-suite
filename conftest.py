@@ -14,6 +14,7 @@ first, pytest's `pythonpath`) and both NavKit variants, so a test imports any su
 """
 import os
 import sys
+from typing import TYPE_CHECKING, cast
 
 sys.dont_write_bytecode = True
 import suitepath  # noqa: E402  (core: pyproject.toml [tool.pytest.ini_options] pythonpath)
@@ -21,8 +22,13 @@ import suitepath  # noqa: E402  (core: pyproject.toml [tool.pytest.ini_options] 
 suitepath.use(suitepath.NAVKIT_BE, suitepath.NAVKIT_LE, '.')
 import run_tests  # noqa: E402
 
+if TYPE_CHECKING:
+    import pathlib
 
-def pytest_addoption(parser):
+    import pytest
+
+
+def pytest_addoption(parser: 'pytest.Parser') -> None:
     group = parser.getgroup('bf1943-tool-suite')
     group.addoption('--tier', choices=run_tests.TIERS, default='quick',
                     help='the tests of this tier, as run_tests.py takes it (default quick)')
@@ -30,7 +36,7 @@ def pytest_addoption(parser):
                     help='a test that skipped, all of it or some checks, fails (run_tests.py --strict)')
 
 
-def pytest_ignore_collect(collection_path, config):
+def pytest_ignore_collect(collection_path: 'pathlib.Path', config: 'pytest.Config') -> bool | None:
     """Scripts are not collected (test_suite_tiers.py runs them); nor pytest-style files of another tier."""
     path = str(collection_path)
     name = os.path.basename(path)
@@ -39,4 +45,5 @@ def pytest_ignore_collect(collection_path, config):
     test = run_tests.function_test(path)
     if test is None:
         return True                                     # a script (or no test functions)
-    return True if test[1] not in run_tests.SELECT[config.getoption('--tier')] else None
+    tier = cast(str, config.getoption('--tier'))      # always set: it has a default
+    return True if test[1] not in run_tests.SELECT[tier] else None

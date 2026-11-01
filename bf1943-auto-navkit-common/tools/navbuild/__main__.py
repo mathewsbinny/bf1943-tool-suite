@@ -13,9 +13,9 @@ import navbuild  # noqa: E402
 
 
 def main(argv: list[str]) -> int:
-    args = [a for a in argv[1:] if not a.startswith('--')]
+    args = [arg for arg in argv[1:] if not arg.startswith('--')]
     opts = dict(zip(argv[1:], argv[2:]))
-    if any(a in ('-h', '--help') for a in argv[1:]):
+    if any(arg in ('-h', '--help') for arg in argv[1:]):
         print(navbuild.__doc__)
         return 0
     if len(args) < 5:

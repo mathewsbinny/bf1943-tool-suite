@@ -66,7 +66,8 @@ def main():
 
             def readonly(self, a):
                 return False
-        an = E.Analysis(Image(), [E.Function(F1, F1 + 4 * len(code), 'f1'), E.Function(F2, F2 + 4, 'f2')], {})
+        an = E.Analysis(Image(),  # pyright: ignore[reportArgumentType]  # a made-up image with the methods it uses
+                        [E.Function(F1, F1 + 4 * len(code), 'f1'), E.Function(F2, F2 + 4, 'f2')], {})
         an.run_function(an.starts[F1])
         kinds = [(kind, callee) for _, _, callee, kind, _ in an.edges]
         got = ('indirect_resolved', F2) in kinds

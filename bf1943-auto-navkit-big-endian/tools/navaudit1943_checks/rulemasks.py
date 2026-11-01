@@ -1,156 +1,189 @@
-"""navaudit1943_checks, check 7: where each rule changed the kept ground (the rule-off masks), near-misses, ladders."""
+"""navaudit1943_checks, check 7: where each rule changed the kept ground (the rule-off masks), near-misses, ladders.
+
+rules compares each grid's kept mask with every rule-off mask navaudit1943.py masks made (the surfaces each rule
+removed or added, clustered, with the required positions near them), lists the surfaces within NEAR (20 %) of each
+surface threshold (slope, headroom, water depth, terrain depth, step), and reports every ladder's ends and links.
+"""
 import json
 import math
 import os
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 
-import navaudit1943 as A  # noqa: E402
+import navaudit1943  # noqa: E402
 import soldier1943  # noqa: E402
 
 from .config import NEAR
 from .geometry import clusters_xz
 from .loading import sector_of
 
+if TYPE_CHECKING:
+    from .grids import Grid
+    from .loading import AuditContext
+    from .positions import CheckResult
+
+type FloatArray = npt.NDArray[np.floating]
+
+
+def _surface_xz(grid: 'Grid') -> tuple[npt.NDArray[np.int_], FloatArray, FloatArray]:
+    """Every surface's column, and the column's x and z."""
+    s = grid.s
+    col = grid.col_of()
+    return col, s.min_x + (col % s.nx) * s.pitch, s.min_z + (col // s.nx) * s.pitch
+
 
 # ------------------------------------------------------------------------------------------------ 7: rules
 
-def rules(C, positions):
-    out = {'objective floor': 'no such rule in the BF1943 pipeline: navbuild.ORDER_NODES adds nodes at AI order '
-                              'positions and BF1943 levels have none (AreaOrders absent); the spawn seeds '
-                              '(soldier_spawns.json) only seed the flood'}
-    req = np.array([r['position'] for r in positions], float) if positions else np.zeros((0, 3))
-    for _which, G in C['grids'].items():
-        s = G.s
-        col = G.col_of()
-        cx = s.min_x + (col % s.nx) * s.pitch
-        cz = s.min_z + (col // s.nx) * s.pitch
-        for v, kv in G.variants.items():
-            diff = np.nonzero(kv != G.keep)[0]
-            removed = diff[kv[diff] & ~G.keep[diff]]          # walkable without the rule: the rule removed them
-            added = diff[~kv[diff] & G.keep[diff]]            # walkable only with the rule: the rule added them
-            rec = {'removed': int(len(removed)), 'added': int(len(added))}
+def rules(ctx: 'AuditContext', positions: list['CheckResult']) -> dict[str, Any]:
+    """Per rule-off mask, the surfaces the rule removed and added; the near-misses per grid; the ladders."""
+    out: dict[str, Any] = {
+        'objective floor': 'no such rule in the BF1943 pipeline: navbuild.ORDER_NODES adds nodes at AI order '
+                           'positions and BF1943 levels have none (AreaOrders absent); the spawn seeds '
+                           '(soldier_spawns.json) only seed the flood'}
+    required = np.array([position['position'] for position in positions], float) if positions else np.zeros((0, 3))
+    for _which, grid in ctx['grids'].items():
+        s = grid.s
+        _col, cx, cz = _surface_xz(grid)
+        for variant, variant_keep in grid.variants.items():
+            diff = np.nonzero(variant_keep != grid.keep)[0]
+            removed = diff[variant_keep[diff] & ~grid.keep[diff]]   # walkable without the rule: the rule removed them
+            added = diff[~variant_keep[diff] & grid.keep[diff]]     # walkable only with the rule: the rule added them
+            record: dict[str, Any] = {'removed': int(len(removed)), 'added': int(len(added))}
             for name, sel in (('removed', removed), ('added', added)):
-                cl = clusters_xz(cx[sel], cz[sel], top=12)
-                for c_ in cl:
-                    x, z = c_['centre']
-                    if len(req):
-                        d = np.hypot(req[:, 0] - x, req[:, 2] - z)
-                        k = int(np.argmin(d))
-                        c_['nearest_required'] = f"{positions[k]['kind']}: {positions[k]['name']} ({d[k]:.0f} m)"
-                rec[name + ' clusters'] = cl
-                if len(req) and len(sel):
+                clusters = clusters_xz(cx[sel], cz[sel], top=12)
+                for cluster in clusters:
+                    x, z = cluster['centre']
+                    if len(required):
+                        distance = np.hypot(required[:, 0] - x, required[:, 2] - z)
+                        k = int(np.argmin(distance))
+                        nearest = positions[k]
+                        cluster['nearest_required'] = f"{nearest['kind']}: {nearest['name']} ({distance[k]:.0f} m)"
+                record[name + ' clusters'] = clusters
+                if len(required) and len(sel):
                     near = []
-                    for r in positions:
-                        x, y, z = r['position']
-                        m_ = (np.abs(cx[sel] - x) <= 20) & (np.abs(cz[sel] - z) <= 20) & (np.abs(s.y[sel] - y) <= 5)
-                        if m_.any():
-                            near.append(f"{r['kind']}: {r['name']}: {int(m_.sum())} surfaces within 20 m")
-                    rec[name + ' near required positions'] = near
-            out[f'{v} ({G.label})'] = rec
+                    for position in positions:
+                        x, y, z = position['position']
+                        within = ((np.abs(cx[sel] - x) <= 20) & (np.abs(cz[sel] - z) <= 20)
+                                  & (np.abs(s.y[sel] - y) <= 5))
+                        if within.any():
+                            near.append(f"{position['kind']}: {position['name']}: {int(within.sum())} surfaces "
+                                        f"within 20 m")
+                    record[name + ' near required positions'] = near
+            out[f'{variant} ({grid.label})'] = record
     # near-misses: within 20 % of each threshold, on surfaces that pass every other surface test
-    nm = {}
-    for _which, G in C['grids'].items():
-        s = G.s
-        col = G.col_of()
-        cx = s.min_x + (col % s.nx) * s.pitch
-        cz = s.min_z + (col // s.nx) * s.pitch
+    near_misses = {}
+    for _which, grid in ctx['grids'].items():
+        s = grid.s
+        col, cx, cz = _surface_xz(grid)
         y = s.y.astype(float)
         clear = (s.flags & 1) == 0
-        ang = np.degrees(np.arccos(np.clip(s.normal[:, 1], -1, 1)))
+        slope_deg = np.degrees(np.arccos(np.clip(s.normal[:, 1], -1, 1)))
         # clearance: the next surface up in the column (stored top down)
         above = np.full(len(y), np.inf)
         first = np.zeros(len(y), bool)
         first[s.start[:-1][np.diff(s.start) > 0]] = True
         above[1:] = np.where(first[1:], np.inf, y[:-1])
-        clr = above - y
-        depth = np.where(np.isfinite(G.top[col]), G.top[col] - y, -np.inf)
-        rec = {}
-        lo_, hi_ = soldier1943.SLOPE_MAX * (1 - NEAR), soldier1943.SLOPE_MAX * (1 + NEAR)
-        sel = np.nonzero(clear & (ang >= lo_) & (ang <= hi_))[0]
-        rec[f'slope {lo_:.0f}-{hi_:.0f} deg (limit {soldier1943.SLOPE_MAX:g})'] = _near(G, sel, ang[sel] <= soldier1943.SLOPE_MAX + 0.6, cx, cz)
-        H = soldier1943.HEIGHT
-        sel = np.nonzero(clear & (clr >= H * (1 - NEAR)) & (clr <= H * (1 + NEAR)))[0]
-        rec[f'headroom {H * (1 - NEAR):.2f}-{H * (1 + NEAR):.2f} m (limit {H:g})'] = _near(G, sel, clr[sel] >= H, cx, cz)
-        W = soldier1943.WATER_DEPTH
-        sel = np.nonzero(clear & (depth >= W * (1 - NEAR)) & (depth <= W * (1 + NEAR)))[0]
-        rec[f'water depth {W * (1 - NEAR):.2f}-{W * (1 + NEAR):.2f} m (limit {W:g})'] = _near(G, sel, depth[sel] <= W, cx, cz)
-        t = G.hf.height(cx, cz)
-        und = t - y
-        sel = np.nonzero(clear & (und >= 0.5 * (1 - NEAR)) & (und <= 0.5 * (1 + NEAR)))[0]
-        rec['under the terrain 0.40-0.60 m (limit 0.5)'] = _near(G, sel, und[sel] <= 0.5, cx, cz)
-        rec['step (sills, stairs)'] = step_near(G)
-        nm[G.label] = rec
-    out['near-misses'] = nm
-    out['ladders'] = ladder_report(C)
+        clearance = above - y
+        depth = np.where(np.isfinite(grid.top[col]), grid.top[col] - y, -np.inf)
+        record = {}
+        slope_max = soldier1943.SLOPE_MAX
+        lo_, hi_ = slope_max * (1 - NEAR), slope_max * (1 + NEAR)
+        sel = np.nonzero(clear & (slope_deg >= lo_) & (slope_deg <= hi_))[0]
+        record[f'slope {lo_:.0f}-{hi_:.0f} deg (limit {slope_max:g})'] = \
+            _near(grid, sel, slope_deg[sel] <= slope_max + 0.6, cx, cz)
+        height = soldier1943.HEIGHT
+        sel = np.nonzero(clear & (clearance >= height * (1 - NEAR)) & (clearance <= height * (1 + NEAR)))[0]
+        record[f'headroom {height * (1 - NEAR):.2f}-{height * (1 + NEAR):.2f} m (limit {height:g})'] = \
+            _near(grid, sel, clearance[sel] >= height, cx, cz)
+        water_depth = soldier1943.WATER_DEPTH
+        sel = np.nonzero(clear & (depth >= water_depth * (1 - NEAR)) & (depth <= water_depth * (1 + NEAR)))[0]
+        water_band = f'{water_depth * (1 - NEAR):.2f}-{water_depth * (1 + NEAR):.2f}'
+        record[f'water depth {water_band} m (limit {water_depth:g})'] = \
+            _near(grid, sel, depth[sel] <= water_depth, cx, cz)
+        terrain_y = grid.hf.height(cx, cz)
+        under = terrain_y - y
+        sel = np.nonzero(clear & (under >= 0.5 * (1 - NEAR)) & (under <= 0.5 * (1 + NEAR)))[0]
+        record['under the terrain 0.40-0.60 m (limit 0.5)'] = _near(grid, sel, under[sel] <= 0.5, cx, cz)
+        record['step (sills, stairs)'] = step_near(grid)
+        near_misses[grid.label] = record
+    out['near-misses'] = near_misses
+    out['ladders'] = ladder_report(ctx)
     return out
 
 
-def _near(G, sel, inside_limit, cx, cz):
-    k = sel[inside_limit]
-    o = sel[~inside_limit]
-    return {'inside the limit': int(len(k)), 'kept of those': int(G.keep[k].sum()),
-            'just past the limit': int(len(o)), 'past the limit, clusters': clusters_xz(cx[o], cz[o], top=8)}
+def _near(grid: 'Grid', sel: npt.NDArray[np.intp], inside_limit: npt.NDArray[np.bool], cx: FloatArray,
+          cz: FloatArray) -> dict[str, Any]:
+    """One near-miss band (sel): the surfaces inside the limit and how many were kept; those just past it, clustered."""
+    inside = sel[inside_limit]
+    past = sel[~inside_limit]
+    return {'inside the limit': int(len(inside)), 'kept of those': int(grid.keep[inside].sum()),
+            'just past the limit': int(len(past)), 'past the limit, clusters': clusters_xz(cx[past], cz[past], top=8)}
 
 
-def step_near(G):
+def step_near(grid: 'Grid') -> dict[str, Any]:
     """Neighbouring surfaces (8 directions) on one floor whose height difference is within 20 % of the step: kept
     ground beside ground the step rule left out (dy just over STEP) and kept pairs just under it."""
-    s = G.s
+    s = grid.s
     nx, nz = s.nx, s.nz
-    STEP = soldier1943.STEP
-    lo, hi = STEP * (1 - NEAR), STEP * (1 + NEAR)
-    col = G.col_of()
-    kept = np.nonzero(G.keep)[0]
+    step = soldier1943.STEP
+    lo, hi = step * (1 - NEAR), step * (1 + NEAR)
+    col = grid.col_of()
+    kept = np.nonzero(grid.keep)[0]
     clear = (s.flags & 1) == 0
     slope_ok = s.normal[:, 1] >= math.cos(math.radians(soldier1943.SLOPE_MAX)) - 0.01
     over, under = [], 0
-    ky = s.y[kept]
-    kc = col[kept]
+    kept_y = s.y[kept]
+    kept_col = col[kept]
     for di, dj in ((1, 0), (0, 1), (1, 1), (1, -1), (-1, 0), (0, -1), (-1, -1), (-1, 1)):
-        i = kc % nx + di
-        j = kc // nx + dj
+        i = kept_col % nx + di
+        j = kept_col // nx + dj
         ok = (i >= 0) & (i < nx) & (j >= 0) & (j < nz)
-        nc = np.where(ok, j * nx + i, 0)
-        st, en = s.start[nc], s.start[nc + 1]
-        for q in range(int((en - st).max()) if len(st) else 0):
-            n = st + q
-            v = ok & (n < en)
-            n = np.where(v, n, 0)
-            dy = s.y[n] - ky
-            m_ = v & (np.abs(dy) >= lo) & (np.abs(dy) <= hi)
-            past = m_ & (np.abs(dy) > STEP) & ~G.keep[n] & clear[n] & slope_ok[n]
+        neighbour = np.where(ok, j * nx + i, 0)
+        first, end = s.start[neighbour], s.start[neighbour + 1]
+        # the neighbour columns' surfaces, the q-th of each at a time
+        for q in range(int((end - first).max()) if len(first) else 0):
+            n = first + q
+            valid = ok & (n < end)
+            n = np.where(valid, n, 0)
+            dy = s.y[n] - kept_y
+            in_band = valid & (np.abs(dy) >= lo) & (np.abs(dy) <= hi)
+            past = in_band & (np.abs(dy) > step) & ~grid.keep[n] & clear[n] & slope_ok[n]
             over.append(n[past])
-            under += int((m_ & (np.abs(dy) <= STEP) & G.keep[n]).sum())
+            under += int((in_band & (np.abs(dy) <= step) & grid.keep[n]).sum())
     over = np.unique(np.concatenate(over)) if over else np.zeros(0, int)
     cx = s.min_x + (col[over] % nx) * s.pitch
     cz = s.min_z + (col[over] // nx) * s.pitch
-    return {'kept pairs stepping %.2f-%.2f m' % (lo, STEP): under // 2,
-            'left out, %.2f-%.2f m above or below kept ground' % (STEP, hi): int(len(over)),
+    return {'kept pairs stepping %.2f-%.2f m' % (lo, step): under // 2,
+            'left out, %.2f-%.2f m above or below kept ground' % (step, hi): int(len(over)),
             'left out, clusters': clusters_xz(cx, cz, top=12)}
 
 
-def ladder_report(C):
-    nv = C['nav']
-    nav = nv.nav
+def ladder_report(ctx: 'AuditContext') -> list[dict[str, Any]]:
+    """Every ladder of ladders.json: the areas at its foot and top, the ladder links near it, and near-misses."""
+    nav_index = ctx['nav']
+    nav = nav_index.nav
     out = []
-    lad = json.load(open(os.path.join(C['p']['objects'], 'ladders.json'), encoding='utf-8'))
-    le = nav.ladder_edge if nav.ladder_edge is not None else np.zeros(len(nav.edges), bool)
-    E = nav.edges[le]
-    for L in lad:
-        lo, hi = L['lo'], L['hi']
+    ladders = json.load(open(os.path.join(ctx['p']['objects'], 'ladders.json'), encoding='utf-8'))
+    is_ladder_edge = nav.ladder_edge if nav.ladder_edge is not None else np.zeros(len(nav.edges), bool)
+    ladder_edges = nav.edges[is_ladder_edge]
+    for ladder in ladders:
+        lo, hi = ladder['lo'], ladder['hi']
         cx, cz = (lo[0] + hi[0]) / 2, (lo[2] + hi[2]) / 2
         foot, top = lo[1], hi[1]
-        sf, af = nv.locate(cx, cz, foot, r=3.0, dy=1.0)
-        st_, at_ = nv.locate(cx, cz, top, r=3.0, dy=1.5)
+        foot_same, _foot_any = nav_index.locate(cx, cz, foot, r=3.0, dy=1.0)
+        top_same, _top_any = nav_index.locate(cx, cz, top, r=3.0, dy=1.5)
         links = 0
-        for a, b in E:
+        for a, b in ladder_edges:
             pa, pb = nav.node_pos[a], nav.node_pos[b]
             if min(math.hypot(pa[0] - cx, pa[2] - cz), math.hypot(pb[0] - cx, pb[2] - cz)) <= 4.0:
                 links += 1
-        sec = {sector_of(C, lo[0], lo[2]), sector_of(C, hi[0], hi[2])}
-        out.append(dict(ladder=L['bp'].split('/')[-1], centre=[round(cx, 1), round(foot, 1), round(cz, 1)], top=round(top, 1),
-                        foot_area=nv.area_info(sf, foot), top_area=nv.area_info(st_, top), ladder_edges_near=links,
-                        ends_in_two_sectors=len(sec) > 1,
-                        near_miss=bool(sf and A.OBJECTIVE_REACH * 0.6 <= sf[0] <= 1.8) or bool(st_ and 1.2 <= st_[0] <= 1.8)))
+        sectors = {sector_of(ctx, lo[0], lo[2]), sector_of(ctx, hi[0], hi[2])}
+        foot_near_miss = bool(foot_same and navaudit1943.OBJECTIVE_REACH * 0.6 <= foot_same[0] <= 1.8)
+        top_near_miss = bool(top_same and 1.2 <= top_same[0] <= 1.8)
+        out.append(dict(ladder=ladder['bp'].split('/')[-1], centre=[round(cx, 1), round(foot, 1), round(cz, 1)],
+                        top=round(top, 1), foot_area=nav_index.area_info(foot_same, foot),
+                        top_area=nav_index.area_info(top_same, top), ladder_edges_near=links,
+                        ends_in_two_sectors=len(sectors) > 1, near_miss=foot_near_miss or top_near_miss))
     return out

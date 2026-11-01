@@ -75,18 +75,18 @@ def stage(samples_path: str, high_path: str | None, xoff: int, zoff: int, tris_p
             edge = (X == min_x_sector, Y == min_z_sector)
         else:
             edge = ((X - 1, Y) not in have, (X, Y - 1) not in have)
-        start = tuple(0 if EDGE_SECTOR_TILES and e else -1 for e in edge)
+        start = tuple(0 if EDGE_SECTOR_TILES and at_edge else -1 for at_edge in edge)
         win = sector_window(X, Y, level, state)
         areas = build_areas(level, gi0, gj0, start, *tiling(((X & 0xFF) << 8) | (Y & 0xFF), grid), win=win)
         # order: tiles column-major, then layer = index within tile
-        areas.sort(key=lambda a: (a['tile'][0], a['tile'][1], min(level.y[c[2]] for c in a['cells'])))
+        areas.sort(key=lambda area: (area['tile'][0], area['tile'][1], min(level.y[c[2]] for c in area['cells'])))
         per_tile = defaultdict(int)
-        for a in areas:
-            a['layer'] = per_tile[a['tile']]
-            per_tile[a['tile']] += 1
-        area_of = {c[2]: ai for ai, a in enumerate(areas) for c in a['cells']}
+        for area in areas:
+            area['layer'] = per_tile[area['tile']]
+            per_tile[area['tile']] += 1
+        area_of = {c[2]: ai for ai, area in enumerate(areas) for c in area['cells']}
         info[(X, Y)] = {'areas': areas, 'area_of': area_of, 'origin': (gi0, gj0, ox, oz), 'start': start, 'win': win}
-    log(f'{sum(len(v["areas"]) for v in info.values())} areas ({time.time() - t0:.0f} s)')
+    log(f'{sum(len(sector_info["areas"]) for sector_info in info.values())} areas ({time.time() - t0:.0f} s)')
 
     # Graph: border nodes shared between sector pairs (global ids), then inner nodes.
     next_id = [id_start]
@@ -98,8 +98,8 @@ def stage(samples_path: str, high_path: str | None, xoff: int, zoff: int, tris_p
         return next_id[0]
 
     n_side, yoff = grid.sector_samples, settings.y_offset
-    for (X, Y), inf in info.items():
-        gi0, gj0, ox, oz = inf['origin']
+    for (X, Y), sector_info in info.items():
+        gi0, gj0, ox, oz = sector_info['origin']
         for (dX, dY), line in (((1, 0), n_side + 1), ((0, 1), n_side + 1)):
             other = (X + dX, Y + dY)
             if other not in info:
@@ -110,35 +110,36 @@ def stage(samples_path: str, high_path: str | None, xoff: int, zoff: int, tris_p
                 runs, active = [], []
                 for t in grid.window:
                     i, j = (line, t) if dX else (t, line)
-                    nxt = []
+                    still_active = []
                     for k in level.surfaces(gi0 + i, gj0 + j):
-                        for r in active:
-                            if r[-1][0] == t - 1 and level.connected(r[-1][1], k, 0 if dX else 1, 1 if dX else 0):
-                                r.append((t, k))
-                                nxt.append(r)
-                                active.remove(r)
+                        for line_run in active:
+                            if line_run[-1][0] == t - 1 and level.connected(line_run[-1][1], k, 0 if dX else 1,
+                                                                            1 if dX else 0):
+                                line_run.append((t, k))
+                                still_active.append(line_run)
+                                active.remove(line_run)
                                 break
                         else:
-                            r = [(t, k)]
-                            runs.append(r)
-                            nxt.append(r)
-                    active = nxt
+                            line_run = [(t, k)]
+                            runs.append(line_run)
+                            still_active.append(line_run)
+                    active = still_active
                 return runs
             line_sets = [(line, line_runs(line))]
             if settings.border_seam_line:
                 # the seam itself (local sample n_side, both windows hold it): its runs of ground that do not go on
                 # to the border line - a piece that reaches the seam but stops short of the line one sample beyond
                 # got no shared node and was not joined across (Coral Sea's three seam breaks, 2026-10-26)
-                on_line = {k for r in line_sets[0][1] for _t, k in r}
-                seam = [r for r in line_runs(n_side)
+                on_line = {k for line_run in line_sets[0][1] for _t, k in line_run}
+                seam = [line_run for line_run in line_runs(n_side)
                         if not any(level.neighbour(k, gi0 + (n_side if dX else t), gj0 + (t if dX else n_side),
-                                                   dX, dY) in on_line for t, k in r)]
+                                                   dX, dY) in on_line for t, k in line_run)]
                 line_sets.append((n_side, seam))
             for line, runs in line_sets:
                 for run in runs:
-                    n = max(1, int(math.ceil(len(run) * pitch / BORDER_NODE_SPACING)))
-                    for q in range(n):
-                        t, k = run[int((q + 0.5) * len(run) / n)]
+                    n_nodes = max(1, int(math.ceil(len(run) * pitch / BORDER_NODE_SPACING)))
+                    for node_index in range(n_nodes):
+                        t, k = run[int((node_index + 0.5) * len(run) / n_nodes)]
                         i, j = (line, t) if dX else (t, line)
                         pos = (ox + i * pitch, float(level.y[k]) + yoff, oz + j * pitch)
                         if DEDUP_GRAPH_NODES and k in border_at:
@@ -147,7 +148,7 @@ def stage(samples_path: str, high_path: str | None, xoff: int, zoff: int, tris_p
                             # on one spot were joined by zero-length edges (11 of 13 campaign levels, 2026-10-20)
                             nid, pos = border_at[k]
                             for sec in ((X, Y), other):
-                                if not any(b[0] == nid for b in border_nodes[sec]):
+                                if not any(node[0] == nid for node in border_nodes[sec]):
                                     border_nodes[sec].append((nid, pos, k))
                             continue
                         nid = 0x80000000 | new_id()
@@ -168,84 +169,89 @@ def stage(samples_path: str, high_path: str | None, xoff: int, zoff: int, tris_p
             # the nearest - a 3 x 3 search (0.2 m at pitch 0.2) left 74 ONS_MP_002 seam nodes without ground and put
             # others on specks, and the detailed core lost its links to the normal sectors (connectivity 91.6 -> 60.9)
             gi, gj = int(round((pos[0] - s.min_x) / pitch)), int(round((pos[2] - s.min_z) / pitch))
-            r = int(math.ceil(CARRY_RADIUS / pitch))
-            cand = []
-            for di in range(-r, r + 1):
-                for dj in range(-r, r + 1):
-                    dxz = math.hypot(di, dj) * pitch
-                    if dxz > CARRY_RADIUS:
+            reach = int(math.ceil(CARRY_RADIUS / pitch))
+            candidates = []
+            for di in range(-reach, reach + 1):
+                for dj in range(-reach, reach + 1):
+                    flat_dist = math.hypot(di, dj) * pitch
+                    if flat_dist > CARRY_RADIUS:
                         continue
                     for k in level.surfaces(gi + di, gj + dj):
                         if k in own and abs(level.y[k] + yoff - pos[1]) <= 0.6:
                             size = len(info[sec]['areas'][own[k]]['cells'])
-                            cand.append((size < 25, dxz, k))
-            if not cand:
+                            candidates.append((size < 25, flat_dist, k))
+            if not candidates:
                 dropped.add(nid)
                 continue
-            k = min(cand)[2]
+            k = min(candidates)[2]
             border_nodes[sec].append((nid, pos, k))
 
     # boundary edges of every sector, then the one-way portal pieces decided level-wide
     edge_sets = {}
-    for (X, Y), inf in sorted(info.items()):
-        gi0, gj0, ox, oz = inf['origin']
-        edge_sets[(X, Y)] = trace_edges(level, inf['areas'], inf['area_of'], gi0, gj0, inf['win'])
-    n_cand = sum(len(v[1]) for v in edge_sets.values())
+    for (X, Y), sector_info in sorted(info.items()):
+        gi0, gj0, ox, oz = sector_info['origin']
+        edge_sets[(X, Y)] = trace_edges(level, sector_info['areas'], sector_info['area_of'], gi0, gj0,
+                                        sector_info['win'])
+    n_cand = sum(len(edge_set[1]) for edge_set in edge_sets.values())
     if ONE_WAY_PORTALS == 'restore':
         owners = defaultdict(list)
-        for sec, inf in info.items():
-            for k, ai in inf['area_of'].items():
+        for sec, sector_info in info.items():
+            for k, ai in sector_info['area_of'].items():
                 owners[k].append((sec, ai))
-        shared = [(o[0], x) for o in owners.values() if len(o) > 1 for x in o[1:]]
+        shared = [(owned_by[0], also_owned_by)
+                  for owned_by in owners.values() if len(owned_by) > 1 for also_owned_by in owned_by[1:]]
         keep = restore_one_way(edge_sets, shared)
     else:
-        keep = {sec: set(range(len(v[1]))) if ONE_WAY_PORTALS == 'keep' else set() for sec, v in edge_sets.items()}
+        keep = {sec: set(range(len(edge_set[1]))) if ONE_WAY_PORTALS == 'keep' else set()
+                for sec, edge_set in edge_sets.items()}
     for sec, (per_area, one_way) in edge_sets.items():
         drop_one_way(per_area, one_way, keep.get(sec, set()))
-    log(f'one-way portal pieces: {n_cand}, kept one-way {sum(len(v) for v in keep.values())} ({ONE_WAY_PORTALS})')
+    log(f'one-way portal pieces: {n_cand}, kept one-way {sum(len(kept) for kept in keep.values())} ({ONE_WAY_PORTALS})')
     graphs, meshes = [], {}
-    for (X, Y), inf in sorted(info.items()):
-        gi0, gj0, ox, oz = inf['origin']
-        areas, area_of = inf['areas'], inf['area_of']
+    for (X, Y), sector_info in sorted(info.items()):
+        gi0, gj0, ox, oz = sector_info['origin']
+        areas, area_of = sector_info['areas'], sector_info['area_of']
         traced = trace_emit(level, areas, edge_sets[(X, Y)][0], gi0, gj0, ox, oz)
         sid = ((X & 0xFF) << 8) | (Y & 0xFF)
         mesh_areas = []
         ntiles = tiling(sid, grid)[1]
         tiles = [[] for _ in range(ntiles * ntiles)]
-        for ai, (a, (portals, borders, outline)) in enumerate(zip(areas, traced)):
-            ys = cast('list[float]', [level.y[c[2]] for c in a['cells']])   # numpy float64 scalars
+        for ai, (area, (portals, borders, outline)) in enumerate(zip(areas, traced)):
+            ys = cast('list[float]', [level.y[c[2]] for c in area['cells']])   # numpy float64 scalars
             # DICE's area height range: from its lowest ground to its highest ground + 1.52 m (all normal-pitch
             # areas of sp_004_b: median +0.000 / +1.520; NavKit had -0.95 / +1.55, a metre of extra room below
             # each area, so a lower floor's range reached the deck above it - 2026-10-19)
             lo, hi = min(ys) + AREA_Y_MIN, max(ys) + AREA_Y_MAX
-            mesh_areas.append(kymesh.Area(sid, a['tile'][0], a['tile'][1], a['layer'], RADIUS, pitch, hi, lo,
-                                          portals, [b[0] for b in borders], [], outline, []))
-            a['borders'] = borders
-            tiles[a['tile'][0] * ntiles + a['tile'][1]].append(kymesh.TileItem(ai, lo, hi))
+            mesh_areas.append(kymesh.Area(sid, area['tile'][0], area['tile'][1], area['layer'], RADIUS, pitch, hi, lo,
+                                          portals, [border[0] for border in borders], [], outline, []))
+            area['borders'] = borders
+            tiles[area['tile'][0] * ntiles + area['tile'][1]].append(kymesh.TileItem(ai, lo, hi))
         mesh_links = sector_links(X, Y, areas, mesh_areas, same_grid_resolver(level, info, X, Y))
         # the runtime's tile grid starts at the rectangle's minimum (DICE: tile lines 39.6 m past it on 3,748 sector
         # axes) - so an edge sector, whose tiles start at its own edge, starts its rectangle there too (DICE 0x101:
         # -800.0 instead of -800.8). The maximum side keeps the 1.1-pitch margin (DICE drops it at the grid's maximum).
-        sx, sz = inf['start']
-        rect = (ox + sx * pitch, ox + 100 + 1.1 * pitch, oz + sz * pitch, oz + 100 + 1.1 * pitch)
+        start_i, start_j = sector_info['start']
+        rect = (ox + start_i * pitch, ox + 100 + 1.1 * pitch, oz + start_j * pitch, oz + 100 + 1.1 * pitch)
         mesh = kymesh.Mesh(2, 0, 0, sid, grid.resolution, pitch, rect, ntiles, ntiles, RADIUS, tiles, mesh_areas,
                            mesh_links, b'\0' * 4)
         meshes[(X, Y)] = mesh
-        orders = [p for p in (order_points or ()) if ox <= p[0] < ox + 100 and oz <= p[2] < oz + 100]
-        lads = [(f_, t_) for f_, t_ in ladder_pairs if f_ in area_of and t_ in area_of]
-        ls = state.ladder_stats
-        ls['linked'] = ls.get('linked', 0) + len(lads)
-        ls['split'] = ls.get('split', 0) + sum(1 for f_, t_ in ladder_pairs if (f_ in area_of) != (t_ in area_of))
-        join = JoinScope((X, Y), set(info), inf['win'], state.detailed_sectors)
+        orders = [order for order in (order_points or ()) if ox <= order[0] < ox + 100 and oz <= order[2] < oz + 100]
+        sector_ladders = [(foot, top) for foot, top in ladder_pairs if foot in area_of and top in area_of]
+        ladder_stats = state.ladder_stats
+        ladder_stats['linked'] = ladder_stats.get('linked', 0) + len(sector_ladders)
+        split = sum(1 for foot, top in ladder_pairs if (foot in area_of) != (top in area_of))
+        ladder_stats['split'] = ladder_stats.get('split', 0) + split
+        join = JoinScope((X, Y), set(info), sector_info['win'], state.detailed_sectors)
         pts, pairs = build_graph(level, areas, area_of, traced, border_nodes[(X, Y)], gi0, gj0, ox, oz, new_id, orders,
-                                 lads, join, state)
-        ys = [a.min_y for a in mesh_areas] + [a.max_y for a in mesh_areas]
-        bounds_ = (rect[0], rect[1], min(ys), max(ys), rect[2], rect[3])
-        graphs.append((sid, bounds_, mesh, pts, pairs, (ox, oz)))
+                                 sector_ladders, join, state)
+        ys = [mesh_area.min_y for mesh_area in mesh_areas] + [mesh_area.max_y for mesh_area in mesh_areas]
+        sector_bounds = (rect[0], rect[1], min(ys), max(ys), rect[2], rect[3])
+        graphs.append((sid, sector_bounds, mesh, pts, pairs, (ox, oz)))
         # the areas' own cells for the sidecar file (write_file): global cell indices at this pitch, ground heights
         base_i, base_j = int(round(ox / pitch)), int(round(oz / pitch))
-        state.area_cells[sid] = [(np.array([base_i + c[0] for c in a['cells']], np.int32),
-                                  np.array([base_j + c[1] for c in a['cells']], np.int32),
-                                  np.array([level.y[c[2]] for c in a['cells']], np.float32), pitch) for a in areas]
+        state.area_cells[sid] = [(np.array([base_i + c[0] for c in area['cells']], np.int32),
+                                  np.array([base_j + c[1] for c in area['cells']], np.int32),
+                                  np.array([level.y[c[2]] for c in area['cells']], np.float32), pitch)
+                                 for area in areas]
     return {'level': level, 'info': info, 'graphs': graphs, 'border_nodes': border_nodes, 'next_id': next_id[0],
             'dropped': dropped, 'pitch': pitch, 'meshes': meshes, 'sectors': set(info)}

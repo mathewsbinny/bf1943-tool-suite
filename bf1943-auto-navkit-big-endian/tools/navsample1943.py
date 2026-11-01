@@ -29,8 +29,11 @@ import os
 import struct
 import sys
 import time
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -39,6 +42,15 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import suitepath
     suitepath.use(suitepath.NAVKIT_BE)
 from bfbc2core import terrain  # noqa: E402
+
+if TYPE_CHECKING:
+    from bfbc2core.terrain import Heightfield
+
+type Log = Callable[[str], object]
+type FloatArray = npt.NDArray[np.float64]
+type BoolArray = npt.NDArray[np.bool]
+type Box = tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]     # (min (x, z), max (x, z))
+type Sectors = tuple[tuple[int, int], Sequence[tuple[int, int]]]         # ((xoff, zoff), [(X, Z)])
 
 HEADER = struct.Struct('<4sI3f2i6fI')
 BLOCKED = 1
@@ -51,36 +63,38 @@ UNDERGROUND = 0.5                # a surface this far under the terrain is burie
                                  # towers stand 3.9 m deep), not floor; the margin is for the heightfield's own error
 
 
-def normals(T):
-    n = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
-    length = np.linalg.norm(n, axis=1, keepdims=True)
-    n = n / np.maximum(length, 1e-12)
-    flip = n[:, 1] < 0                       # both windings occur: a floor is the side facing up
-    n[flip] *= -1
-    return n.astype(np.float32), length[:, 0] > 1e-9
+def normals(tris: npt.NDArray[np.floating]) -> tuple[npt.NDArray[np.float32], BoolArray]:
+    """Unit normals of triangles (N, 3, 3), each turned to face up, and whether each triangle has an area."""
+    normal = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    length = np.linalg.norm(normal, axis=1, keepdims=True)
+    normal = normal / np.maximum(length, 1e-12)
+    flip = normal[:, 1] < 0                  # both windings occur: a floor is the side facing up
+    normal[flip] *= -1
+    return normal.astype(np.float32), length[:, 0] > 1e-9
 
 
-def tile_bins(T, x0, z0, pitch, ntx, ntz, pad):
+def tile_bins(tris: npt.NDArray[np.floating], x0: float, z0: float, pitch: float, ntx: int, ntz: int,
+              pad: float) -> dict[int, npt.NDArray[np.intp]]:
     """{tile index: triangle indices} for every tile a triangle's bounding box (grown by pad) touches."""
-    lo, hi = T[:, :, [0, 2]].min(1) - pad, T[:, :, [0, 2]].max(1) + pad
+    lo, hi = tris[:, :, [0, 2]].min(1) - pad, tris[:, :, [0, 2]].max(1) + pad
     size = TILE * pitch
-    t0 = np.floor((lo - [x0, z0]) / size).astype(np.int64)
-    t1 = np.floor((hi - [x0, z0]) / size).astype(np.int64)
-    t0 = np.clip(t0, 0, [ntx - 1, ntz - 1])
-    t1 = np.clip(t1, 0, [ntx - 1, ntz - 1])
+    tile_lo = np.floor((lo - [x0, z0]) / size).astype(np.int64)        # each triangle's first and last tile (x, z)
+    tile_hi = np.floor((hi - [x0, z0]) / size).astype(np.int64)
+    tile_lo = np.clip(tile_lo, 0, [ntx - 1, ntz - 1])
+    tile_hi = np.clip(tile_hi, 0, [ntx - 1, ntz - 1])
     keep = (hi[:, 0] >= x0) & (hi[:, 1] >= z0) & (lo[:, 0] <= x0 + ntx * size) & (lo[:, 1] <= z0 + ntz * size)
-    bins = {}
+    bins: dict[int, list[npt.NDArray[np.intp]]] = {}
     idx = np.nonzero(keep)[0]
-    span = (t1[idx, 0] - t0[idx, 0] + 1) * (t1[idx, 1] - t0[idx, 1] + 1)
+    span = (tile_hi[idx, 0] - tile_lo[idx, 0] + 1) * (tile_hi[idx, 1] - tile_lo[idx, 1] + 1)
     one = idx[span == 1]                     # most triangles touch one tile: grouped in one go
-    key = t0[one, 1] * ntx + t0[one, 0]
+    key = tile_lo[one, 1] * ntx + tile_lo[one, 0]
     order = np.argsort(key, kind='stable')
     keys, starts = np.unique(key[order], return_index=True)
     for k, group in zip(keys, np.split(one[order], starts[1:])):
         bins.setdefault(int(k), []).append(group)
     for i in idx[span > 1]:                  # the rest, tile by tile
-        for tz in range(t0[i, 1], t1[i, 1] + 1):
-            for tx in range(t0[i, 0], t1[i, 0] + 1):
+        for tz in range(tile_lo[i, 1], tile_hi[i, 1] + 1):
+            for tx in range(tile_lo[i, 0], tile_hi[i, 0] + 1):
                 bins.setdefault(int(tz * ntx + tx), []).append(np.array([i]))
     return {t: np.concatenate(v) for t, v in bins.items()}
 
@@ -89,14 +103,15 @@ FLAT_FROM_ABOVE = 1e-6           # a triangle whose sides meet at under about 0.
                                  # angle) is a line there: a vertical wall
 
 
-def inside(T2, px, pz):
+def inside(tris_xz: npt.NDArray[np.floating], px: npt.ArrayLike, pz: npt.ArrayLike
+           ) -> tuple[FloatArray, FloatArray, FloatArray, BoolArray]:
     """Barycentric coordinates (u, v, w) of points (P,) in triangles (N, 3, 2) -> (N, P) each, and the inside mask.
     A triangle that is a line seen from above (a vertical wall) contains no point: its edges still count in dist2d.
     That is judged relative to its size, in float64: float32 rounding at level coordinates leaves such a wall's
     determinant far above any fixed epsilon, and the coordinates then put far-away points inside it."""
-    T2 = T2.astype(np.float64)
+    tris_xz = tris_xz.astype(np.float64)
     # the corners a, b, c and the points p; the usual dot-product form of the barycentric coordinates
-    a, b, c = T2[:, 0, None, :], T2[:, 1, None, :], T2[:, 2, None, :]
+    a, b, c = tris_xz[:, 0, None, :], tris_xz[:, 1, None, :], tris_xz[:, 2, None, :]
     p = np.stack([px, pz], -1).astype(np.float64)[None]
     v0, v1, v2 = b - a, c - a, p - a
     d00 = (v0 * v0).sum(-1)
@@ -112,25 +127,26 @@ def inside(T2, px, pz):
     return u, v, w, (u >= -1e-6) & (v >= -1e-6) & (w >= -1e-6)
 
 
-def dist2d(T2, px, pz):
+def dist2d(tris_xz: npt.NDArray[np.floating], px: npt.ArrayLike, pz: npt.ArrayLike) -> FloatArray:
     """Distance from points (P,) to triangles (N, 3, 2) in the horizontal plane -> (N, P)."""
-    _, _, _, ins = inside(T2, px, pz)
+    _, _, _, ins = inside(tris_xz, px, pz)
     p = np.stack([px, pz], -1)[None]
     best = None
     for k in range(3):
-        a, b = T2[:, k, None, :], T2[:, (k + 1) % 3, None, :]
+        # edge k from corner a to corner b; t: the nearest point's position along it (0 at a, 1 at b)
+        a, b = tris_xz[:, k, None, :], tris_xz[:, (k + 1) % 3, None, :]
         ab = b - a
         t = np.clip(((p - a) * ab).sum(-1) / np.maximum((ab * ab).sum(-1), 1e-12), 0, 1)
         d = np.linalg.norm(p - (a + t[..., None] * ab), axis=-1)
         best = d if best is None else np.minimum(best, d)
-    return np.where(ins, 0.0, best)
+    return np.where(ins, 0.0, cast(FloatArray, best))        # set by the loop's first edge
 
 
 ISLAND_FOOTPRINT = 100.0          # m2: an object rising above the sea and at least this big is ground (rock islets,
                                  # wrecks, piers); buoys are a few m2
 
 
-def box_from_level(level_dir, hf, sea_level, log=print):
+def box_from_level(level_dir: str, hf: 'Heightfield', sea_level: float, log: Log = print) -> Box | None:
     """(min (x, z), max (x, z)) of what can be walked on: the land (terrain above sea_level - 1.5 m, every islet
     included), the whole collision box of each object holding a soldier spawn (the carriers, whatever their length),
     and objects rising above the sea with a footprint of at least ISLAND_FOOTPRINT. None when there is none of these
@@ -162,14 +178,14 @@ def box_from_level(level_dir, hf, sea_level, log=print):
     return (lo, hi) if (lo <= hi).all() else None
 
 
-def extent_box(T, hf):
+def extent_box(tris: npt.NDArray[np.floating], hf: 'Heightfield') -> Box:
     """(min (x, z), max (x, z)): the collision's extent and the land (terrain above the lowest collision; all of it
     without collision). ValueError when there is neither (2026-10-30 review: an empty collision raised on an empty
     array)."""
     lo, hi = np.array([np.inf, np.inf]), np.array([-np.inf, -np.inf])
-    if len(T):
-        lo, hi = T[:, :, [0, 2]].reshape(-1, 2).min(0), T[:, :, [0, 2]].reshape(-1, 2).max(0)
-    land = hf.heights > T[:, :, 1].min() if len(T) else np.ones_like(hf.heights, bool)
+    if len(tris):
+        lo, hi = tris[:, :, [0, 2]].reshape(-1, 2).min(0), tris[:, :, [0, 2]].reshape(-1, 2).max(0)
+    land = hf.heights > tris[:, :, 1].min() if len(tris) else np.ones_like(hf.heights, bool)
     if land.any():
         jj, ii = np.nonzero(land)
         cx, cz = hf.cell                             # the height field's cell size
@@ -184,47 +200,49 @@ def extent_box(T, hf):
 from soldier1943 import HEIGHT, RADIUS, STEP, STEP_HEIGHT, STEP_TOLERANCE  # noqa: E402,F401
 
 
-def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pitch=0.8, margin=20.0, sea_level=None,
-           sectors=None, log=print):
+def sample(level_dir: str, hf_path: str, out: str, step: float = STEP, radius: float = RADIUS, height: float = HEIGHT,
+           pitch: float = 0.8, margin: float = 20.0, sea_level: float | None = None, sectors: Sectors | None = None,
+           log: Log = print) -> str:
     """sectors: None, or (offsets (xoff, zoff), [(X, Z)]) - sample only tiles touching those 100 m sectors (plus 1 m,
     the builder's window overlap); the rest of the grid is written as empty columns (the detailed run at pitch 0.2)."""
     t_start = time.time()
-    T = np.load(os.path.join(level_dir, 'all_tris.npy')).astype(np.float64)
+    triangles = np.load(os.path.join(level_dir, 'all_tris.npy')).astype(np.float64)
     hf = terrain.read(hf_path)
-    N, ok = normals(T)
-    T, N = T[ok], N[ok]
+    tri_normal, has_area = normals(triangles)
+    triangles, tri_normal = triangles[has_area], tri_normal[has_area]
     box = None
     if sea_level is not None and os.path.isfile(os.path.join(level_dir, 'object_boxes.json')):
         box = box_from_level(level_dir, hf, sea_level, log)
     if box is None:
         # the collision's extent, and the land (terrain above the lowest collision)
-        box = extent_box(T, hf)
+        box = extent_box(triangles, hf)
     lo, hi = box
     lo = np.maximum(lo - margin, [hf.min[0], hf.min[2]])
     hi = np.minimum(hi + margin, [hf.max[0] - pitch, hf.max[2] - pitch])
     x0, z0 = math.floor(lo[0] / pitch) * pitch, math.floor(lo[1] / pitch) * pitch
     nx, nz = int((hi[0] - x0) / pitch) + 1, int((hi[1] - z0) / pitch) + 1
-    ntx, ntz = -(-nx // TILE), -(-nz // TILE)
-    bins = tile_bins(T, x0, z0, pitch, ntx, ntz, radius)
-    log(f'{len(T)} triangles; box x {x0:.1f}..{x0 + nx * pitch:.1f}, z {z0:.1f}..{z0 + nz * pitch:.1f}: '
+    ntx, ntz = -(-nx // TILE), -(-nz // TILE)            # tiles per side, rounded up
+    bins = tile_bins(triangles, x0, z0, pitch, ntx, ntz, radius)
+    log(f'{len(triangles)} triangles; box x {x0:.1f}..{x0 + nx * pitch:.1f}, z {z0:.1f}..{z0 + nz * pitch:.1f}: '
         f'{nx} x {nz} columns, {ntx * ntz} tiles, {len(bins)} with collision')
-    up = N[:, 1] > UP_MIN
-    steep = N[:, 1] <= FLOOR_MIN
-    slope = np.sqrt(np.maximum(1 - N[:, 1] ** 2, 0)) / np.maximum(N[:, 1], 0.05)   # height change per metre
-    tri_lo, tri_hi = T[:, :, 1].min(1), T[:, :, 1].max(1)
+    up = tri_normal[:, 1] > UP_MIN
+    steep = tri_normal[:, 1] <= FLOOR_MIN
+    slope = np.sqrt(np.maximum(1 - tri_normal[:, 1] ** 2, 0)) / np.maximum(tri_normal[:, 1], 0.05)   # rise per metre
+    tri_lo, tri_hi = triangles[:, :, 1].min(1), triangles[:, :, 1].max(1)
     y_top, y_bottom = -1e9, 1e9
     out_file = open(out, 'wb')
     out_file.write(bytes(HEADER.size))             # rewritten at the end, when the height range is known
     surfaces = blocked_count = 0
     wanted = None                                  # the chosen sectors' boxes (x0, z0, x1, z1), 1 m wider
     if sectors:
-        (xo, zo), ids = sectors
-        wanted = [((X + xo) * 100.0 - 1, (Z + zo) * 100.0 - 1, (X + xo) * 100.0 + 101, (Z + zo) * 100.0 + 101)
+        (x_offset, z_offset), ids = sectors
+        wanted = [((X + x_offset) * 100.0 - 1, (Z + z_offset) * 100.0 - 1,
+                   (X + x_offset) * 100.0 + 101, (Z + z_offset) * 100.0 + 101)
                   for X, Z in ids]
     skipped = 0
     for tz in range(ntz):
         rows = min(TILE, nz - tz * TILE)
-        band = [[] for _ in range(rows * nx)]       # this band of rows: columns j-major, written when it is done
+        band: list[list[Any]] = [[] for _ in range(rows * nx)]   # this band of rows: columns j-major, written when done
         for tx in range(ntx):
             i0, j0 = tx * TILE, tz * TILE
             if wanted is not None:
@@ -248,15 +266,16 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
             pairs = []                                      # (column, low, high, over) of collision near each column
             if tris is not None:
                 for chunk in np.array_split(tris, max(1, len(tris) // 1500)):
-                    T2 = T[chunk][:, :, [0, 2]]
-                    u, v, w, ins = inside(T2, px, pz)
+                    chunk_xz = triangles[chunk][:, :, [0, 2]]
+                    u, v, w, ins = inside(chunk_xz, px, pz)
                     # (triangle, column): the triangle's plane height at the column
-                    plane_y = u * T[chunk][:, 0, 1, None] + v * T[chunk][:, 1, 1, None] + w * T[chunk][:, 2, 1, None]
+                    corner_y = triangles[chunk][:, :, 1]
+                    plane_y = u * corner_y[:, 0, None] + v * corner_y[:, 1, None] + w * corner_y[:, 2, None]
                     floor_hit = ins & up[chunk][:, None]       # steep ones too: the slope rule rejects them later
                     for tri, col in zip(*np.nonzero(floor_hit)):
-                        column_surfaces[col].append((float(plane_y[tri, col]), N[chunk][tri]))
-                    d = dist2d(T2, px, pz)
-                    near = d <= radius
+                        column_surfaces[col].append((float(plane_y[tri, col]), tri_normal[chunk][tri]))
+                    distance = dist2d(chunk_xz, px, pz)
+                    near = distance <= radius
                     if near.any():
                         tri, col = np.nonzero(near)
                         tri_steep = steep[chunk][tri]
@@ -280,16 +299,17 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
             near_pairs = np.concatenate(pairs) if pairs else np.zeros((0, 4))
             # merge each column's surfaces (top down), then the capsule test
             for k in range(len(px)):
-                top_down = sorted(column_surfaces[k], key=lambda e: -e[0])
+                top_down = sorted(column_surfaces[k], key=lambda surface: -surface[0])
                 merged = []
-                for y, n in top_down:
+                for y, normal in top_down:
                     if not merged or merged[-1][0] - y > MERGE:
-                        merged.append((y, n))
+                        merged.append((y, normal))
                 column_surfaces[k] = merged
+            starts = np.zeros(0, np.int64)                  # each column's run of pairs (with pairs)
             if len(near_pairs):
                 order = np.argsort(near_pairs[:, 0], kind='stable')
                 near_pairs = near_pairs[order]
-                starts = np.searchsorted(near_pairs[:, 0], np.arange(len(px) + 1))   # each column's run of pairs
+                starts = np.searchsorted(near_pairs[:, 0], np.arange(len(px) + 1))
             for k in range(len(px)):
                 record = []                                 # (height, normal, flags) per surface
                 near_lo = near_hi = None
@@ -297,23 +317,25 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
                     run = near_pairs[starts[k]:starts[k + 1]]
                     near_lo, near_hi = run[:, 1], run[:, 2]
                     near_over = run[:, 3] > 0
-                for y, n in column_surfaces[k]:
+                for y, normal in column_surfaces[k]:
                     if near_lo is not None:
-                        floor_of_band = np.where(near_over, y + OVERHEAD_MIN, y + step)
+                        # near_over is set with near_lo
+                        floor_of_band = np.where(near_over,  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                 y + OVERHEAD_MIN, y + step)
                         blocked = bool(((near_lo < y + height) & (near_hi > floor_of_band)).any())
                     else:
                         blocked = False
                     blocked |= y < float(terrain_y[k]) - UNDERGROUND
                     blocked_count += blocked
-                    record.append((y, n, BLOCKED if blocked else 0))
+                    record.append((y, normal, BLOCKED if blocked else 0))
                     y_top, y_bottom = max(y_top, y), min(y_bottom, y)
                 band[(jj[k] - tz * TILE) * nx + ii[k]] = record
                 surfaces += len(record)
         out_bytes = bytearray()
         for record in band:
             out_bytes.append(min(len(record), 255))
-            for y, n, flags in record[:255]:
-                q = np.clip(np.round(np.asarray(n) * 127), -127, 127).astype(int)    # the normal as signed bytes
+            for y, normal, flags in record[:255]:
+                q = np.clip(np.round(np.asarray(normal) * 127), -127, 127).astype(int)    # the normal as signed bytes
                 out_bytes += struct.pack('<f3bB', y, int(q[0]), int(q[1]), int(q[2]), flags)
         out_file.write(out_bytes)
         log(f'  row {tz + 1}/{ntz}: {surfaces} surfaces, {blocked_count} blocked ({time.time() - t_start:.0f} s)')
@@ -326,7 +348,7 @@ def sample(level_dir, hf_path, out, step=STEP, radius=RADIUS, height=HEIGHT, pit
     return out
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog='navsample1943.py', description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('level_dir')
@@ -345,8 +367,9 @@ def main(argv):
     sectors = None
     if args.sectors:
         offsets, ids = args.sectors.split(':')
-        xo, zo = (int(v) for v in offsets.split(','))
-        sectors = ((xo, zo), [(int(s[:2], 16), int(s[2:], 16)) for s in ids.replace(' ', ',').split(',') if s])
+        x_offset, z_offset = (int(v) for v in offsets.split(','))
+        sector_ids = [(int(s[:2], 16), int(s[2:], 16)) for s in ids.replace(' ', ',').split(',') if s]
+        sectors = ((x_offset, z_offset), sector_ids)
     sample(args.level_dir, args.heightfield, args.out, args.step, args.radius, args.height, args.pitch, args.margin,
            args.sea_level, sectors)
     return 0

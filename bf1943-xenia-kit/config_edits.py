@@ -10,17 +10,19 @@ import io
 import re
 import sys
 import zipfile
+from typing import Any
 
 sys.dont_write_bytecode = True
 ARCHIVE = 'dist/xenon/config.zz'
 PORTS = {'Network.ClientPort': (1001, 25001), 'Network.ServerPort': (1003, 25003)}
 
 
-def build(archive_bytes):
+def build(archive_bytes: bytes) -> tuple[bytes, bytes, list[dict[str, Any]]]:
     """(new config.zz bytes, new GameSettings.cfg bytes, change log)."""
     src = zipfile.ZipFile(io.BytesIO(archive_bytes))
-    entries = [(i, src.read(i)) for i in src.infolist()]  # read first: writestr updates the ZipInfo it is given
-    changes, settings = [], None
+    entries = [(info, src.read(info)) for info in src.infolist()]  # read first: writestr updates the ZipInfo it is given
+    changes: list[dict[str, Any]] = []
+    settings: bytes | None = None
     out = io.BytesIO()
     with zipfile.ZipFile(out, 'w') as dst:
         for info, data in entries:
@@ -38,9 +40,10 @@ def build(archive_bytes):
         raise ValueError('GameSettings.cfg is not in config.zz')
     result = out.getvalue()
     check = zipfile.ZipFile(io.BytesIO(result))
-    if [i.filename for i in check.infolist()] != [i.filename for i, _ in entries] or check.testzip() is not None:
+    names = [info.filename for info in check.infolist()]
+    if names != [info.filename for info, _ in entries] or check.testzip() is not None:
         raise ValueError('the rewritten archive differs in entries or fails its CRC check')
-    for i, data in entries:
-        if i.filename != 'GameSettings.cfg' and check.read(i.filename) != data:
-            raise ValueError(f'entry changed: {i.filename}')
+    for info, data in entries:
+        if info.filename != 'GameSettings.cfg' and check.read(info.filename) != data:
+            raise ValueError(f'entry changed: {info.filename}')
     return result, settings, changes
