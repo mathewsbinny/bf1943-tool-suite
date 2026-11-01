@@ -28,14 +28,14 @@ import kymesh  # noqa: E402
 BORDER = 0x80000000
 
 
-def check(path):
+def check(path: str) -> dict[str, list[str]]:
     """{check name: [problem descriptions]} (empty lists: passed)."""
     f = hpdtool.parse(open(path, 'rb').read())
-    out = {'closed boundaries': [], 'edges': [], 'node order': [], 'zero-length edges': []}
+    out: dict[str, list[str]] = {'closed boundaries': [], 'edges': [], 'node order': [], 'zero-length edges': []}
     for s in f.sectors:
         m = kymesh.parse_mesh(s.mesh)
         for ai, a in enumerate(m.areas):
-            deg = Counter()
+            deg: Counter[tuple[float, float]] = Counter()
             segs = [(l[k], l[k + 1]) for l in a.outline for k in range(len(l) - 1)]
             segs += [(b.p0, b.p1) for b in a.portals] + [(c.p0, c.p1) for c in a.border_portals]
             for p, q in segs:
@@ -59,7 +59,7 @@ def check(path):
     return out
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if any(a in ('-h', '--help') for a in argv[1:]):
         print(__doc__)
         return 0

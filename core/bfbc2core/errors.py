@@ -18,12 +18,18 @@ import sys
 import threading
 import traceback
 import warnings
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 KEEP = 20
-_state = {'tool': None, 'path': None, 'gui': True}
+_state: dict[str, Any] = {'tool': None, 'path': None, 'gui': True}
 
 # (test on the error, the cause in words, what to do)
-CAUSES = [
+# (each test's own isinstance check is what lets its cause and fix read that type's attributes, so they take Any)
+CAUSES: list[tuple[Callable[[Any], bool], Callable[[Any], str], Callable[[Any], str]]] = [
     (lambda e: isinstance(e, ModuleNotFoundError),
      lambda e: f'A Python library the tool needs is not installed ({e.name}).',
      lambda e: f'Install it: pip install {PIP_NAMES.get(e.name, e.name)}'),
@@ -47,17 +53,18 @@ CAUSES = [
      lambda e: 'The PC ran out of memory.',
      lambda e: 'Close other programs, or open a smaller level.'),
 ]
-PIP_NAMES = {'imgui_bundle': 'imgui-bundle', 'PIL': 'pillow', 'capstone': 'capstone', 'pefile': 'pefile'}
+PIP_NAMES: dict[str, str] = {'imgui_bundle': 'imgui-bundle', 'PIL': 'pillow', 'capstone': 'capstone',
+                             'pefile': 'pefile'}
 
 
-def log_dir():
+def log_dir() -> str:
     base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
     d = os.path.join(base, 'bf1943-tool-suite', 'logs')
     os.makedirs(d, exist_ok=True)
     return d
 
 
-def explain(e):
+def explain(e: BaseException) -> tuple[str, str]:
     """(cause, what to do) for an exception, in words; a generic pair when it is not a known case."""
     for test, cause, fix in CAUSES:
         try:
@@ -68,7 +75,7 @@ def explain(e):
     return f'{type(e).__name__}: {e}', 'If it happens again, send the log file to the tool\'s author.'
 
 
-def setup(tool, gui=True, level=logging.INFO):
+def setup(tool: str, gui: bool = True, level: int = logging.INFO) -> logging.Logger:
     """The tool's log file, warnings into it, and uncaught errors (main thread and others) logged and reported."""
     _state.update(tool=tool, gui=gui)
     stamp = datetime.date.today().isoformat()
@@ -87,13 +94,15 @@ def setup(tool, gui=True, level=logging.INFO):
             wlog.addHandler(h)
     warnings.simplefilter('default')
     sys.excepthook = lambda t, v, tb: report(v, tb=tb)
-    threading.excepthook = lambda a: report(a.exc_value, tb=a.exc_traceback, where=f'thread {a.thread.name if a.thread else "?"}')
+    # a thread's excepthook gets the exception it raised (exc_value is None only for a call made by hand)
+    threading.excepthook = lambda a: report(cast(BaseException, a.exc_value), tb=a.exc_traceback,
+                                            where=f'thread {a.thread.name if a.thread else "?"}')
     log.info(f'--- {tool} started (Python {sys.version.split()[0]}, {sys.platform}) ---')
     _prune(tool)
     return log
 
 
-def _prune(tool):
+def _prune(tool: str) -> None:
     files = sorted(glob.glob(os.path.join(log_dir(), f'{tool}-*.log')))
     for p in files[:-KEEP]:
         try:
@@ -102,11 +111,12 @@ def _prune(tool):
             pass
 
 
-def logger():
+def logger() -> logging.Logger:
     return logging.getLogger('bfbc2')
 
 
-def report(e, tb=None, where=None, show=True):
+def report(e: BaseException, tb: 'TracebackType | None' = None, where: str | None = None,
+           show: bool = True) -> str | None:
     """Logs an error with its traceback and tells the user (a window for GUI tools, else a short message)."""
     tool = _state['tool'] or 'tool'
     cause, fix = explain(e)
@@ -119,7 +129,7 @@ def report(e, tb=None, where=None, show=True):
     return _state['path']
 
 
-def warn(message, show=False):
+def warn(message: str, show: bool = False) -> None:
     """A warning: logged, printed, and shown in a window when show is set (GUI tools)."""
     logger().warning(message)
     print(f'warning: {message}', file=sys.stderr)
@@ -127,11 +137,11 @@ def warn(message, show=False):
         _window(f'{_state["tool"] or "tool"} - warning', message, kind='warning')
 
 
-def _window(title, text, kind='error'):
+def _window(title: str, text: str, kind: str = 'error') -> None:
     try:
         import tkinter as tk
         from tkinter import messagebox
-        root = tk._default_root
+        root = tk._default_root      # pyright: ignore[reportAttributeAccessIssue]  # private, not in the stubs
         own = root is None
         if own:
             root = tk.Tk()
@@ -144,7 +154,7 @@ def _window(title, text, kind='error'):
 
 
 @contextlib.contextmanager
-def guard(tool=None, gui=None):
+def guard(tool: str | None = None, gui: bool | None = None) -> Iterator[None]:
     """Around a tool's main(): any error is logged and reported, and the tool exits with code 1."""
     if tool and _state['tool'] != tool:
         setup(tool, gui if gui is not None else True)

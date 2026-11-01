@@ -8,9 +8,9 @@ import os
 from . import game1943
 
 
-def levels():
+def levels() -> list[tuple[str, str]]:
     """[(level, state)]: each level of the game copy, and whether NavKit has built its navigation (work folder)."""
-    out = []
+    out: list[tuple[str, str]] = []
     for lv in game1943.levels():
         built = os.path.isfile(os.path.join(game1943.level_work(lv), 'navkit', f'{lv}.hpd'))
         kind = 'multiplayer map' if lv in game1943.MP_LEVELS else 'other level'
@@ -18,7 +18,7 @@ def levels():
     return out
 
 
-def pick_level(title):
+def pick_level(title: str) -> str | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
     try:
@@ -39,7 +39,7 @@ def pick_level(title):
         messagebox.showerror(title, f'No BF1943 game copy found: {e}')
         root.destroy()
         return None
-    chosen = []
+    chosen: list[str] = []
     ttk.Label(root, text='Choose a level to open:', padding=(10, 10, 10, 4)).pack(anchor='w')
     tree = ttk.Treeview(root, columns=('state',), selectmode='browse', height=16)
     tree.heading('#0', text='Level')
@@ -50,7 +50,7 @@ def pick_level(title):
         tree.insert('', 'end', iid=lv, text=lv, values=(state,))
     tree.pack(fill='both', expand=True, padx=10)
 
-    def ok(*_):
+    def ok(*_: object) -> None:
         sel = tree.selection()
         if sel:
             chosen.append(sel[0])

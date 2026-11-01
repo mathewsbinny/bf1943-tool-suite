@@ -4,8 +4,11 @@ cells and ground heights; write_cells, read_cells) (pipeline step 7)."""
 import os
 import struct
 import time
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
+import numpy.typing as npt
 
 import hpdtool
 import kymesh
@@ -14,8 +17,12 @@ from .config import BFBC2, HEADER, ORDER_MIN_ISLAND, BuildError, BuildState
 from .graph import finalize_graph, prune_order_nodes
 from .merge import merge_coincident_border
 
+if TYPE_CHECKING:
+    from .config import AreaCells, Log, SectorGraph, Settings
 
-def write_file(graphs, out_path, log, t0, state=None, settings=BFBC2):
+
+def write_file(graphs: 'list[SectorGraph]', out_path: str, log: 'Log', t0: float, state: BuildState | None = None,
+               settings: 'Settings' = BFBC2) -> None:
     """Order-node pruning, final node / edge tables, and the file. state: the build's BuildState (its order nodes,
     and the areas' cells for the sidecar file); settings: the build's Settings."""
     state = state if state is not None else BuildState()
@@ -55,12 +62,13 @@ def write_file(graphs, out_path, log, t0, state=None, settings=BFBC2):
         f'{sum(len(x.edges) for x in hpd_sectors)} edges, {len(data)} bytes ({time.time() - t0:.0f} s)')
 
 
-def cells_path(hpd_path):
+def cells_path(hpd_path: str) -> str:
     """The sidecar file of a build: <name>.cells.npz beside <name>.hpd."""
     return os.path.splitext(hpd_path)[0] + '.cells.npz'
 
 
-def write_cells(graphs, out_path, data, log, area_cells):
+def write_cells(graphs: 'Sequence[SectorGraph]', out_path: str, data: bytes, log: 'Log',
+                area_cells: 'dict[int, list[AreaCells]]') -> None:
     """The sidecar of the build just written (area_cells: BuildState.area_cells, written in the file's sector and area
     order): per area its sector id,
     pitch and cell count; the cells' global indices and ground heights; the build's SHA-256, so a reader can tell it
@@ -87,7 +95,8 @@ def write_cells(graphs, out_path, data, log, area_cells):
     log(f'cells: {len(count)} areas, {sum(count)} cells -> {cells_path(out_path)}')
 
 
-def read_cells(hpd_path):
+def read_cells(hpd_path: str) -> list[tuple[int, float, npt.NDArray[np.int32], npt.NDArray[np.int32],
+                                            npt.NDArray[np.float32]]] | None:
     """The sidecar of a build, or None when it is missing or belongs to another file: [(sector id, pitch, i, j, y)] per
     area in the file's order."""
     import hashlib

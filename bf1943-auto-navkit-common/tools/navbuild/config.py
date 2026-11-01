@@ -2,9 +2,43 @@
 time), the Settings a build is made for (BFBC2 = NavKit's defaults, soldier1943.SETTINGS = BF1943's), a stage's Grid
 (grid_at), what a build gathers as it goes (BuildState) and where a sector's group joining may flood (JoinScope).
 Part of the package since 2026-10-31 (navbuild.py until then)."""
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import navwalk
+
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
+    import kymesh
+
+
+# the shapes the builder's stages pass around (type aliases only; never evaluated at run time)
+type Vec3 = tuple[float, float, float]
+type SectorKey = tuple[int, int]                    # (X, Y): a 100 m sector, less the level's sector offsets
+type CellRef = tuple[int, int, int]                 # an area's cell: (local i, local j, surface k)
+type AreaDict = dict[str, Any]                      # {'tile': (tx, tz), 'cells': [CellRef], 'layer', 'borders'}
+type SectorInfo = dict[str, Any]                    # {'areas', 'area_of', 'origin', 'start', 'win'} (stage)
+type StageResult = dict[str, Any]                   # stage()'s result
+type GraphPoint = tuple[int, Vec3, int, int, int]   # a route node: (id, pos, surface k, local i, local j)
+type GraphPair = tuple[int, int, float]             # an edge: (node index, node index, length)
+type BorderNode = tuple[int, Vec3, int]             # a shared node: (id, pos, surface k)
+type Bounds6 = tuple[float, float, float, float, float, float]   # minX, maxX, minY, maxY, minZ, maxZ
+type SectorGraph = tuple[int, Bounds6, kymesh.Mesh, list[GraphPoint], list[GraphPair], tuple[float, float]]
+type AreaCells = tuple[npt.NDArray[np.int32], npt.NDArray[np.int32], npt.NDArray[np.float32], float]
+type NewId = Callable[[], int]
+type Points = Sequence[Sequence[float]]             # points (x, y, z): tuples, or lists read from JSON
+type Water = tuple[npt.NDArray[Any], npt.NDArray[Any]]   # a level's water mesh: (vertices, triangles)
+type Ladder = dict[str, Any]                        # {'lo', 'hi', ...} (ladders.json; jump links add their bands)
+type Log = Callable[[str], object]
+type EdgeKey = tuple[str, Any, str, float, int]     # a boundary run: (kind, target, axis, line, dir) (trace_edges)
+type EdgeMap = dict[EdgeKey, list[tuple[int, Any]]]    # per area: its boundary edges, key -> [(along, y)]
+type OneWay = tuple[int, int, EdgeKey, int]         # a one-way portal piece: (source area, target area, key, along)
+type BorderRun = tuple[kymesh.BorderPortal, int, int, float]   # a border portal and its run: (portal, t0, t1, line)
+type Traced = tuple[list[kymesh.Portal], list[BorderRun], list[list[Vec3]]]   # per area: portals, borders, outline
+type Resolver = Callable[[SectorKey, AreaDict, BorderRun], tuple[int, int, int] | None]   # sector_links' resolve
 
 
 PITCH = 0.8                     # the normal grid (grid_at gives a stage's settings at its pitch)
@@ -138,18 +172,19 @@ class Settings:
     above, NavKit's own for BFBC2 (BFBC2's soldier, rules fitted to DICE's BFBC2 path data); soldier1943.SETTINGS is
     BF1943's. build() takes one and every stage's Level carries it."""
     slope_max: float = SLOPE_MAX                    # the steepest walkable ground (deg; navwalk.walkable)
-    headroom_band: tuple = navwalk.HEADROOM_BAND    # ground with less headroom is not walkable (navwalk.walkable)
+    # ground with less headroom is not walkable (navwalk.walkable)
+    headroom_band: tuple[float, float] | None = navwalk.HEADROOM_BAND
     y_offset: float = Y_OFFSET                      # nodes and outlines stand this far above the ground
     detailed_link_step: float = DETAILED_LINK_STEP  # the raw rule's step in detailed zones (Grid.link_step)
     ladder_all_ground: bool = LADDER_ALL_GROUND
     border_seam_line: bool = BORDER_SEAM_LINE
-    area_cliff: float = AREA_CLIFF                  # None: off
+    area_cliff: float | None = AREA_CLIFF           # None: off
     area_cliff_reach: int = AREA_CLIFF_REACH
-    join_margin: float = JOIN_MARGIN                # None: the window only
+    join_margin: float | None = JOIN_MARGIN         # None: the window only
     seam_fine_links: bool = SEAM_FINE_LINKS
     seam_far_links: bool = SEAM_FAR_LINKS
     seam_gap_nodes: bool = SEAM_GAP_NODES
-    mixed_overlap: float = MIXED_OVERLAP            # None: off
+    mixed_overlap: float | None = MIXED_OVERLAP     # None: off
     column_sectors_cm: bool = COLUMN_SECTORS_CM     # False: the float sector rule (column_sectors)
 
 
@@ -174,11 +209,11 @@ class Grid:
     link_step: float                                # the raw rule's height step (LINK_STEP)
 
     @property
-    def detailed(self):
+    def detailed(self) -> bool:
         return abs(self.pitch - DETAILED_PITCH) < 1e-6
 
 
-def grid_at(p, settings=BFBC2):
+def grid_at(p: float, settings: Settings = BFBC2) -> Grid:
     """The Grid of a stage at pitch p: 0.8 (normal sectors) or 0.2 (detailed zones). (set_pitch until 2026-10-31,
     which rewrote this module's PITCH, WINDOW, TILE ... for whatever ran next.)"""
     detailed = abs(p - DETAILED_PITCH) < 1e-6
@@ -194,31 +229,31 @@ def grid_at(p, settings=BFBC2):
 @dataclass
 class BuildState:
     """What one build gathers as it goes, across its stages (module globals until 2026-10-31, cleared by build())."""
-    detailed_sectors: set = field(default_factory=set)  # the sectors built at DETAILED_PITCH: join_groups stays out of
-                                                        # the other grid's
-    normal_sectors: set = field(default_factory=set)    # the normal stage's sectors: sector_window grows only toward
-                                                        # a sector that exists
-    order_ids: set = field(default_factory=set)         # ids of the order nodes (prune_order_nodes)
-    order_stats: dict = field(default_factory=dict)     # order nodes added, and those prune_order_nodes removed
-    repair_stats: dict = field(default_factory=dict)    # detour-repair nodes added per pass (summed over sectors)
-    ladder_stats: dict = field(default_factory=dict)    # ladder links made, and ladders whose ends lie in two sectors
-    area_cells: dict = field(default_factory=dict)      # sector id -> per area (in the file's order): its cells' global
-                                                        # indices i, j at its pitch (cell centre = index x pitch) and
-                                                        # their ground heights - the kept surfaces the area was made of,
-                                                        # exactly. Written beside the build as <name>.cells.npz
-                                                        # (write_cells): the outlines alone do not give a cell's height
-                                                        # (the RSNV exporter's estimate from the nearest outline point
-                                                        # was 0.3 m or more off on 11 % of Coral Sea's 0.8 m cells,
-                                                        # 2026-10-25)
-    fine_links: list = field(default_factory=list)      # the links seam_fine_links made: (x, y, z) of both ends (log)
-    far_links: list = field(default_factory=list)       # ... and seam_far_links
+    # the sectors built at DETAILED_PITCH: join_groups stays out of the other grid's
+    detailed_sectors: set[SectorKey] = field(default_factory=set)
+    # the normal stage's sectors: sector_window grows only toward a sector that exists
+    normal_sectors: set[SectorKey] = field(default_factory=set)
+    order_ids: set[int] = field(default_factory=set)           # ids of the order nodes (prune_order_nodes)
+    order_stats: dict[str, Any] = field(default_factory=dict)  # order nodes added, and those prune_order_nodes removed
+    # detour-repair nodes added per pass (summed over sectors)
+    repair_stats: dict[int, int] = field(default_factory=dict)
+    # ladder links made, and ladders whose ends lie in two sectors
+    ladder_stats: dict[str, int] = field(default_factory=dict)
+    # sector id -> per area (in the file's order): its cells' global indices i, j at its pitch (cell centre = index x
+    # pitch) and their ground heights - the kept surfaces the area was made of, exactly. Written beside the build as
+    # <name>.cells.npz (write_cells): the outlines alone do not give a cell's height (the RSNV exporter's estimate from
+    # the nearest outline point was 0.3 m or more off on 11 % of Coral Sea's 0.8 m cells, 2026-10-25)
+    area_cells: dict[int, list[AreaCells]] = field(default_factory=dict)
+    # the links seam_fine_links made: (x, y, z) of both ends (log)
+    fine_links: list[tuple[tuple[float, ...], ...]] = field(default_factory=list)
+    far_links: list[tuple[tuple[float, ...], ...]] = field(default_factory=list)  # ... and seam_far_links
 
 
 @dataclass(frozen=True)
 class JoinScope:
     """Where join_groups may flood past the sector's own window: the sector, its stage's sectors, its window, and
     the build's detailed sectors (until 2026-10-31 JOIN_CONTEXT, set before each call)."""
-    sector: tuple
-    sectors: set
-    window: tuple
-    detailed_sectors: set
+    sector: SectorKey
+    sectors: set[SectorKey]
+    window: tuple[range, range] | None
+    detailed_sectors: set[SectorKey]

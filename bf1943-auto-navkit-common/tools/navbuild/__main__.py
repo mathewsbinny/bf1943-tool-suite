@@ -12,7 +12,7 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
 import navbuild  # noqa: E402
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     args = [a for a in argv[1:] if not a.startswith('--')]
     opts = dict(zip(argv[1:], argv[2:]))
     if any(a in ('-h', '--help') for a in argv[1:]):

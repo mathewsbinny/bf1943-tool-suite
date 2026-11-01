@@ -9,7 +9,8 @@ r"""The repository's own rules, checked before anything is pushed (no game data 
   bootstrap only where a script runs (under `if __name__ == '__main__':`); the folders it puts on sys.path share no
   module name, the two NavKit variants included (their shared modules are one copy in bf1943-auto-navkit-common
   since 2026-10-31), so the order a script names them in changes nothing it imports;
-- the lint (ruff) leaves out exactly the VMX fingerprint's Python inputs, which are never edited;
+- the lint (ruff) leaves out exactly the VMX fingerprint's Python inputs, which are never edited, and the type check
+  (pyright's include) covers none of them;
 - the coverage threshold (pyproject.toml [tool.coverage.report] fail_under) never goes down: in no commit of the
   history (unless its message gives a "Coverage-threshold-lowered: <reason>" line) and not in the working copy.
 
@@ -193,6 +194,10 @@ def main(argv):
     results.append(("the lint skips the VMX fingerprint's Python inputs, and only those (pyproject [tool.ruff] "
                     'extend-exclude = vmx_inputs.INPUTS .py files, besides work and output)',
                     sorted(vmx_py ^ (lint_skips - {'work', 'output'}))))
+    with open(os.path.join(SUITE, 'pyproject.toml'), 'rb') as f:
+        typed = tomllib.load(f)['tool']['pyright']['include']
+    results.append(("the type check covers none of the VMX fingerprint's Python inputs (pyproject [tool.pyright] "
+                    'include)', sorted(i for i in vmx_py for d in typed if i == d or i.startswith(d.rstrip('/') + '/'))))
 
     results.append(coverage_ratchet())
 

@@ -4,6 +4,8 @@ normal stage (pitch 0.8) and, with detailed sectors, a second one at pitch 0.2 (
 import math
 import time
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -17,12 +19,20 @@ from .areas import (build_areas, drop_one_way, restore_one_way, same_grid_resolv
     sector_window, tiling, trace_edges, trace_emit)
 from .graph import build_graph
 
+if TYPE_CHECKING:
+    from .config import Grid, Ladder, Log, Points, SectorKey, Settings, StageResult, Vec3, Water
 
-def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=print, dynamic_path=None,
-          narrow_path=None, stairs_path=None, exclude_path=None, exclude_foot_path=None, seeds=None, edits=None,
-          water=None, max_water_depth=MAX_WATER_DEPTH, bounds=None, order_points=None, t0=None,
-          sector_filter=None, grid_min=None, id_start=1, carried=None, seed_points=None, ladders=None,
-          grid=None, settings=BFBC2, state=None):
+
+def stage(samples_path: str, high_path: str | None, xoff: int, zoff: int, tris_path: str | None = None,
+          step: float = 0.28, log: 'Log' = print, dynamic_path: str | None = None, narrow_path: str | None = None,
+          stairs_path: str | None = None, exclude_path: str | None = None, exclude_foot_path: str | None = None,
+          seeds: 'Points | None' = None, edits: Sequence[dict[str, Any]] | None = None, water: 'Water | None' = None,
+          max_water_depth: float | None = MAX_WATER_DEPTH, bounds: Sequence[float] | None = None,
+          order_points: 'Points | None' = None, t0: float | None = None,
+          sector_filter: 'Iterable[SectorKey] | None' = None, grid_min: tuple[int, int] | None = None,
+          id_start: int = 1, carried: 'dict[SectorKey, list[tuple[int, Vec3]]] | None' = None,
+          seed_points: 'Points | None' = None, ladders: 'list[Ladder] | None' = None, grid: 'Grid | None' = None,
+          settings: 'Settings' = BFBC2, state: BuildState | None = None) -> 'StageResult':
     """One grid's build: walkable surfaces, sectors, areas, border nodes, traced boundaries, meshes and route graphs -
     not yet written. grid: the stage's Grid (grid_at; the normal grid by default); settings: the build's Settings;
     state: the build's BuildState, which the stage adds to (a new one by default). sector_filter: build only these
@@ -83,7 +93,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
     border_nodes = defaultdict(list)     # sector -> [(id, pos, k)]
     border_at = {}                       # surface -> (id, pos) of the border node on it
 
-    def new_id():
+    def new_id() -> int:
         next_id[0] += 1
         return next_id[0]
 
@@ -94,7 +104,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
             other = (X + dX, Y + dY)
             if other not in info:
                 continue
-            def line_runs(line):
+            def line_runs(line: int) -> list[list[tuple[int, int]]]:
                 """every kept surface on the line (all layers: floors under roofs too), grouped into connected runs
                 along it, one run per layer"""
                 runs, active = [], []
@@ -203,7 +213,7 @@ def stage(samples_path, high_path, xoff, zoff, tris_path=None, step=0.28, log=pr
         ntiles = tiling(sid, grid)[1]
         tiles = [[] for _ in range(ntiles * ntiles)]
         for ai, (a, (portals, borders, outline)) in enumerate(zip(areas, traced)):
-            ys = [level.y[c[2]] for c in a['cells']]
+            ys = cast('list[float]', [level.y[c[2]] for c in a['cells']])   # numpy float64 scalars
             # DICE's area height range: from its lowest ground to its highest ground + 1.52 m (all normal-pitch
             # areas of sp_004_b: median +0.000 / +1.520; NavKit had -0.95 / +1.55, a metre of extra room below
             # each area, so a lower floor's range reached the deck above it - 2026-10-19)

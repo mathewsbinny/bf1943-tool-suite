@@ -16,6 +16,8 @@ import hashlib
 import json
 import os
 import socket
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 FORMAT, VERSION = 'bfbc2-navtune', 1
 KINDS = ('navkit', 'dice')
@@ -34,16 +36,16 @@ OPS = {
 REGION_OPS = ('walkable', 'unwalkable', 'seed', 'unseed')          # need a rebuild: NavKit bases only
 
 
-def author():
+def author() -> str:
     """The name recorded with edits: the PC's name (Windows' computer name)."""
     return os.environ.get('COMPUTERNAME') or socket.gethostname() or 'unknown'
 
 
-def now():
+def now() -> str:
     return datetime.datetime.now().replace(microsecond=0).isoformat()
 
 
-def sha1_of(path):
+def sha1_of(path: str) -> str:
     h = hashlib.sha1()
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(1 << 20), b''):
@@ -51,23 +53,23 @@ def sha1_of(path):
     return h.hexdigest()
 
 
-def polygon(points, y_low, y_high):
+def polygon(points: Iterable[Sequence[float]], y_low: float, y_high: float) -> dict[str, list[Any]]:
     return {'polygon': [[round(float(x), 3), round(float(z), 3)] for x, z in points], 'y': [round(float(y_low), 3), round(float(y_high), 3)]}
 
 
-def box(x0, y0, z0, x1, y1, z1):
+def box(x0: float, y0: float, z0: float, x1: float, y1: float, z1: float) -> dict[str, list[float]]:
     lo = [min(x0, x1), min(y0, y1), min(z0, z1)]
     hi = [max(x0, x1), max(y0, y1), max(z0, z1)]
     return {'box': [round(float(v), 3) for v in lo + hi]}
 
 
-def point(p):
+def point(p: Iterable[float]) -> list[float]:
     return [round(float(v), 3) for v in p]
 
 
-def op(name, by=None, when=None, **fields):
+def op(name: str, by: str | None = None, when: str | None = None, **fields: Any) -> dict[str, Any]:
     """An operation with its fields; positions may be numpy arrays (stored rounded to millimetres)."""
-    o = {'op': name}
+    o: dict[str, Any] = {'op': name}
     for k, v in fields.items():
         if k in ('at', 'a', 'b', 'bottom', 'top'):
             v = point(v)
@@ -77,9 +79,9 @@ def op(name, by=None, when=None, **fields):
     return o
 
 
-def validate(o, kind='navkit'):
+def validate(o: dict[str, Any], kind: str = 'navkit') -> list[str]:
     """Problems with one operation (empty list: fine)."""
-    problems = []
+    problems: list[str] = []
     name = o.get('op')
     if name not in OPS:
         return [f'unknown operation {name!r}']
@@ -117,27 +119,27 @@ def validate(o, kind='navkit'):
 
 
 class NavTune:
-    def __init__(self, level, base, operations=None):
+    def __init__(self, level: str, base: dict[str, Any], operations: Iterable[dict[str, Any]] | None = None) -> None:
         self.level = level
         self.base = base                       # {'kind', 'sha1', 'file'}
         self.operations = list(operations or [])
-        self.redo_stack = []
+        self.redo_stack: list[dict[str, Any]] = []
         self.dirty = False
 
     @classmethod
-    def new(cls, level, base_path, kind='navkit'):
+    def new(cls, level: str, base_path: str, kind: str = 'navkit') -> 'NavTune':
         if kind not in KINDS:
             raise ValueError(f'base kind must be one of {KINDS}')
         return cls(level, {'kind': kind, 'sha1': sha1_of(base_path), 'file': os.path.basename(base_path)})
 
     @property
-    def kind(self):
+    def kind(self) -> str:
         return self.base.get('kind', 'navkit')
 
-    def allowed(self, name):
+    def allowed(self, name: str) -> bool:
         return not (self.kind == 'dice' and name in REGION_OPS)
 
-    def add(self, o):
+    def add(self, o: dict[str, Any]) -> dict[str, Any]:
         problems = validate(o, self.kind)
         if problems:
             raise ValueError('; '.join(problems))
@@ -146,13 +148,13 @@ class NavTune:
         self.dirty = True
         return o
 
-    def remove(self, index):
+    def remove(self, index: int) -> dict[str, Any]:
         o = self.operations.pop(index)
         self.redo_stack.clear()
         self.dirty = True
         return o
 
-    def undo(self):
+    def undo(self) -> dict[str, Any] | None:
         if not self.operations:
             return None
         o = self.operations.pop()
@@ -160,7 +162,7 @@ class NavTune:
         self.dirty = True
         return o
 
-    def redo(self):
+    def redo(self) -> dict[str, Any] | None:
         if not self.redo_stack:
             return None
         o = self.redo_stack.pop()
@@ -168,15 +170,15 @@ class NavTune:
         self.dirty = True
         return o
 
-    def base_changed(self, base_path):
+    def base_changed(self, base_path: str) -> bool:
         """True when the file at base_path is not the one the edits were made on."""
         return bool(self.base.get('sha1')) and sha1_of(base_path) != self.base['sha1']
 
-    def to_json(self):
+    def to_json(self) -> dict[str, Any]:
         return {'format': FORMAT, 'version': VERSION, 'level': self.level, 'base': self.base,
                 'operations': copy.deepcopy(self.operations)}
 
-    def save(self, path):
+    def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         tmp = path + '.tmp'
         with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
@@ -185,7 +187,7 @@ class NavTune:
         os.replace(tmp, path)                  # never a half-written side file
         self.dirty = False
 
-    def summary(self, k):
+    def summary(self, k: int) -> str:
         o = self.operations[k]
         name = o['op']
         if 'region' in o:
@@ -201,11 +203,11 @@ class NavTune:
         return f'{name}: {where}  [{o.get("by", "?")}, {o.get("when", "?")}]'
 
 
-def fmt(p):
+def fmt(p: Iterable[float]) -> str:
     return '(' + ', '.join(f'{v:.1f}' for v in p) + ')'
 
 
-def load(path):
+def load(path: str) -> NavTune:
     d = json.load(open(path, encoding='utf-8'))
     if d.get('format') != FORMAT:
         raise ValueError(f'{path}: not a navtune side file')
@@ -218,6 +220,6 @@ def load(path):
     return t
 
 
-def default_path(root, lv):
+def default_path(root: str, lv: str) -> str:
     """Where the studio keeps a level's side file: OPFOR's work\\navkit\\<level>\\<level>.navtune.json."""
     return os.path.join(root, 'work', 'navkit', lv, f'{lv}.navtune.json')

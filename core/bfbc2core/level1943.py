@@ -16,8 +16,11 @@ BF1943's categories: 'base' and 'flag' (capture points: a base cannot change tea
 Level.opfor holds the game folder (the field's name is the BFBC2 loader's). Nothing is unpacked or written.
 """
 import os
+from collections.abc import Callable, Iterable
+from typing import Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 from . import dbx, game1943, terrain, water
 from .level import CATEGORIES, Entity, Level, Mesh, assign_teams, blueprint_of, category_of, shapes_of, transform_of
@@ -30,7 +33,7 @@ CATEGORIES_1943 = [
 FLAG_INDEX = {'forbid': 0, 'exclude': 1, 'dynamic': 3, 'detailed': 5, 'destructible': 6, 'ladder': 7}
 
 
-def category_1943(t):
+def category_1943(t: str | None) -> str:
     import re
     for name, rx in CATEGORIES_1943:
         if re.search(rx, t or ''):
@@ -38,7 +41,8 @@ def category_1943(t):
     return category_of(t)
 
 
-def load(level, game=None, terrain_stride=2, log=print):
+def load(level: str, game: str | None = None, terrain_stride: int = 2,
+         log: Callable[[str], object] = print) -> Level:
     import levelobjects1943 as lo           # the big-endian NavKit's: on sys.path from the script (suitepath.NAVKIT_BE)
     game = game1943.find_game(game)
     lv = level.replace('\\', '/').split('/')[-1].lower()
@@ -61,7 +65,7 @@ def load(level, game=None, terrain_stride=2, log=print):
     for gname in g.names(f'levels/{lv}/'):
         if not gname.endswith('_havokasset.dbx'):
             continue
-        for el in dbx.parse(g.data(gname)).instances:
+        for el in dbx.parse(cast(bytes, g.data(gname))).instances:     # a name from g.names(): its data is there
             if lo.kind(el) != 'CompositeHavokAsset':
                 continue
             tr, assets = el.child('Transforms'), el.child('Assets')
@@ -77,7 +81,7 @@ def load(level, game=None, terrain_stride=2, log=print):
                                            'group member', None, bp.rsplit('/', 1)[-1], os.path.basename(gname)[:-4],
                                            vals[16 * k:16 * (k + 1)].reshape(4, 4), bp, item, group=os.path.basename(gname)))
     # placed objects: category and flags from the blueprint (levelobjects1943.blueprint_info)
-    info = {}
+    info: dict[str, Any] = {}
     for e in lvl.entities:
         if e.short_type != 'ReferenceObjectData' or not e.blueprint:
             continue
@@ -97,8 +101,8 @@ def load(level, game=None, terrain_stride=2, log=print):
     lvl.shapes = shapes_of(lvl)
     # bases and flags (bf1943-spawn-map)
     import spawnmap
-    m = spawnmap.spawn_map(game, lv)
-    lvl.objectives = m['objectives']
+    m = cast(dict[str, Any], spawnmap.spawn_map(game, lv))
+    lvl.objectives = m['objectives']  # pyright: ignore[reportAttributeAccessIssue]  # BF1943 only, not a Level field
     roles = {o['guid']: o['role'] for o in m['objectives']}
     for e in lvl.entities:
         if e.short_type == 'CapturePointEntityData':
@@ -121,6 +125,8 @@ def load(level, game=None, terrain_stride=2, log=print):
                 if a is not None:
                     a.team = e.team
     # collision
+    cache: dict[str, Any]
+    missing: dict[str, Any]
     cache, missing = {}, {}
     for e in lvl.entities:
         if e.blueprint is None or e.matrix is None:
@@ -146,7 +152,7 @@ def load(level, game=None, terrain_stride=2, log=print):
     else:
         lvl.notes.append('no water mesh')
     # spawns no base owns (the carriers' boats, planes and guns): the side of the carrier they stand on
-    carriers = []
+    carriers: list[tuple[int, npt.NDArray[np.float32], npt.NDArray[np.float32]]] = []
     for x in lvl.meshes:
         bp = lvl.entities[x.entity].blueprint or ''
         side = 1 if bp.endswith('/us_carrier') else 2 if bp.endswith('/jap_carrier') else None
@@ -161,11 +167,12 @@ def load(level, game=None, terrain_stride=2, log=print):
                     e.team = side
     n_tris = sum(len(x.triangles) for x in lvl.meshes)
     log(f'{lvl.name}: {len(lvl.entities)} entities, {len(lvl.meshes)} with collision ({n_tris} triangles), '
-        f'{len(lvl.missing_collision)} blueprints without collision, {len(lvl.objectives)} bases and flags')
+        f'{len(lvl.missing_collision)} blueprints without collision, '
+        f'{len(lvl.objectives)} bases and flags')  # pyright: ignore[reportAttributeAccessIssue]
     return lvl
 
 
-def terrain_name_1943(instances):
+def terrain_name_1943(instances: Iterable[dbx.Element]) -> str | None:
     """The terrain's name from TerrainEntityData.TerrainAsset (terrains/<name>/<name>/<guid>), or None."""
     for el in instances:
         if (el.attr('type') or '').endswith('.TerrainEntityData'):
@@ -175,7 +182,7 @@ def terrain_name_1943(instances):
     return None
 
 
-def water_from_bytes(data):
+def water_from_bytes(data: bytes) -> water.Water:
     """water.Water from a .Water.Mesh.res's bytes (water.read_mesh reads a file: a temporary one)."""
     import tempfile
     fd, path = tempfile.mkstemp(suffix='.water.mesh.res')

@@ -24,35 +24,37 @@ VisualWater (the drawing copy; only the parts used here):
 import os
 import struct
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
+import numpy.typing as npt
 
 
 @dataclass
 class Water:
-    vertices: np.ndarray                  # (n, 3) float32
-    triangles: np.ndarray                 # (m, 3) uint32
-    shader: Optional[List[str]] = None    # per triangle, from the VisualWater ranges; None if they do not match
-    shaders: Optional[List[str]] = None   # the VisualWater slots
+    vertices: npt.NDArray[np.float32]     # (n, 3) float32
+    triangles: npt.NDArray[np.uint32]     # (m, 3) uint32
+    shader: list[str] | None = None       # per triangle, from the VisualWater ranges; None if they do not match
+    shaders: list[str] | None = None      # the VisualWater slots
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.triangles)
 
 
-def _u32(d, e, o, path, what):
+def _u32(d: bytes, e: str, o: int, path: str, what: str) -> int:
     """The u32 at o; ValueError when the file ends before it (2026-10-31 fuzzing: a struct.error before)."""
     if o + 4 > len(d):
         raise ValueError(f'{path}: the file ends at {len(d)} bytes, before {what} at {o} - a damaged or cut file')
     return struct.unpack_from(e + 'I', d, o)[0]
 
 
-def read_mesh(path):
+def read_mesh(path: str) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]:
     """(vertices, triangles) of every body in a .Water.Mesh.res, bodies joined. ValueError for a file that is not a
     whole WaterMesh: cut short, a triangle past its body's vertices, a vertex that is not a finite number."""
     d = open(path, 'rb').read()
     e = '<' if _u32(d, '<', 0, path, 'the body count') < 0x10000 else '>'    # a handful of bodies, either byte order
     bodies = _u32(d, e, 0, path, 'the body count')
+    verts: list[npt.NDArray[np.float32]]
+    tris: list[npt.NDArray[np.uint32]]
     o, verts, tris = 4, [], []
     base = 0
     for b in range(bodies):
@@ -82,7 +84,7 @@ def read_mesh(path):
             np.concatenate(tris) if tris else np.zeros((0, 3), np.uint32))
 
 
-def read_visual(path):
+def read_visual(path: str) -> tuple[npt.NDArray[np.uint32], list[str], list[tuple[int, int, int, int]]]:
     """(indices, slot shader paths, ranges [(slot, triangles, first index, index count)]) of a .Water.res. ValueError
     for a file whose parts run past its end (2026-10-31 fuzzing: a struct.error before)."""
     d = open(path, 'rb').read()
@@ -95,7 +97,7 @@ def read_visual(path):
     o += 4 + ib
     slots = _u32(d, '<', o, path, 'the slot count')
     o += 4
-    names = []
+    names: list[str] = []
     while len(names) < slots + 1:              # the slots, then the fragment shader (each name at least its zero byte)
         e = d.find(b'\0', o)
         if e < 0:
@@ -112,7 +114,7 @@ def read_visual(path):
     return indices, names[:slots], ranges
 
 
-def read(folder, name):
+def read(folder: str, name: str) -> Water | None:
     """The water of terrain <name> under an unpacked terrain-00.fbrb (None if it has no water files)."""
     mesh = visual = None
     for root, _, files in os.walk(folder):

@@ -20,6 +20,8 @@ import math
 import os
 import sys
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -38,32 +40,38 @@ GRID = 0.8           # cells are compared on this grid whatever an area's pitch 
 STACK_TOL = 4.0      # where floors are stacked, cells pair by nearest height up to this difference (storeys are 2.5 m+)
 NODE_XZ, NODE_Y = 0.05, 0.3
 
+type IJ = tuple[int, int]                       # a cell's grid index (i, j)
+type Cells = dict[IJ, float]                    # one area's cells: (i, j) -> ground height estimate
+type CellKey = tuple[int, IJ]                   # (area index, (i, j))
+type Segment = tuple[kymesh.Vec3, kymesh.Vec3]
+type Piece = tuple[tuple[int, int], tuple[int, int]]   # a grid-sized piece in half-pitch units, ends sorted
+
 
 # ------------------------------------------------------------------------------------------------ loading
 
 class Sector:
-    def __init__(self, s):
+    def __init__(self, s: hpdtool.Sector) -> None:
         self.id = s.id
         self.mesh = kymesh.parse_mesh(s.mesh)
         self.nodes = s.nodes
         self.edges = s.edges
-        self._cells = None
+        self._cells: list[Cells] | None = None
 
-    def cells(self):
+    def cells(self) -> list[Cells]:
         """Per area: dict (i, j) -> ground height estimate."""
         if self._cells is None:
             self._cells = [area_cells(a) for a in self.mesh.areas]
         return self._cells
 
 
-def load(path):
+def load(path: str) -> dict[int, Sector]:
     f = hpdtool.parse(open(path, 'rb').read())
     return {s.id: Sector(s) for s in f.sectors}
 
 
-def segments(area):
+def segments(area: kymesh.Area) -> list[Segment]:
     """All boundary segments of an area in (x, y, z): outline polylines, portals, border portals."""
-    segs = []
+    segs: list[Segment] = []
     for line in area.outline:
         segs.extend(zip(line[:-1], line[1:]))
     segs.extend((p.p0, p.p1) for p in area.portals)
@@ -71,7 +79,7 @@ def segments(area):
     return segs
 
 
-def area_cells(area, y_offset=None, points=False):
+def area_cells(area: kymesh.Area, y_offset: float | None = None, points: bool = False) -> dict[IJ, Any]:
     """Samples inside the area's boundary (even-odd rule on the xz plane), with a ground height estimate from the
     nearest boundary point: its height less y_offset (default Y_OFFSET, DICE's 0.95; BF1943 builds store 0.9).
     points: the values are (estimate, x, z of that boundary point)."""
@@ -113,7 +121,7 @@ def area_cells(area, y_offset=None, points=False):
     boundary_points = np.concatenate([a, b])
     sel_i, sel_j = ii[inside], jj[inside]
     sx, sz = sel_i * pitch, sel_j * pitch
-    out = {}
+    out: dict[IJ, Any] = {}
     for k in range(0, len(sel_i), 2048):
         dist2 = ((sx[k:k + 2048, None] - boundary_points[None, :, 0]) ** 2
                  + (sz[k:k + 2048, None] - boundary_points[None, :, 2]) ** 2)
@@ -131,7 +139,8 @@ def area_cells(area, y_offset=None, points=False):
 
 # ------------------------------------------------------------------------------------------------ comparing
 
-def match_cells(ref_cells, cand_cells):
+def match_cells(ref_cells: Sequence[Cells], cand_cells: Sequence[Cells]
+                ) -> tuple[dict[CellKey, CellKey], set[CellKey]]:
     """Pairs cells of two sectors at the same (i, j). Heights are estimates (from the boundary, so rough on large
     sloped areas): they only tell stacked floors apart. One floor on each side: the same ground. Several: paired
     by nearest height, at most STACK_TOL apart. Returns ref (area, ij) -> cand (area, ij) and the used cand cells."""
@@ -164,10 +173,10 @@ def match_cells(ref_cells, cand_cells):
     return ref_to_cand, cand_used
 
 
-def pieces(segs, pitch):
+def pieces(segs: Iterable[Segment], pitch: float) -> set[Piece]:
     """Segments as a set of grid-sized pieces in half-pitch units (xz only), direction-free."""
     half = pitch / 2.0
-    out = set()
+    out: set[Piece] = set()
     for p0, p1 in segs:
         x0, z0, x1, z1 = p0[0] / half, p0[2] / half, p1[0] / half, p1[2] / half
         steps = max(int(round(max(abs(x1 - x0), abs(z1 - z0)))), 1)
@@ -178,18 +187,18 @@ def pieces(segs, pitch):
     return out
 
 
-def _outline_segments(area):
+def _outline_segments(area: kymesh.Area) -> list[Segment]:
     return [s for line in area.outline for s in zip(line[:-1], line[1:])]
 
 
-def _border_pieces(area, pitch):
+def _border_pieces(area: kymesh.Area, pitch: float) -> set[tuple[Piece, tuple[float, ...]]]:
     """The area's border portals as (grid piece, rounded direction) pairs."""
     return {(piece, tuple(round(v, 3) for v in b.direction))
             for b in area.border_portals for piece in pieces([(b.p0, b.p1)], pitch)}
 
 
-def compare_sector(ref, cand):
-    r = {'cells_ref': 0, 'cells_cand': 0, 'cells_same': 0,
+def compare_sector(ref: Sector, cand: Sector) -> dict[str, Any]:
+    r: dict[str, Any] = {'cells_ref': 0, 'cells_cand': 0, 'cells_same': 0,
          'areas_ref': len(ref.mesh.areas), 'areas_cand': len(cand.mesh.areas),
          'areas_same': 0, 'areas_split': 0, 'areas_other': 0,
          'outline_same': 0, 'portals_same': 0, 'borders_same': 0,
@@ -214,14 +223,14 @@ def compare_sector(ref, cand):
     # areas: a reference area is reproduced by a candidate area with exactly the same boundary (outline, portals,
     # border portals as grid pieces at its own pitch) at the same height; unmatched ones are "split" when their
     # ground is spread over several candidate areas, else "other"
-    def shape(area):
+    def shape(area: kymesh.Area) -> tuple[float, frozenset[Piece], int, int]:
         segs = (_outline_segments(area) + [(p.p0, p.p1) for p in area.portals]
                 + [(b.p0, b.p1) for b in area.border_portals])
         return (round(area.pitch, 2), frozenset(pieces(segs, area.pitch)), round(area.min_y * 2), round(area.max_y * 2))
     by_shape = defaultdict(list)
     for bj, area in enumerate(cand.mesh.areas):
         by_shape[shape(area)].append(bj)
-    area_map = {}           # reference area index -> candidate area index
+    area_map: dict[int, int] = {}           # reference area index -> candidate area index
     for ai, area in enumerate(ref.mesh.areas):
         hits = by_shape.get(shape(area))
         if hits:
@@ -288,11 +297,13 @@ def compare_sector(ref, cand):
 
 # ------------------------------------------------------------------------------------------------ report
 
-def pct(a, b):
+def pct(a: float, b: float) -> float:
     return 100.0 * a / b if b else 100.0
 
 
-def diff(reference, candidate, per_sector=False, log=print, clip=None):
+def diff(reference: str, candidate: str, per_sector: bool = False, log: Callable[[str], object] = print,
+         clip: tuple[float, float, float, float] | None = None
+         ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[int, Sector], dict[int, Sector]]:
     """clip: (minX, minZ, maxX, maxZ) - reference cells outside it are left out (ground beyond the level's terrain)."""
     ref_sectors, cand_sectors = load(reference), load(candidate)
     if clip:
@@ -303,8 +314,8 @@ def diff(reference, candidate, per_sector=False, log=print, clip=None):
                              for cells in sector.cells()]
     only_ref = sorted(set(ref_sectors) - set(cand_sectors))
     only_cand = sorted(set(cand_sectors) - set(ref_sectors))
-    total = defaultdict(int)
-    rows = []
+    total: defaultdict[str, int] = defaultdict(int)
+    rows: list[dict[str, Any]] = []
     for sid in sorted(set(ref_sectors) & set(cand_sectors)):
         row = compare_sector(ref_sectors[sid], cand_sectors[sid])
         row['id'] = sid
@@ -322,11 +333,11 @@ def diff(reference, candidate, per_sector=False, log=print, clip=None):
     for sid in only_cand:
         total['cells_cand'] += sum(len(c) for c in cand_sectors[sid].cells())
 
-    def share(part, whole):
+    def share(part: str, whole: str) -> float:
         return round(pct(total[part], total[whole]), 2)
 
     worst = sorted(rows, key=lambda row: -(len(row['only_ref']) + len(row['only_cand'])))[:15]
-    res = {
+    res: dict[str, Any] = {
         'reference': reference, 'candidate': candidate,
         'sectors': {'reference': len(ref_sectors), 'candidate': len(cand_sectors),
                     'only_reference': [hex(s) for s in only_ref], 'only_candidate': [hex(s) for s in only_cand]},
@@ -373,7 +384,7 @@ def diff(reference, candidate, per_sector=False, log=print, clip=None):
     return res, rows, ref_sectors, cand_sectors
 
 
-def pngs(rows, R, C, out_dir, top):
+def pngs(rows: list[dict[str, Any]], R: dict[int, Sector], C: dict[int, Sector], out_dir: str, top: int) -> None:
     """R, C: the reference's and the candidate's sectors by id (diff's third and fourth results)."""
     import matplotlib
     matplotlib.use('Agg')
@@ -402,7 +413,7 @@ def pngs(rows, R, C, out_dir, top):
         plt.close(fig)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     args = [a for a in argv[1:] if not a.startswith('--')]
     opts = dict(zip(argv[1:], argv[2:]))
     if len(args) < 2:

@@ -9,9 +9,16 @@ Island's air-raid bunker (airraidbunker_wake.dbx: radius 3 m, entry at local (0,
 sealed room this way. The entry points of parts that move (turrets) are taken at their rest transform. Whether the game
 also requires a line of sight to the entry point is not known.
 """
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
+import numpy.typing as npt
 
 from . import dbx
+
+if TYPE_CHECKING:
+    from .game1943 import Game
+    from .level import Entity
 
 GROUND = {'willys-mb', 'kurogane', 'm4-sherman', 'type97-chiha'}
 BOATS = {'lcvp-landingcraft'}
@@ -21,20 +28,20 @@ CLASSES = ['ground vehicle', 'boat', 'aircraft', 'stationary weapon', 'other']
 CACHE_ATTR = '_vehicle_entries'     # the per-game cache: an attribute of the game object, so it goes with the object
 
 
-def vehicle_class(name):
+def vehicle_class(name: str | None) -> str:
     name = name or ''
     return ('ground vehicle' if name in GROUND else 'boat' if name in BOATS else 'aircraft' if name in AIRCRAFT
             else 'stationary weapon' if name in STATIONARY else 'other')
 
 
-def vehicle_partition(entity):
+def vehicle_partition(entity: 'Entity') -> str | None:
     """The vehicle blueprint partition a vehicle spawn entity makes ('objects/vehicles/...'), or None."""
     v = entity.element.child('Vehicle')
     ref = v.attr('ref') if v is not None else None
     return ref.rsplit('/', 1)[0] if ref and ref != 'null' else None
 
 
-def local_entries(game, partition):
+def local_entries(game: 'Game', partition: str) -> list[tuple[npt.NDArray[np.float64], float, int]]:
     """[(local position (3,), radius, order)] of a vehicle blueprint's PlayerEntryComponentData (cached on the game
     object: 2026-10-30, a module cache keyed by id(game) gave a new game, whose id Python had reused, another copy's
     entries)."""
@@ -46,7 +53,7 @@ def local_entries(game, partition):
         except (AttributeError, TypeError):
             pass                                  # an object that takes no attributes: read every time
     if partition not in cache:
-        out = []
+        out: list[tuple[npt.NDArray[np.float64], float, int]] = []
         data = game.data(partition + '.dbx')
         if data:
             for inst in dbx.parse(data).instances:
@@ -66,7 +73,7 @@ def local_entries(game, partition):
     return cache[partition]
 
 
-def entry_points(game, entity):
+def entry_points(game: 'Game', entity: 'Entity') -> list[dict[str, Any]]:
     """The spawn's vehicle's entry points in the world: [{'point', 'radius', 'order'}]; [] when it has none."""
     part = vehicle_partition(entity)
     if part is None or entity.matrix is None:

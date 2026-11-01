@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Callable
 
 SUITE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DBX = os.path.join(SUITE, 'bf1943-dbx-tools')
@@ -19,7 +20,7 @@ LEVEL_DIFF = os.path.join(SUITE, 'bf1943-diff-workbench', 'level-diff')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
-def dbx_sources(folder):
+def dbx_sources(folder: str) -> list[str]:
     """DbxEdit's sources in folder: the files its DbxEdit.rsp lists (the C# compiler's response file the build.bat files
     compile them with: one name per line, # comments), then DbxEdit.rsp itself."""
     rsp = os.path.join(folder, 'DbxEdit.rsp')
@@ -32,7 +33,7 @@ def dbx_sources(folder):
     return [os.path.join(folder, n) for n in names] + [rsp]
 
 
-def tools():
+def tools() -> dict[str, tuple[str, str, list[str]]]:
     """name -> (exe, build.bat, sources compiled into it). LevelDiff's DbxEdit sources follow DBX_TOOLS, as its build.bat."""
     dbx_tools = os.environ.get('DBX_TOOLS') or DBX
     return {
@@ -44,7 +45,7 @@ def tools():
     }
 
 
-def sources_hash(files):
+def sources_hash(files: list[str]) -> str:
     h = hashlib.sha256()
     for f in files:
         with open(f, 'rb') as fh:
@@ -53,11 +54,11 @@ def sources_hash(files):
     return h.hexdigest()
 
 
-def stamp_path(exe):
+def stamp_path(exe: str) -> str:
     return exe + '.sources'
 
 
-def stale(exe, bat, sources):
+def stale(exe: str, bat: str, sources: list[str]) -> str | None:
     """Why exe must be rebuilt (words), or None when it is current."""
     if not os.path.isfile(exe):
         return 'not built yet'
@@ -74,7 +75,7 @@ def stale(exe, bat, sources):
     return None
 
 
-def build(bat, log=None):
+def build(bat: str, log: Callable[[str], object] | None = None) -> None:
     """Runs build.bat and records, for each exe it builds, the sources it was built from."""
     r = subprocess.run(['cmd', '/c', bat], capture_output=True, text=True, errors='replace', creationflags=NO_WINDOW)
     if r.returncode != 0:
@@ -90,7 +91,7 @@ def build(bat, log=None):
         log(r.stdout.strip())
 
 
-def ensure(name, log=None):
+def ensure(name: str, log: Callable[[str], object] | None = None) -> str:
     """The tool's exe, built first if it is missing or not from the current sources."""
     exe, bat, sources = tools()[name]
     why = stale(exe, bat, sources)

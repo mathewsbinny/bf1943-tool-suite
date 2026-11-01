@@ -25,24 +25,24 @@ import matplotlib.pyplot as plt
 import hpdtool
 
 
-def u32(mesh, offset):
+def u32(mesh: bytes, offset: int) -> int:
     return struct.unpack_from('<I', mesh, offset)[0]
 
 
-def f32(mesh, offset):
+def f32(mesh: bytes, offset: int) -> float:
     return struct.unpack_from('<f', mesh, offset)[0]
 
 
-def points_between(mesh, start, end):
+def points_between(mesh: bytes, start: int, end: int) -> list[tuple[float, ...]]:
     """The 3-D points (12 bytes each) from start up to end."""
     return [struct.unpack_from('<3f', mesh, q) for q in range(start, end - 11, 12)]
 
 
-def segs_from_lists(mesh, obj, count_off, table_off):
+def segs_from_lists(mesh: bytes, obj: int, count_off: int, table_off: int) -> list[list[tuple[float, ...]]]:
     """D/E lists of the area object at obj: index table of count+1 offsets (relative to the object), data = 3-D
     points."""
     count = u32(mesh, obj + count_off)
-    out = []
+    out: list[list[tuple[float, ...]]] = []
     if not count:
         return out
     table = obj + u32(mesh, obj + table_off)
@@ -52,7 +52,7 @@ def segs_from_lists(mesh, obj, count_off, table_off):
     return out
 
 
-def main():
+def main() -> int | None:
     if len(sys.argv) < 4 or any(a in ('-h', '--help') for a in sys.argv[1:]):
         print(__doc__)
         return 0 if len(sys.argv) > 1 else 1

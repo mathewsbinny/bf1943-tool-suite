@@ -22,6 +22,7 @@ import struct
 from dataclasses import dataclass
 
 import numpy as np
+import numpy.typing as npt
 
 HEADER = struct.Struct('<6f6IB')
 HEADER_BE = struct.Struct('>6f6IB')
@@ -29,17 +30,17 @@ HEADER_BE = struct.Struct('>6f6IB')
 
 @dataclass
 class Heightfield:
-    min: np.ndarray        # (x, y, z)
-    max: np.ndarray
+    min: npt.NDArray[np.float64]        # (x, y, z)
+    max: npt.NDArray[np.float64]
     size: int
-    raw: np.ndarray        # (size, size) uint16 as stored
-    heights: np.ndarray    # (size, size) float32 metres
+    raw: npt.NDArray[np.uint16]         # (size, size) uint16 as stored
+    heights: npt.NDArray[np.float32]    # (size, size) float32 metres
 
     @property
-    def cell(self):
+    def cell(self) -> tuple[float, float]:
         return (self.max[0] - self.min[0]) / self.size, (self.max[2] - self.min[2]) / self.size
 
-    def height(self, x, z):
+    def height(self, x: npt.ArrayLike, z: npt.ArrayLike) -> npt.NDArray[np.float64]:
         """Heights at world (x, z), each grid square split along its (i, j)-(i+1, j+1) diagonal."""
         cx, cz = self.cell
         u = (np.asarray(x, float) - self.min[0]) / cx
@@ -52,7 +53,7 @@ class Heightfield:
         a, b, c, d = H[j, i], H[j, i + 1], H[j + 1, i], H[j + 1, i + 1]
         return np.where(fu > fw, a + (b - a) * fu + (d - b) * fw, a + (c - a) * fw + (d - c) * fu)
 
-    def mesh(self, stride=2):
+    def mesh(self, stride: int = 2) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]:
         """(vertices (n, 3) float32, triangles (m, 3) uint32) on every <stride>-th sample."""
         cx, cz = self.cell
         idx = np.arange(0, self.size, stride)
@@ -66,14 +67,14 @@ class Heightfield:
         return verts, tris
 
 
-def read(path):
+def read(path: str | bytes) -> Heightfield:
     data = open(path, 'rb').read() if isinstance(path, str) else bytes(path)
     if len(data) < HEADER.size:
         raise ValueError(f'{path if isinstance(path, str) else "data"}: {len(data)} bytes, shorter than a '
                          f'TerrainHeightfield header')
     # the byte order whose samples-per-side is a power of two and whose heights fit in the file (the other order
     # reads a size hundreds of times larger)
-    def fits(e):
+    def fits(e: str) -> bool:
         n = struct.unpack_from(e + 'I', data, 0x18)[0]
         return 2 <= n <= 0x8000 and not n & (n - 1) and HEADER.size + 2 * n * n <= len(data)
     little = fits('<') or not fits('>')
@@ -92,7 +93,7 @@ def read(path):
     return Heightfield(lo, hi, size, raw, heights)
 
 
-def find(folder, lv):
+def find(folder: str, lv: str) -> str | None:
     """The level's .Heightfield-000.res under an unpacked terrain-00.fbrb, or None."""
     for root, _, files in os.walk(folder):
         for name in files:

@@ -12,7 +12,7 @@ import math
 import struct
 from decimal import ROUND_HALF_UP, Decimal
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import cast
 
 CONTAINER, TEXT, NUMBERS = 0xA, 2, 7
 MAGIC = b'{binary}'
@@ -24,18 +24,18 @@ WHOLE_NUMBER_FIELDS = {'OriginalHashedWaveName', 'HashedName', 'HashedWaveName',
 class Element:
     tag: str
     kind: int
-    attributes: List[Tuple[str, str]] = field(default_factory=list)
+    attributes: list[tuple[str, str]] = field(default_factory=list)
     text: str = ''                         # TEXT
     raw: bytes = b''                       # NUMBERS: count/size varints + values; other kinds: the two bytes
-    children: Optional[List['Element']] = None
+    children: list['Element'] | None = None
 
-    def attr(self, name, default=None):
+    def attr(self, name: str, default: str | None = None) -> str | None:
         for k, v in self.attributes:
             if k == name:
                 return v
         return default
 
-    def child(self, name):
+    def child(self, name: str) -> 'Element | None':
         """The first direct child with attribute name == name."""
         for c in self.children or ():
             if c.attr('name') == name:
@@ -45,18 +45,18 @@ class Element:
 
 @dataclass
 class DbxFile:
-    strings: List[str]
-    roots: List[Element]
+    strings: list[str]
+    roots: list[Element]
 
     @property
-    def partition(self):
+    def partition(self) -> Element:
         return self.roots[0]
 
     @property
-    def instances(self):
-        return [e for e in self.roots[0].children if e.tag == 'instance']
+    def instances(self) -> list[Element]:
+        return [e for e in cast(list[Element], self.roots[0].children) if e.tag == 'instance']
 
-    def instance(self, guid):
+    def instance(self, guid: str) -> Element | None:
         g = guid.lower()
         for e in self.instances:
             if (e.attr('guid') or '').lower() == g:
@@ -64,15 +64,15 @@ class DbxFile:
         return None
 
     @staticmethod
-    def get(e, name):
+    def get(e: Element, name: str) -> str | None:
         return e.attr(name)
 
 
-def is_binary(data):
+def is_binary(data: bytes) -> bool:
     return len(data) > 24 and data[:8] == MAGIC
 
 
-def _varint(data, pos):
+def _varint(data: bytes, pos: int) -> tuple[int, int]:
     value, shift = 0, 0
     while True:
         if pos >= len(data):
@@ -87,18 +87,18 @@ def _varint(data, pos):
         shift += 7
 
 
-def _need(data, pos, size, what):
+def _need(data: bytes, pos: int, size: int, what: str) -> None:
     if pos + size > len(data):
         raise ValueError(f'truncated .dbx: {what} at {pos:#x} needs {size} bytes, the file ends at {len(data):#x}')
 
 
-def _string(strings, index, pos):
+def _string(strings: list[str], index: int, pos: int) -> str:
     if index >= len(strings):
         raise ValueError(f'damaged .dbx: string {index} at {pos:#x}, the table has {len(strings)}')
     return strings[index]
 
 
-def _strings(data):
+def _strings(data: bytes) -> tuple[list[str], int]:
     if len(data) < 24:
         raise ValueError('truncated .dbx: no string table header')
     area, count = struct.unpack_from('>II', data, 16)
@@ -110,7 +110,7 @@ def _strings(data):
     base = 24 + 4 * count
     if base > stop:
         raise ValueError(f'damaged .dbx: {count} string offsets do not fit in the string area of {area} bytes')
-    out = []
+    out: list[str] = []
     for i, off in enumerate(offsets):
         start = base + off
         end = data.find(b'\0', start, stop)
@@ -125,15 +125,15 @@ class DeletedEntry(ValueError):
     """The file is a bundle's zero-byte *deleted* marker: there is nothing to read (it is not a broken file)."""
 
 
-def parse(data):
+def parse(data: bytes) -> DbxFile:
     """A binary .dbx file as an element tree (FORMAT.md sections 1-2)."""
     if not data:
         raise DeletedEntry('empty file: a *deleted* bundle entry (older FbrbTool unpacks wrote them as files)')
     if not is_binary(data):
         raise ValueError('not a binary .dbx file')
     strings, pos = _strings(data)
-    roots = []
-    stack = []
+    roots: list[Element] = []
+    stack: list[Element] = []
     n = len(data)
     while pos < n:
         tag, pos = _varint(data, pos)
@@ -154,7 +154,7 @@ def parse(data):
             _need(data, pos, 1, 'a container')
             pos += 1
             e.children = []
-            (stack[-1].children if stack else roots).append(e)
+            (cast(list[Element], stack[-1].children) if stack else roots).append(e)
             stack.append(e)
             continue
         if e.kind == TEXT:
@@ -173,7 +173,7 @@ def parse(data):
             _need(data, pos, 2, 'a value')
             e.raw = data[pos:pos + 2]
             pos += 2
-        (stack[-1].children if stack else roots).append(e)
+        (cast(list[Element], stack[-1].children) if stack else roots).append(e)
     if not roots:
         raise ValueError('damaged .dbx: no element after the string table (a partition has at least its root)')
     if roots[0].kind != CONTAINER:
@@ -186,21 +186,21 @@ def parse(data):
     return DbxFile(strings, roots)
 
 
-def read(path):
+def read(path: str) -> DbxFile:
     with open(path, 'rb') as f:
         return parse(f.read())
 
 
 # ------------------------------------------------------------------------------------------------ values
 
-def numbers(e):
+def numbers(e: Element) -> tuple[int, list[bytes]]:
     """(size, [raw big-endian bytes per value]) of a NUMBERS element."""
     count, p = _varint(e.raw, 0)
     size, p = _varint(e.raw, p)
     return size, [e.raw[p + i * size:p + (i + 1) * size] for i in range(count)]
 
 
-def floats(e):
+def floats(e: Element) -> list[float]:
     """The values of a 4-byte NUMBERS element read as decimals (e.g. a Transform)."""
     size, vals = numbers(e)
     if size != 4:
@@ -208,7 +208,7 @@ def floats(e):
     return [struct.unpack('>f', v)[0] for v in vals]
 
 
-def _net_g(value, precision):
+def _net_g(value: float, precision: int) -> str:
     """.NET's "G<precision>" formatting of a finite double (what "R" builds on): the exact binary value rounded
     to <precision> significant digits, a tie rounded away from zero; scientific notation (E+XX / E-XX) for an
     exponent below -4 or from <precision> up; trailing zeros dropped."""
@@ -221,7 +221,7 @@ def _net_g(value, precision):
     if r.adjusted() != exp:                # 9.99... rounded up to 10.0...
         exp = r.adjusted()
         r = d.quantize(Decimal(1).scaleb(exp - precision + 1), rounding=ROUND_HALF_UP)
-    digits = str(abs(r.scaleb(-r.as_tuple().exponent))).rstrip('0') or '0'
+    digits = str(abs(r.scaleb(-cast(int, r.as_tuple().exponent)))).rstrip('0') or '0'
     digits = digits[:precision]
     sign = '-' if r < 0 else ''
     if exp < -4 or exp >= precision:
@@ -234,7 +234,7 @@ def _net_g(value, precision):
     return sign + '0.' + '0' * (-exp - 1) + digits
 
 
-def _net_r_single(bits):
+def _net_r_single(bits: bytes) -> str:
     v = struct.unpack('>f', bits)[0]
     s = _net_g(v, 7)
     if struct.unpack('>f', struct.pack('>f', float(s)))[0] != v:
@@ -242,7 +242,7 @@ def _net_r_single(bits):
     return s
 
 
-def _net_r_double(raw):
+def _net_r_double(raw: bytes) -> str:
     v = struct.unpack('>d', raw)[0]
     if math.isnan(v):
         return 'NaN'
@@ -254,7 +254,7 @@ def _net_r_double(raw):
     return s
 
 
-def _number_text(raw, size, field_name):
+def _number_text(raw: bytes, size: int, field_name: str) -> str:
     if size == 4:
         whole = struct.unpack('>i', raw)[0]
         if field_name in WHOLE_NUMBER_FIELDS or (whole >> 24) == 0 or ((whole >> 23) & 0xFF) == 0xFF:
@@ -265,7 +265,7 @@ def _number_text(raw, size, field_name):
     return str(raw[0] << 8 | raw[1])
 
 
-def value(e):
+def value(e: Element) -> str:
     """A non-container element's value as the XML shows it (unescaped)."""
     if e.kind == TEXT:
         return e.text
@@ -279,17 +279,18 @@ def value(e):
 
 # ------------------------------------------------------------------------------------------------ XML
 
-def _escape(s):
+def _escape(s: str) -> str:
     return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 
-def to_xml(data):
+def to_xml(data: bytes) -> str:
     """FORMAT.md section 3: the readable XML, identical to `DbxEdit xml` on every valid file. The file is read
     with parse(), so a damaged one raises its ValueError here too (DbxEdit's export reads a string with no zero
     byte to the end of the file; this does not). Written with a stack, not recursion, so any nesting parse() accepts
     is exported (parse() reads iteratively too)."""
     out = ['<?xml version="1.0"?>\r\n']
-    todo = [(e, 0) for e in reversed(parse(data).roots)]    # (element, depth); (tag string, depth) closes a container
+    # (element, depth); (tag string, depth) closes a container
+    todo: list[tuple[Element | str, int]] = [(e, 0) for e in reversed(parse(data).roots)]
     while todo:
         e, depth = todo.pop()
         if isinstance(e, str):
@@ -299,7 +300,7 @@ def to_xml(data):
         if e.kind == CONTAINER:
             out.append(line + '>\r\n')
             todo.append((e.tag, depth))
-            todo.extend((c, depth + 1) for c in reversed(e.children))
+            todo.extend((c, depth + 1) for c in reversed(cast(list[Element], e.children)))
             continue
         content = _escape(value(e))
         if e.kind == TEXT and not content:

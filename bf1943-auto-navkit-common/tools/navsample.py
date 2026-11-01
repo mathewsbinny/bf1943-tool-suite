@@ -12,9 +12,11 @@ import math
 import struct
 import sys
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
+import numpy.typing as npt
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -42,16 +44,17 @@ class Samples:
     cap_bottom: float
     cap_top: float
     ray_radius: float
-    start: np.ndarray    # per column: index of its first surface (length nx*nz + 1)
-    y: np.ndarray        # per surface
-    normal: np.ndarray   # per surface, (n, 3) floats
-    flags: np.ndarray    # per surface
-    hit: np.ndarray = None   # per surface (version 2): shape vtable, shape word +0x0C, collidable word +0x1C
+    start: npt.NDArray[np.int64]    # per column: index of its first surface (length nx*nz + 1)
+    y: npt.NDArray[np.float32]        # per surface
+    normal: npt.NDArray[np.float32]   # per surface, (n, 3) floats
+    flags: npt.NDArray[np.uint8]    # per surface
+    # per surface (version 2): shape vtable, shape word +0x0C, collidable word +0x1C
+    hit: npt.NDArray[np.uint32] | None = None
 
-    def centre(self, i, j):
+    def centre(self, i: float, j: float) -> tuple[float, float]:
         return self.min_x + i * self.pitch, self.min_z + j * self.pitch
 
-    def column(self, i, j):
+    def column(self, i: int, j: int) -> range:
         c = j * self.nx + i
         return range(self.start[c], self.start[c + 1])
 
@@ -60,7 +63,7 @@ MAX_COLUMNS = 1 << 27      # nx * nz at most: 1.8 x the largest run so far (Cora
                            # Samples.start holds 8 bytes per column, whether or not the run finished them
 
 
-def load(path):
+def load(path: str) -> tuple[Samples, int]:
     """(Samples, columns read). Versions 1 and 2 keep an interrupted run's finished columns (the rest empty); version
     3, written whole at the end of a run, is read exactly as OPFOR's navsample.cpp writes it. ValueError for anything
     else (2026-10-31 fuzzing: struct.error on a cut header, a 2^31-column header that hung making its column table,
@@ -121,7 +124,7 @@ def load(path):
                    np.array(hits, dtype=np.uint32).reshape(-1, 3) if version == 2 else None), c   # version 1: no hit details
 
 
-def column_sectors(s, cols):
+def column_sectors(s: Samples, cols: npt.ArrayLike) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
     """(X, Z) arrays: the 100 m grid squares (floor(x / 100), floor(z / 100), before the sector offsets) of columns,
     from whole centimetres - min + i * pitch in floats puts a column on a sector line on either side of it, by the
     float32 rounding of the header's minimum and pitch (navbuild.stage and detailed.py then disagreed)."""
@@ -132,13 +135,13 @@ def column_sectors(s, cols):
     return x // 10000, z // 10000
 
 
-def walkable(s, slope_max_deg=40.0):
+def walkable(s: Samples, slope_max_deg: float = 40.0) -> npt.NDArray[np.bool]:
     """Per surface: the soldier fits (no capsule overlap) and the ground is not too steep."""
     min_ny = math.cos(math.radians(slope_max_deg)) - 0.01
     return ((s.flags & (BLOCKED | FAULT)) == 0) & (s.normal[:, 1] >= min_ny)
 
 
-def reference_cells(s, hpd_path):
+def reference_cells(s: Samples, hpd_path: str) -> dict[int, list[tuple[float, float, float]]]:
     """Rasterises the areas of an existing pathdata.hpd onto the sample grid.
     Returns {column: [(min_y, max_y, coverage), ...]}. Outlines run on cell corners ((k + 0.5) * pitch)
     with axis-aligned and 45-degree segments; a 45-degree segment passes through a sample and cuts its
@@ -146,7 +149,7 @@ def reference_cells(s, hpd_path):
     1 = whole cell inside, 0.5 = cut by a diagonal, 0.25/0.75 = rarer cases. Layers of overlapping
     areas (sector margins) are merged, keeping the largest coverage."""
     f = hpdtool.parse(open(hpd_path, 'rb').read())
-    cells = {}
+    cells: dict[int, list[tuple[float, float, float]]] = {}
     for sec in f.sectors:
         m = kymesh.parse_mesh(sec.mesh)
         for a in m.areas:
@@ -193,10 +196,10 @@ def reference_cells(s, hpd_path):
     return cells
 
 
-def flood(s, ok, seeds, max_dy):
+def flood(s: Samples, ok: npt.NDArray[np.bool], seeds: Iterable[int], max_dy: float) -> npt.NDArray[np.bool]:
     """Surfaces reachable from the seed surfaces over walkable neighbours (4-connected, |dy| <= max_dy)."""
     reach = np.zeros(len(s.y), dtype=bool)
-    q = deque()
+    q: deque[int] = deque()
     for k in seeds:
         if ok[k] and not reach[k]:
             reach[k] = True
@@ -217,7 +220,8 @@ def flood(s, ok, seeds, max_dy):
     return reach
 
 
-def compare(s, hpd_path, png=None, slope=40.0, step=0.28, tol=0.6):
+def compare(s: Samples, hpd_path: str, png: str | None = None, slope: float = 40.0, step: float = 0.28,
+            tol: float = 0.6) -> None:
     ref = reference_cells(s, hpd_path)
     ok = walkable(s, slope)
     tp = fn = fp_raw = 0
@@ -274,7 +278,7 @@ def compare(s, hpd_path, png=None, slope=40.0, step=0.28, tol=0.6):
         print('wrote', png)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(__doc__)
         return 1

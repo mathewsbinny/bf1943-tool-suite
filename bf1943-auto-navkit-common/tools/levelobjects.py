@@ -22,8 +22,11 @@ import os
 import re
 import struct
 import sys
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -37,11 +40,15 @@ from bfbc2core import xmlinst  # noqa: E402
 
 SEP = chr(92)
 
+# a blueprint's flags (blueprint_flags): ForbidPathfinding, ExcludeFromPathfinding, AllowPathdataSeeds, dynamic,
+# DisablePathfinding value, NeedsDetailedPathfinding
+type Flags = tuple[bool, bool, bool, bool, str, bool]
 
-def order_points(level_xml):
+
+def order_points(level_xml: str) -> list[list[float]]:
     """AI order positions of a level: the Transform translation of every AreaGeometryEntityData (the points the
     squad's area / patrol orders send soldiers to; sp_004_b's stairs-top go-to targets are two of them)."""
-    pts = []
+    pts: list[list[float]] = []
     for _typ, _guid, body in xmlinst.instances(level_xml, 'Entity.AreaGeometryEntityData'):
         t = re.search(r'<complex name="Transform">([^<]*)</complex>', body)
         if t:
@@ -51,11 +58,11 @@ def order_points(level_xml):
     return pts
 
 
-def blueprint_flags(bases):
+def blueprint_flags(bases: Iterable[str]) -> dict[str, Flags]:
     """lower-case blueprint path -> (ForbidPathfinding, ExcludeFromPathfinding, AllowPathdataSeeds, dynamic,
     DisablePathfinding value - e.g. PdtNever / PdtWhenAlive, NeedsDetailedPathfinding). The last (FLAG_DETAILED) is
     what DICE's detailed zones follow (detailed.py; added 2026-10-31 - objects.json from before has five)."""
-    flags = {}
+    flags: dict[str, Flags] = {}
     for base in bases:
         for f in glob.glob(os.path.join(base, '**', '*.xml'), recursive=True):
             t = open(f, encoding='utf-8', errors='replace').read()
@@ -74,10 +81,10 @@ def blueprint_flags(bases):
 FLAG_DETAILED = 5            # index of NeedsDetailedPathfinding in an object's flags (blueprint_flags)
 
 
-def mesh_aliases(bases):
+def mesh_aliases(bases: Iterable[str]) -> dict[str, str]:
     """lower-case blueprint path -> blueprint path of its Mesh reference (without _mesh), for blueprints that
     reuse another object's mesh and collision (InvWall_SP03 -> invisiblewall/invwall)."""
-    out = {}
+    out: dict[str, str] = {}
     for base in bases:
         for f in glob.glob(os.path.join(base, '**', '*.xml'), recursive=True):
             t = open(f, encoding='utf-8', errors='replace').read()
@@ -90,8 +97,8 @@ def mesh_aliases(bases):
     return out
 
 
-def havok_index(bases):
-    out = {}
+def havok_index(bases: Iterable[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
     for base in bases:
         for f in glob.glob(os.path.join(base, '**', '*_havok.res'), recursive=True):
             rel = os.path.relpath(f, base).replace(SEP, '/').lower()[:-len('_havok.res')]
@@ -105,7 +112,7 @@ def havok_index(bases):
     return out
 
 
-def triangles16(words):
+def triangles16(words: npt.ArrayLike) -> npt.NDArray[np.integer]:
     """Triangles of 16-bit indices stored in groups of four (three corners + padding); a last triangle stored without
     its padding word (a count of 4n + 3) is kept."""
     words = np.asarray(words)
@@ -116,7 +123,7 @@ def triangles16(words):
     return tris
 
 
-def triangles(path):
+def triangles(path: str) -> npt.NDArray[np.float32] | None:
     """Collision triangles (local space) of a blueprint's Havok asset, or None: storage extended mesh subparts and
     convex shapes' boxes. Havok 5.5 (BFBC2, hkp* classes, described in the file) and Havok 4.6.1 (BF1943, hk* classes,
     layouts from havok461.py), in the file's own byte order."""
@@ -127,10 +134,10 @@ def triangles(path):
         return None
 
 
-def triangles_of(pf):
+def triangles_of(pf: hkpack.Packfile) -> npt.NDArray[np.float32] | None:
     """triangles() of a loaded packfile."""
     if pf.contents_version.startswith('Havok-4.'):
-        tris = []
+        tris: list[npt.NDArray[Any]] = []
         for off in pf.objects_of('hkStorageExtendedMeshShapeMeshSubpartStorage'):
             v, t = havok461.triangles(pf, off)
             if v and t:
@@ -175,7 +182,7 @@ def triangles_of(pf):
     return np.concatenate(tris).astype(np.float32) if tris else None
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(__doc__)
         return 1
@@ -183,14 +190,14 @@ def main(argv):
     bases = [os.path.join(level_dir, 'pkg'), os.path.join(level_dir, 'dist')] + argv[3:]
     flags = blueprint_flags(bases)
     x = open(os.path.join(level_dir, 'dist', 'levels', level + '.xml'), encoding='utf-8', errors='replace').read()
-    objs = []
+    objs: list[dict[str, Any]] = []
     for _typ, _guid, body in xmlinst.instances(x, 'Entity.ReferenceObjectData'):
         t = re.search(r'<complex name="Transform">([^<]*)</complex>', body)
         r = xmlinst.field_ref(body, 'ReferencedObject')
         if t and r is not None:
             bp = r.rsplit('/', 1)[0].lower()
             objs.append({'bp': bp, 'flags': flags.get(bp), 'm': [float(a) for a in t.group(1).split('/')]})
-    groups = []
+    groups: list[dict[str, Any]] = []
     for f in glob.glob(os.path.join(level_dir, 'dist', 'levels', level, '*_HavokAsset.xml')):
         t = open(f, encoding='utf-8').read()
         tr = re.search(r'<array name="Transforms">([^<]*)<', t)
@@ -203,7 +210,7 @@ def main(argv):
             groups.append({'group': os.path.basename(f), 'bp': bp, 'flags': flags.get(bp),
                            'm': [float(v) for v in tr[i * 16:(i + 1) * 16]]})
     # soldier spawn points (seed points of the path data)
-    spawns = []
+    spawns: list[list[float]] = []
     for _typ, _guid, body in xmlinst.instances(x, '.SoldierSpawnEntityData'):
         t = re.search(r'<complex name="Transform">([^<]*)</complex>', body)
         if t:
@@ -222,7 +229,7 @@ def main(argv):
             havok[bp] = havok[target]
     cache, missing = {}, set()
 
-    def tris_of(o):
+    def tris_of(o: dict[str, Any]) -> npt.NDArray[np.float32] | None:
         if o['bp'] not in cache:
             cache[o['bp']] = triangles(havok[o['bp']]) if o['bp'] in havok else None
         t = cache[o['bp']]
@@ -232,7 +239,7 @@ def main(argv):
         m = np.array(o['m']).reshape(4, 4)        # rows: right, up, forward, translation
         return (t @ m[:3, :3] + m[3, :3]).astype(np.float32)
     # dynamic objects, and objects with DisablePathfinding = PdtWhenAlive (doors ...): path data ignores them
-    def barrier_arm(o):
+    def barrier_arm(o: dict[str, Any]) -> bool | np.bool:
         """Whole collision is one thin raised bar (boom barrier): >= 0.7 m above the object's origin, <= 0.5 m
         thick, >= 2 m long. Path data treats it as passable (DICE's routes cross closed checkpoint poles)."""
         if o['bp'] not in havok:

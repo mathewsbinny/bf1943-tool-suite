@@ -100,9 +100,9 @@ Run `quick` before every commit and `bf1943 --strict` before every push.
 
 **CI** ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the quick tier with `--strict` on every push
 and pull request, on GitHub's `windows-latest` with Python 3.13: it installs the libraries (`pip install --group ci`),
-runs the lint (`ruff check`), points `BF1943_GAME` and `BF1943_RESEARCH` at empty folders, builds the C# tools with
-their `build.bat` (the .NET Framework 4 compiler is part of the image) and runs the tools from the checkout, without an
-install; then it checks that the package installs (`pip install -e .`). It has no game copy, no research workspace and
+runs the lint (`ruff check`) and the type check (`pyright`, below: "Types"), points `BF1943_GAME` and
+`BF1943_RESEARCH` at empty folders, builds the C# tools with their `build.bat` (the .NET Framework 4 compiler is part
+of the image) and runs the tools from the checkout, without an install; then it checks that the package installs (`pip install -e .`). It has no game copy, no research workspace and
 no Xenia, and downloads nothing but Python libraries: so every quick test runs without them, and a skip fails the run
 like a failure. A second job, `coverage`, runs the quick tier again through pytest (`--strict-skips`) with line
 coverage of every Python process it starts, uploads the report (text, XML and HTML) as the artifact `coverage`, and
@@ -192,6 +192,30 @@ errors (`PLE`). An import that must follow the bootstrap or `sys.dont_write_byte
 `strict=`) and `B023` (a closure using a loop variable; every such closure here runs within its iteration). The VMX
 fingerprint's Python inputs (`bf1943-xex-tools/vmx_inputs.py` `INPUTS`) are left out, as they
 are never edited; `tests/test_repo.py` keeps that list equal to `INPUTS`.
+
+### Types
+
+The shared library code is annotated (Python 3.13 syntax: `list[int]`, `X | None`, numpy arrays as
+`npt.NDArray[np.float32]` and the like) and checked by [pyright](https://github.com/microsoft/pyright) at its
+`standard` strictness: `core/bfbc2core` and `bf1943-auto-navkit-common/tools` (the navbuild package included). The
+settings are `pyproject.toml` `[tool.pyright]`: the folders checked (`include`), and where their imports are found
+(`extraPaths`: the folders `suitepath.use` puts on `sys.path`, both NavKit variants included). pyright is pinned in the
+`ci` group with its `nodejs` extra, which brings Node.js as a PyPI wheel, so nothing outside PyPI is downloaded. CI's
+`quick` job runs it after the lint. From the suite folder, in the Python that has the `ci` group:
+
+```
+set PYRIGHT_PYTHON_IGNORE_WARNINGS=1
+python -m pyright
+```
+
+(the variable keeps it from asking PyPI for a newer version; `python -m pyright <file>` checks one file). A checked
+folder must stay at 0 errors. Where the checker cannot see a type the code guarantees, the code says so with
+`typing.cast` or a `# pyright: ignore[<rule>]` that carries its reason; an annotation never changes behaviour (they are
+evaluated at import time in 3.13, so a name used only in annotations is imported under `if TYPE_CHECKING:` and quoted).
+
+**To check another folder:** annotate its public functions, classes and dataclasses, add the folder to `include`, run
+pyright and fix what it finds (a real bug gets a regression test), and keep the folder at 0 errors in the same commit.
+The VMX fingerprint's inputs are never annotated or checked (`tests/test_repo.py` fails if `include` covers one).
 
 ### Coverage
 

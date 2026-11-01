@@ -4,15 +4,24 @@ walk edges in the 0.8 m sector where the 0.2 m samples join its pieces (seam_fin
 the build's Settings' (seam_gap_nodes, seam_fine_links, seam_far_links)."""
 import math
 from collections import defaultdict, deque
+from collections.abc import Collection
+from typing import TYPE_CHECKING
 
 from .config import CARRY_RADIUS, DETAILED_PITCH, DIST_EDGE_MAX, JoinScope
 from .graph import join_groups, line_walkable
+
+if TYPE_CHECKING:
+    import navsample
+
+    from .config import BuildState, SectorGraph, SectorInfo, SectorKey, StageResult, Vec3
+    from .inputs import Level
 
 
 SEAM_FINE_BAND = 2.0            # m: seam_fine_links looks this far into the normal sector from a mixed seam
 
 
-def fine_columns(sa, sb, gi, gj, pa, pb):
+def fine_columns(sa: 'navsample.Samples', sb: 'navsample.Samples', gi: int, gj: int, pa: float, pb: float
+                 ) -> list[tuple[int, int]]:
     """The columns of the fine grid sb (pitch pb) whose centres lie in the coarse grid sa's cell (gi, gj) (pitch pa):
     [c - pa/2, c + pa/2) on each axis, (pa / pb)^2 of them, each once. Both seam passes use it (2026-10-30). Before,
     seam_fine_links rounded the points c + (u + 0.5) x pb to the fine grid; those fall on halves, and round-half-even
@@ -24,7 +33,8 @@ def fine_columns(sa, sb, gi, gj, pa, pb):
     return [(fi0 + u, fj0 + v) for u in range(n) for v in range(n)]
 
 
-def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff, state):
+def seam_fine_links(a: 'StageResult', b: 'StageResult', by_sec: 'dict[SectorKey, SectorGraph]',
+                    b_secs: 'Collection[SectorKey]', xoff: int, zoff: int, state: 'BuildState') -> int:
     """SEAM_FINE_LINKS: in a normal (0.8 m) sector beside a detailed one, ground the 0.2 m samples join but the 0.8 m
     step rule does not - a lip the coarse grid cannot resolve (Coral Sea 0b0b: a strip at 138.11 and the ground at
     137.58, 0.53 m apart at 0.8 m, joined at 0.2 m by a slope 0.6-1.4 m past the seam; the strip's 0.2 m side was
@@ -40,7 +50,7 @@ def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff, state):
     made = 0
     next_id = [b['next_id'] + 500000]
 
-    def new_id():
+    def new_id() -> int:
         next_id[0] += 1
         return next_id[0]
     for S in sorted(b_secs):
@@ -138,7 +148,8 @@ def seam_fine_links(a, b, by_sec, b_secs, xoff, zoff, state):
     return made
 
 
-def seam_far_links(a, b, by_sec, b_secs, xoff, zoff, state):
+def seam_far_links(a: 'StageResult', b: 'StageResult', by_sec: 'dict[SectorKey, SectorGraph]',
+                   b_secs: 'Collection[SectorKey]', xoff: int, zoff: int, state: 'BuildState') -> int:
     """SEAM_FAR_LINKS: SEAM_FINE_LINKS for 0.8 m pieces two columns apart (2026-10-29). Iwo Jima 0b0d: a strip of four
     0.8 m surfaces 0.8-2.4 m past the seam and the main network's area beside it, joined by a 30-degree slope of 0.2 m
     kept ground (steps of 0.20 m at most), with no 0.8 m surface kept in the columns between (their one 0.8 m sample
@@ -157,11 +168,11 @@ def seam_far_links(a, b, by_sec, b_secs, xoff, zoff, state):
     made = 0
     next_id = [b['next_id'] + 600000]
 
-    def new_id():
+    def new_id() -> int:
         next_id[0] += 1
         return next_id[0]
 
-    def under(gi, gj):
+    def under(gi: int, gj: int) -> list[tuple[int, int]]:
         return fine_columns(sa, sb, gi, gj, pa, pb)
     for S in sorted(b_secs):
         for dX, dY in ((1, 0), (-1, 0), (0, 1), (0, -1)):
@@ -279,7 +290,9 @@ def seam_far_links(a, b, by_sec, b_secs, xoff, zoff, state):
 SEAM_REACH = 1.0                # seam_gap_nodes: each grid's ground for a gap node lies within this of the seam (m)
 
 
-def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff, state):
+def seam_gap_nodes(a: 'StageResult', b: 'StageResult', by_sec: 'dict[SectorKey, SectorGraph]',
+                   b_secs: 'Collection[SectorKey]', xoff: int, zoff: int, state: 'BuildState'
+                   ) -> tuple[int, int, int]:
     """SEAM_GAP_NODES: the shared nodes of a mixed-pitch seam come from the normal build (one per BORDER_NODE_SPACING
     of its ground along the seam) and are carried to the detailed one; detailed ground at the seam that no carried node
     reaches - a 0.2 m opening the 0.8 m run places no node near, a carried node dropped for want of ground within
@@ -294,18 +307,19 @@ def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff, state):
     yoff, fine_step = lb.settings.y_offset, lb.settings.detailed_link_step
     next_id = [b['next_id']]
 
-    def new_id():
+    def new_id() -> int:
         next_id[0] += 1
         return next_id[0]
 
-    def linked_shared(sec):
+    def linked_shared(sec: 'SectorKey') -> 'dict[int, Vec3]':
         pts, pairs = by_sec[sec][3], by_sec[sec][4]
         has = set()
         for u, v, _d in pairs:
             has.update((u, v))
         return {pts[q][0]: pts[q][1] for q in has if pts[q][0] & 0x80000000}
 
-    def ground(level, info, sec, x, z, inward, step):
+    def ground(level: 'Level', info: 'dict[SectorKey, SectorInfo]', sec: 'SectorKey', x: float, z: float,
+               inward: tuple[int, int], step: float) -> list[tuple[int, int, int]]:
         """Kept surfaces of the sector's own areas at the column nearest the seam (within SEAM_REACH inward)."""
         s = level.s
         own = info[sec]['area_of']
@@ -317,7 +331,8 @@ def seam_gap_nodes(a, b, by_sec, b_secs, xoff, zoff, state):
                 return [(k, gi, gj) for k in ks]
         return []
 
-    def attach(level, info, sec, nid, pos, k, gi, gj):
+    def attach(level: 'Level', info: 'dict[SectorKey, SectorInfo]', sec: 'SectorKey', nid: int, pos: 'Vec3', k: int,
+               gi: int, gj: int) -> bool:
         """The shared node on surface k of the sector's graph, linked by walkable lines (on the level's own grid)."""
         gi0, gj0, ox, oz = info[sec]['origin']
         pts, pairs = by_sec[sec][3], by_sec[sec][4]

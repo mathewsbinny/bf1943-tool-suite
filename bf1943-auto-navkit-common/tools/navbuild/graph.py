@@ -4,6 +4,8 @@ waypoints (join_groups), and a sector's final node and edge tables (finalize_gra
 import heapq
 import math
 from collections import defaultdict, deque
+from collections.abc import Callable, Container, Iterable, Sequence
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -13,8 +15,12 @@ from .config import (BORDER_OWNER, DEDUP_GRAPH_NODES, DETOUR_LINK_ALL, DETOUR_MA
     DETOUR_TRIGGER, DIST_EDGE_MAX, GABRIEL_EDGES, NODE_COVER, ORDER_MIN_ISLAND, ORDER_NODE_MIN, ORDER_NODES,
     SORT_NODES_BY_ID, BuildState)
 
+if TYPE_CHECKING:
+    from .config import AreaDict, BorderNode, GraphPair, GraphPoint, JoinScope, NewId, Points, SectorGraph, Traced
+    from .inputs import Level
 
-def line_walkable(level, k0, a, b, gi0, gj0, k1):
+
+def line_walkable(level: 'Level', k0: int, a: tuple[int, int], b: tuple[int, int], gi0: int, gj0: int, k1: int) -> bool:
     """Straight line from local sample a to b (i, j) over connected kept surfaces, starting on k0, ending on k1."""
     (i0, j0), (i1, j1) = a, b
     n = max(abs(i1 - i0), abs(j1 - j0))
@@ -33,7 +39,9 @@ def line_walkable(level, k0, a, b, gi0, gj0, k1):
     return k == k1 or abs(level.y[k] - level.y[k1]) <= 0.6
 
 
-def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join=None):
+def join_groups(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoint]', pairs: 'list[GraphPair]',
+                gi0: int, gj0: int, ox: float, oz: float, new_id: 'NewId', join: 'JoinScope | None' = None
+                ) -> tuple[dict[int, int], dict[int, tuple[int, int]]]:
     """Connect a sector graph's remaining groups: grid search (8-connected, step rule, within the sector's
     window) from one group to the nearest node of another, then string-pull the path into straight walkable legs
     with waypoint nodes. pts and pairs grow in place. join: the JoinScope of the sector (its window, and where the
@@ -42,7 +50,7 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join=None):
     pitch = grid.pitch
     parent = list(range(len(pts)))
 
-    def find(x):
+    def find(x: int) -> int:
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
@@ -62,7 +70,7 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join=None):
     wi, wj = join.window if join is not None and join.window else (grid.window, grid.window)
     lo_i, hi_i, lo_j, hi_j = wi[0] - m_, wi[-1] + m_, wj[0] - m_, wj[-1] + m_
 
-    def beyond_ok(i, j):
+    def beyond_ok(i: int, j: int) -> bool:
         # past the window only into a sector of this stage (this grid's pitch): a 0.2 m flood into a 0.8 m sector
         # would walk on samples the 0.8 m sector's cells do not show
         if join is None:
@@ -81,7 +89,7 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join=None):
         for root, members in sorted(groups.items(), key=lambda g: len(g[1])):
             if find(members[0]) != root:
                 continue
-            prev = {pts[m][2]: None for m in members}
+            prev: dict[int, int | None] = {pts[m][2]: None for m in members}
             q = deque(pts[m][2] for m in members)
             target = None
             while q and target is None:
@@ -108,7 +116,7 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join=None):
                 continue
             path = [target]
             while prev[path[-1]] is not None:
-                path.append(prev[path[-1]])
+                path.append(cast(int, prev[path[-1]]))   # not None: the loop's test
             path.reverse()                       # from a member's surface to the target's surface
             # string pulling
             way = [path[0]]
@@ -137,21 +145,23 @@ def join_groups(level, areas, pts, pairs, gi0, gj0, ox, oz, new_id, join=None):
     return node_at, cell_ij
 
 
-def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id, orders=(), ladders=(), join=None,
-                state=None):
+def build_graph(level: 'Level', areas: 'Sequence[AreaDict]', area_of: dict[int, int], traced: 'Sequence[Traced]',
+                borders: 'Sequence[BorderNode]', gi0: int, gj0: int, ox: float, oz: float, new_id: 'NewId',
+                orders: 'Points' = (), ladders: Sequence[tuple[int, int]] = (), join: 'JoinScope | None' = None,
+                state: BuildState | None = None) -> 'tuple[list[GraphPoint], list[GraphPair]]':
     """A sector's route graph: (pts, pairs). join: its JoinScope (join_groups); state: the build's BuildState (order
     nodes and repair counts are added to it)."""
     state = state if state is not None else BuildState()
     grid, yoff = level.grid, level.settings.y_offset
     pitch = grid.pitch
-    pts = []    # (id, pos, k, local i, local j)
+    pts: list[GraphPoint] = []    # (id, pos, k, local i, local j)
     # one node per surface: an area-centre or portal node whose surface already holds a node (another area's or
     # portal's, or a border node) is not added - DICE's route graphs have no two nodes at one position except a
     # border node in both of its sectors (sp_004_b: 1,515 shared positions, all border pairs with one id); NavKit
     # had 377 duplicate pairs joined by zero-length edges (2026-10-20)
     taken = {k for _nid, _pos, k in borders} if DEDUP_GRAPH_NODES else set()
 
-    def add(i, j, k):
+    def add(i: int, j: int, k: int) -> None:
         if i not in grid.window or j not in grid.window:
             # a cell of a window grown past a mixed seam (MIXED_OVERLAP): there for the cells the runtime reads, not
             # for nodes - ground joined to the sector only through the other grid's side made islands of 2-5 nodes
@@ -191,7 +201,7 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
     buckets = defaultdict(list)
     for idx, p in enumerate(pts):
         buckets[(int(p[1][0] // cell), int(p[1][2] // cell))].append(idx)
-    pairs = []
+    pairs: list[GraphPair] = []
     for idx, p in enumerate(pts):
         gx, gz = int(p[1][0] // cell), int(p[1][2] // cell)
         for dx in (-1, 0, 1):
@@ -229,7 +239,8 @@ def build_graph(level, areas, area_of, traced, borders, gi0, gj0, ox, oz, new_id
     return pts, pairs
 
 
-def add_cover_nodes(level, areas, pts, add, ox, oz, cover):
+def add_cover_nodes(level: 'Level', areas: 'Sequence[AreaDict]', pts: 'list[GraphPoint]',
+                    add: Callable[[int, int, int], None], ox: float, oz: float, cover: float) -> None:
     """NODE_COVER: in every area of 4+ cells, add route nodes (through add, so one per surface) at the cell farthest from
     all nodes on the same floor (|dy| < 2.5 m) until no cell is farther than cover metres."""
     pitch, yoff = level.grid.pitch, level.settings.y_offset
@@ -257,7 +268,7 @@ def add_cover_nodes(level, areas, pts, add, ox, oz, cover):
                 d = np.where(same, np.minimum(d, np.hypot(C[:, 0] - q[0], C[:, 2] - q[2])), d)
 
 
-def gabriel_prune(pts, pairs):
+def gabriel_prune(pts: 'Sequence[GraphPoint]', pairs: 'Iterable[GraphPair]') -> 'list[GraphPair]':
     """The pairs that are Gabriel edges of the sector's nodes (no other node within 2.5 m of height inside the circle
     with the pair as diameter), plus the shortest dropped pairs needed to keep every group of nodes the full pair set
     joins joined (so pruning never splits a route)."""
@@ -271,7 +282,7 @@ def gabriel_prune(pts, pairs):
         (rest if near.any() else keep).append((a_, b_, d))
     parent = list(range(len(pts)))
 
-    def find(x):
+    def find(x: int) -> int:
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
@@ -285,16 +296,16 @@ def gabriel_prune(pts, pairs):
     return keep
 
 
-def prune_order_nodes(graphs, state):
+def prune_order_nodes(graphs: 'list[SectorGraph]', state: BuildState) -> 'list[SectorGraph]':
     """Order nodes in a route island under ORDER_MIN_ISLAND nodes lose their edges (finalize_graph then
     drops them as unlinked); other nodes are untouched. An order node that joins a small pocket becomes the
     nearest node for points next to the main network, and the runtime takes the nearest node (sp_009: the order
     nodes cut connectivity 4.4 points through such pockets; 2026-10-20). Components over all sectors (border ids
     join them). state: the build's BuildState - its order_ids; the removed ones are recorded in
     state.order_stats['removed'] as (id, position, component size)."""
-    parent = {}
+    parent: dict[int, int] = {}
 
-    def find(x):
+    def find(x: int) -> int:
         parent.setdefault(x, x)
         while parent[x] != x:
             parent[x] = parent[parent[x]]
@@ -324,7 +335,9 @@ def prune_order_nodes(graphs, state):
             for sid, b, m, pts, pairs, o in graphs]
 
 
-def add_order_nodes(level, pts, pairs, node_at, area_of, orders, gi0, gj0, ox, oz, new_id, order_ids):
+def add_order_nodes(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPair]', node_at: dict[int, int],
+                    area_of: Container[int], orders: 'Points', gi0: int, gj0: int, ox: float, oz: float,
+                    new_id: 'NewId', order_ids: set[int]) -> int:
     """A route node at each AI order position (AreaGeometryEntityData) on this sector's walkable ground whose nearest
     route node on the same floor is farther than ORDER_NODE_MIN, linked to every node within DIST_EDGE_MAX it reaches
     in a straight walkable line. The runtime resolves a go-to point to the nearest gathered node (R = 15 m, the first
@@ -358,7 +371,9 @@ def add_order_nodes(level, pts, pairs, node_at, area_of, orders, gi0, gj0, ox, o
     return added
 
 
-def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id):
+def repair_detours(level: 'Level', pts: 'list[GraphPoint]', pairs: 'list[GraphPair]', node_at: dict[int, int],
+                   cell_ij: dict[int, tuple[int, int]], gi0: int, gj0: int, ox: float, oz: float,
+                   new_id: 'NewId') -> int:
     """Detour repair: for node pairs of the sector within DIST_EDGE_MAX whose graph route is longer than
     DETOUR_TRIGGER x their straight distance, while a walk over kept surfaces of at most DETOUR_MAX x the straight
     distance exists, add waypoint nodes along the string-pulled walk, linked along the chain (and to the nodes around
@@ -371,7 +386,7 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
     for a_, b_, d in pairs:
         adj[a_][b_] = adj[b_][a_] = min(d, adj[a_].get(b_, 1e18))
 
-    def routes(src, limit):
+    def routes(src: int, limit: float) -> dict[int, float]:
         best = {src: 0.0}
         q = [(0.0, src)]
         while q:
@@ -384,18 +399,18 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
                     heapq.heappush(q, (d + w, v))
         return best
 
-    def walk(k0, k1, limit):
+    def walk(k0: int, k1: int, limit: float) -> list[int] | None:
         """Shortest 8-connected walk over kept surfaces (step rule) from k0 to k1, at most limit metres; list of
         surfaces or None."""
         best = {k0: 0.0}
-        prev = {k0: None}
+        prev: dict[int, int | None] = {k0: None}
         q = [(0.0, k0)]
         while q:
             d, k = heapq.heappop(q)
             if k == k1:
                 path = [k]
                 while prev[path[-1]] is not None:
-                    path.append(prev[path[-1]])
+                    path.append(cast(int, prev[path[-1]]))   # not None: the loop's test
                 return path[::-1]
             if d > best[k]:
                 continue
@@ -414,7 +429,7 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
                         heapq.heappush(q, (nd, n))
         return None
 
-    def link(u):
+    def link(u: int) -> None:
         for q_ in range(len(pts)):
             if q_ == u or q_ in adj[u]:
                 continue
@@ -469,7 +484,8 @@ def repair_detours(level, pts, pairs, node_at, cell_ij, gi0, gj0, ox, oz, new_id
     return added
 
 
-def finalize_graph(pts, pairs, linked_ids, origin=None):
+def finalize_graph(pts: 'Sequence[GraphPoint]', pairs: 'Iterable[GraphPair]', linked_ids: Container[int],
+                   origin: tuple[float, float] | None = None) -> tuple[list[hpdtool.Node], list[hpdtool.Edge]]:
     """Nodes and edges of a sector. Nodes without an edge in any sector (lone nodes on slivers and tiny islands
     the group joining cannot reach; border ids count edges of both sectors) are dropped - DICE's data has none."""
     keep = [idx for idx, p in enumerate(pts) if p[0] in linked_ids]
@@ -498,7 +514,7 @@ def finalize_graph(pts, pairs, linked_ids, origin=None):
         for cost, dst in sorted(out_edges[idx], key=lambda e: e[1]):
             edges.append(hpdtool.Edge(cost, idx, dst))
         nodes[idx].a = first + 1 if out_edges[idx] else 0     # DICE: 0 = no outgoing edges
-    def foreign(nd):
+    def foreign(nd: hpdtool.Node) -> bool:
         # bit 16 of c: a border node's copy in a sector that does not own it. DICE: one copy per border id is the
         # owner (bit clear) - the sector whose 100 m square holds the node (1,379 of 1,445 sp_004_b ids), the
         # others set; ordinary nodes never. NavKit set the bit on every border copy, so no border node had an

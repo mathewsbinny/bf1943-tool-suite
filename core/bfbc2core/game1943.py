@@ -19,6 +19,12 @@ import gzip
 import os
 import struct
 import zlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fbrb1943 import Bundle
+
+    from . import dbx
 
 
 class BundleError(ValueError):
@@ -31,7 +37,7 @@ COMMON = 'levels-common-00.fbrb'          # the bundle every level shares (bluep
 MP_LEVELS = ['wake_island_s', 'guadal_canal', 'iwo_jima_s', 'coral_sea']
 
 
-def find_game(given=None):
+def find_game(given: str | None = None) -> str:
     """The BF1943 game folder (with levels\\): given, else BF1943_GAME, else bf1943-xenia-kit's output. A folder
     given that is not a game folder is an error, not a reason to look elsewhere."""
     if given:
@@ -48,16 +54,16 @@ def find_game(given=None):
         f'to a dist\\xenon folder')
 
 
-def work_root():
+def work_root() -> str:
     """Where the tools write what they make from the game: BF1943_WORK, else <suite>\\work (not committed)."""
     return os.path.abspath(os.environ.get('BF1943_WORK') or os.path.join(SUITE, 'work'))
 
 
-def level_work(lv):
+def level_work(lv: str) -> str:
     return os.path.join(work_root(), 'levels', lv)
 
 
-def levels(game=None):
+def levels(game: str | None = None) -> list[str]:
     """Level folder names that hold bundles (multiplayer maps first)."""
     game = find_game(game)
     folder = os.path.join(game, 'levels')
@@ -69,12 +75,12 @@ def levels(game=None):
 class Game:
     """Every entry of a level's bundles and the shared level bundle, by lower-case name (the level's own first)."""
 
-    def __init__(self, game, level):
+    def __init__(self, game: str | None, level: str) -> None:
         from fbrb1943 import Bundle             # bf1943-fbrb-tool, a shared folder (suitepath.SHARED)
         from . import dbx
         self._dbx = dbx
         self.game, self.level = find_game(game), level
-        self.entries = {}
+        self.entries: dict[str, tuple['Bundle', str]] = {}
         folder = os.path.join(self.game, 'levels', level)
         if not os.path.isdir(folder):
             raise FileNotFoundError(f'{level}: no such level in {self.game}\\levels (levels: {", ".join(levels(self.game))})')
@@ -94,14 +100,14 @@ class Game:
             for e in b.entries:
                 self.entries.setdefault(e['name'].lower(), (b, e['name']))
 
-    def data(self, name):
+    def data(self, name: str) -> bytes | None:
         hit = self.entries.get(name.lower())
         return hit[0].data(hit[1]) if hit else None
 
-    def partition(self, name):
+    def partition(self, name: str) -> 'dbx.DbxFile | None':
         d = self.data(name + '.dbx')
         return self._dbx.parse(d) if d else None
 
-    def names(self, prefix=''):
+    def names(self, prefix: str = '') -> list[str]:
         p = prefix.lower()
         return sorted(n for n in self.entries if n.startswith(p))

@@ -17,8 +17,11 @@ Usage:
 import math
 import sys
 from collections import defaultdict, deque
+from collections.abc import Iterable, Sequence
+from typing import Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -27,6 +30,11 @@ if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import suitepath
     suitepath.use()
 import navsample  # noqa: E402
+
+type BoolArray = npt.NDArray[np.bool_]                  # one flag per surface
+type FloatArray = npt.NDArray[np.floating[Any]]         # one value per surface (float32 or float64)
+type Walkable = (BoolArray | tuple[BoolArray, FloatArray, FloatArray]
+                 | tuple[BoolArray, FloatArray, FloatArray, BoolArray])
 
 TERRAIN_SHAPE_VTABLE = 0x1454D14   # shape class of terrain hits (navsample version 2 hit info), build 795745
 CHARACTER_SHAPE_VTABLE = 0x1483378  # shape class of soldiers standing in the level while it is sampled (their spawns):
@@ -91,7 +99,7 @@ PITCH = 0.8
 SECTOR = 100.0
 
 
-def coarse(f, pitch=None):
+def coarse(f: navsample.Samples, pitch: float | None = None) -> navsample.Samples:
     """Every (pitch / f.pitch)-th column of a fine run, keeping all surfaces of the column (pitch: the target, by
     default PITCH, 0.8 m; navbuild's detailed pass asks for 0.2)."""
     pitch = pitch or PITCH
@@ -109,7 +117,7 @@ def coarse(f, pitch=None):
                              f.cap_top, f.ray_radius, np.array(start), f.y[idx], f.normal[idx], f.flags[idx], hit)
 
 
-def on_objects(s, tris, tol=0.2):
+def on_objects(s: navsample.Samples, tris: npt.NDArray[Any] | None, tol: float = 0.2) -> BoolArray:
     """Surfaces lying on one of the given world-space triangles (within tol metres vertically)."""
     out = np.zeros(len(s.y), bool)
     if tris is None or not len(tris):
@@ -143,7 +151,8 @@ def on_objects(s, tris, tol=0.2):
     return out
 
 
-def near_characters(s, character, grow=0.9, below=2.2, above=0.3):
+def near_characters(s: navsample.Samples, character: BoolArray, grow: float = 0.9, below: float = 2.2,
+                    above: float = 0.3) -> BoolArray:
     """Surfaces a capsule test would see blocked by a soldier: within `grow` metres (horizontally) of a character hit
     (CHARACTER_SHAPE_VTABLE) and from `below` metres under to `above` metres over it."""
     out = np.zeros(len(s.y), bool)
@@ -164,7 +173,7 @@ def near_characters(s, character, grow=0.9, below=2.2, above=0.3):
     return out
 
 
-def headroom(s, ignore=None):
+def headroom(s: navsample.Samples, ignore: BoolArray | None = None) -> npt.NDArray[np.float64]:
     """Per surface: the gap to the next sampled surface above it in its column (inf when none); surfaces flagged in
     `ignore` (soldiers) do not count as above."""
     y = s.y.astype(float)
@@ -185,13 +194,14 @@ def headroom(s, ignore=None):
     return out
 
 
-def low_headroom(s, ignore, lo, hi):
+def low_headroom(s: navsample.Samples, ignore: BoolArray | None, lo: float, hi: float) -> BoolArray:
     """Surfaces with the next surface above them between lo and hi metres higher (HEADROOM_BAND)."""
     h = headroom(s, ignore)
     return (h >= lo) & (h < hi)
 
 
-def near_points(s, points, grow=0.9, below=0.5, above=0.5):
+def near_points(s: navsample.Samples, points: Iterable[Sequence[float]], grow: float = 0.9, below: float = 0.5,
+                above: float = 0.5) -> BoolArray:
     """Surfaces within `grow` metres (horizontally) of a point and from `below` under to `above` over its height."""
     out = np.zeros(len(s.y), bool)
     y = s.y.astype(float)
@@ -212,7 +222,8 @@ def near_points(s, points, grow=0.9, below=0.5, above=0.5):
     return out
 
 
-def near_objects(s, tris, grow=0.5, below=2.2, above=0.3):
+def near_objects(s: navsample.Samples, tris: npt.NDArray[Any] | None, grow: float = 0.5, below: float = 2.2,
+                 above: float = 0.3) -> BoolArray:
     """Surfaces within `grow` metres (horizontally) of a triangle's bounding box and from `below` metres under
     to `above` metres over it - the ground a capsule test around an object would see as blocked."""
     out = np.zeros(len(s.y), bool)
@@ -234,7 +245,8 @@ def near_objects(s, tris, grow=0.5, below=2.2, above=0.3):
     return out
 
 
-def stair_slope(s, mask, r=1, tol=0.7):
+def stair_slope(s: navsample.Samples, mask: BoolArray, r: int = 1, tol: float = 0.7
+                ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """Slope (degrees) from neighbouring sample heights on the same layer (central differences, +-1 sample),
     for the surfaces in mask; 90 where a neighbour is missing. (Measured over +-0.8 m at pitch 0.2 it recognised far
     more stairs, but with a 0.5 m step on them it joined decks and ledges to streets - over-connection 2.2 -> 35.3 % on
@@ -244,7 +256,7 @@ def stair_slope(s, mask, r=1, tol=0.7):
     out = np.full(len(y), 90.0)
     gxo = np.zeros(len(y)); gzo = np.zeros(len(y))
 
-    def layer(i, j, yref):
+    def layer(i: int, j: int, yref: float) -> float | None:
         if not (0 <= i < s.nx and 0 <= j < s.nz):
             return None
         c = j * s.nx + i
@@ -260,7 +272,8 @@ def stair_slope(s, mask, r=1, tol=0.7):
         if a is None and b is None and cc is None and d is None:
             continue
 
-        def diff(p, m):   # central difference, or one-sided where a neighbour is missing (narrow stairs)
+        # central difference, or one-sided where a neighbour is missing (narrow stairs)
+        def diff(p: float | None, m: float | None) -> float:
             if p is not None and m is not None:
                 return (p - m) / (2 * r * s.pitch)
             if p is not None:
@@ -274,7 +287,8 @@ def stair_slope(s, mask, r=1, tol=0.7):
     return out, gxo, gzo
 
 
-def narrow_lips(s, base, cand, slope, width, rise=None, flat=None):
+def narrow_lips(s: navsample.Samples, base: BoolArray, cand: BoolArray, slope: float, width: int,
+                rise: float | None = None, flat: float | None = None) -> BoolArray:
     """The cand surfaces (steep terrain) with a base surface (walkable) within width samples on both opposite sides
     along an axis or a diagonal - same layer, each step within 0.7 m - and a slope within the limit between those two
     (LIP_WIDTH). rise: the candidate also within this height of both of those (LIP_OBJECT_RISE); flat: both of those
@@ -284,7 +298,7 @@ def narrow_lips(s, base, cand, slope, width, rise=None, flat=None):
     lim = math.tan(math.radians(slope))
     out = np.zeros(len(y), bool)
 
-    def side(i, j, yref, di, dj):
+    def side(i: int, j: int, yref: float, di: int, dj: int) -> tuple[int, int] | None:
         for t in range(1, width + 1):
             a, b = i + di * t, j + dj * t
             if not (0 <= a < s.nx and 0 <= b < s.nz):
@@ -320,7 +334,7 @@ def narrow_lips(s, base, cand, slope, width, rise=None, flat=None):
     return out
 
 
-def matched_flags(s, other):
+def matched_flags(s: navsample.Samples, other: navsample.Samples | None) -> npt.NDArray[np.uint8]:
     """Capsule flags of a second run over the same grid (e.g. a higher capsule), matched per column by height."""
     out = np.full(len(s.y), 1, dtype=np.uint8)
     if other is None:
@@ -335,7 +349,8 @@ def matched_flags(s, other):
     return out
 
 
-def step_fits(dy, gk, gn, sk, sn, di, dj, pitch, step):
+def step_fits(dy: float, gk: Sequence[float], gn: Sequence[float], sk: bool, sn: bool, di: int, dj: int, pitch: float,
+              step: float) -> bool:
     """Height change dy from surface k to its neighbour n (direction di, dj) fits the step rule: within step of the
     rise predicted by the mean local gradient - or, when one of them is a stair surface, by the stair's own
     incline (a stair sample next to a flat landing would otherwise halve the predicted rise of the last step)."""
@@ -352,7 +367,7 @@ LADDER_FOOT = (-1.0, 1.0)       # ... at the foot: from 1 m below to 1 m above t
 LADDER_TOP = (-1.5, 0.5)        # ... at the top: 1.5 m below to 0.5 m above its top (its rails stick out over the deck)
 
 
-def _bands(lad, reach):
+def _bands(lad: dict[str, Any], reach: float) -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
     """A link's end height bands and reach: a ladder's (LADDER_FOOT, LADDER_TOP, the reach given), or a jump link's own
     (jumplinks1943: foot_band, top_band, reach - tight, so a link cannot take another floor)."""
     lo, hi = lad['lo'], lad['hi']
@@ -360,7 +375,8 @@ def _bands(lad, reach):
     return ((lo[1] + fb[0], lo[1] + fb[1]), (hi[1] + tb[0], hi[1] + tb[1])), lad.get('reach', reach)
 
 
-def ladder_ends(s, ok, keep, lad, reach=LADDER_REACH):
+def ladder_ends(s: navsample.Samples, ok: BoolArray, keep: BoolArray, lad: dict[str, Any], reach: float = LADDER_REACH
+                ) -> tuple[int | None, int | None]:
     """(foot surface, top surface) of a ladder {'lo', 'hi'} (ladders.json, from levelobjects1943.py): at each end the
     surface allowed by the rules (ok) nearest the ladder's box, within reach horizontally and the end's height band;
     kept ground first. None where there is none. A jump link (jumplinks1943) gives its own bands and reach."""
@@ -390,7 +406,9 @@ def ladder_ends(s, ok, keep, lad, reach=LADDER_REACH):
 LADDER_LOCAL = 3.0              # ladder_end_options: candidate ground is grouped by connection within this of the ladder
 
 
-def ladder_end_options(s, keep, gx, gz, stair, step, lad, reach=LADDER_REACH, local=LADDER_LOCAL):
+def ladder_end_options(s: navsample.Samples, keep: BoolArray, gx: FloatArray, gz: FloatArray, stair: BoolArray,
+                       step: float, lad: dict[str, Any], reach: float = LADDER_REACH,
+                       local: float = LADDER_LOCAL) -> tuple[list[int], list[int]]:
     """([foot surfaces], [top surfaces]) of a ladder: at each end, the kept surface nearest the ladder (within reach and
     the end's height band, as ladder_ends) of each piece of ground there that the step rule does not join near the
     ladder (within reach + local). A ladder can be stepped onto from any ground beside it: on Wake Island's towers the
@@ -404,7 +422,7 @@ def ladder_end_options(s, keep, gx, gz, stair, step, lad, reach=LADDER_REACH, lo
     j0, j1 = max(int(math.floor((lo[2] - pad - s.min_z) / s.pitch)), 0), min(int(math.ceil((hi[2] + pad - s.min_z) / s.pitch)), s.nz - 1)
     out = []
     for y0, y1 in bands:
-        cand = []                                   # (distance, surface)
+        cand: list[tuple[float, int]] = []          # (distance, surface)
         for j in range(j0, j1 + 1):
             for i in range(i0, i1 + 1):
                 x, z = s.min_x + i * s.pitch, s.min_z + j * s.pitch
@@ -446,12 +464,18 @@ def ladder_end_options(s, keep, gx, gz, stair, step, lad, reach=LADDER_REACH, lo
     return out[0], out[1]
 
 
-def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=False, dynamic_tris=None,
-             high_capsule=None, stairs=True, return_gradients=False, narrow_capsule=None, raised_bars=False,
-             stair_tris=None, exclude_tris=None, exclude_footprint_tris=None, forbid_tol=0.08,
-             extra_seeds=None, return_stairs=False, force_walkable=None, force_unwalkable=None, unseeds=None,
-             soldier_points=None, ladders=None, anchors=None, headroom_band=HEADROOM_BAND, lip_width=LIP_WIDTH,
-             stats=None):
+def walkable(s: navsample.Samples, forbid_tris: npt.NDArray[Any] | None = None, slope: float = 40.0, step: float = 0.28,
+             terrain_seeds_only: bool = False, dynamic_tris: npt.NDArray[Any] | None = None,
+             high_capsule: navsample.Samples | None = None, stairs: bool = True, return_gradients: bool = False,
+             narrow_capsule: navsample.Samples | None = None, raised_bars: bool = False,
+             stair_tris: npt.NDArray[Any] | None = None, exclude_tris: npt.NDArray[Any] | None = None,
+             exclude_footprint_tris: npt.NDArray[Any] | None = None, forbid_tol: float = 0.08,
+             extra_seeds: Iterable[Sequence[float]] | None = None, return_stairs: bool = False,
+             force_walkable: BoolArray | None = None, force_unwalkable: BoolArray | None = None,
+             unseeds: Iterable[Sequence[float]] | None = None, soldier_points: Sequence[Sequence[float]] | None = None,
+             ladders: Sequence[dict[str, Any]] | None = None, anchors: Iterable[Sequence[float]] | None = None,
+             headroom_band: tuple[float, float] | None = HEADROOM_BAND, lip_width: int | None = LIP_WIDTH,
+             stats: dict[str, int] | None = None) -> Walkable:
     """Kept walkable surfaces (bool per surface) by rules 1-4, plus the structure rules:
       dynamic props (dynamic_tris) are absent for path data - their tops are not floor, and the ground under and
       right beside them is not blocked by them;
@@ -549,7 +573,7 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
     slope_ok = s.normal[:, 1] >= math.cos(math.radians(slope)) - 0.01
     col_of_w = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
 
-    def same_layer(i, j, yref, tol=0.7):
+    def same_layer(i: int, j: int, yref: float, tol: float = 0.7) -> list[int]:
         if not (0 <= i < s.nx and 0 <= j < s.nz):
             return []
         c = j * s.nx + i
@@ -637,7 +661,7 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
             if not keep[n]:
                 keep[n] = True
                 q.append(n)
-    def flood():
+    def flood() -> None:
         while q:
             k = q.popleft()
             c = col_of[k]
@@ -730,7 +754,8 @@ def walkable(s, forbid_tris=None, slope=40.0, step=0.28, terrain_seeds_only=Fals
     return keep
 
 
-def islands_of(s, keep, gx, gz, stair, step):
+def islands_of(s: navsample.Samples, keep: BoolArray, gx: FloatArray, gz: FloatArray, stair: BoolArray,
+               step: float) -> tuple[npt.NDArray[np.int64], int]:
     """Island id per kept surface (-1 elsewhere): surfaces joined by the step rule, as walkable's flood joins them."""
     y = s.y.astype(float)
     col_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
@@ -740,7 +765,7 @@ def islands_of(s, keep, gx, gz, stair, step):
         if comp[k0] >= 0:
             continue
         comp[k0] = cid
-        q = deque([k0])
+        q: deque[int | np.intp] = deque([k0])
         while q:
             k = q.popleft()
             c = col_of[k]
@@ -762,7 +787,8 @@ def islands_of(s, keep, gx, gz, stair, step):
     return comp, cid
 
 
-def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k, stats):
+def roof_islands(s: navsample.Samples, keep: BoolArray, gx: FloatArray, gz: FloatArray, stair: BoolArray, step: float,
+                 terrain: BoolArray, anchor_k: set[int], stats: dict[str, int]) -> BoolArray:
     """The kept surfaces ROOF_PRUNE drops (bool per surface); the counts are added to stats."""
     y = s.y.astype(float)
     comp, n = islands_of(s, keep, gx, gz, stair, step)
@@ -825,7 +851,8 @@ def roof_islands(s, keep, gx, gz, stair, step, terrain, anchor_k, stats):
     return out
 
 
-def score(s, keep, hpd, tol=0.6, y_offset=OUTLINE_Y_OFFSET):
+def score(s: navsample.Samples, keep: BoolArray, hpd: str, tol: float = 0.6,
+          y_offset: float = OUTLINE_Y_OFFSET) -> dict[str, float]:
     """Against the reference: DICE layers (cells fully inside an area) found exactly / within one cell, and
     kept surfaces with no reference layer at that height in the cell or its neighbours. y_offset: the reference's
     outline height above the ground."""
@@ -834,7 +861,7 @@ def score(s, keep, hpd, tol=0.6, y_offset=OUTLINE_Y_OFFSET):
     y = s.y.astype(float)
     col_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
 
-    def kept_near(c, lo, hi, r):
+    def kept_near(c: int, lo: float, hi: float, r: int) -> bool:
         i, j = c % s.nx, c // s.nx
         for dj in range(-r, r + 1):
             for di in range(-r, r + 1):
@@ -871,7 +898,7 @@ def score(s, keep, hpd, tol=0.6, y_offset=OUTLINE_Y_OFFSET):
             'extra': extra * per, 'extra_far': far * per, 'within_one_cell': within}
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) < 4 or argv[1] != 'score':
         print(__doc__)
         return 1
@@ -880,7 +907,7 @@ def main(argv):
     f, _ = navsample.load(args[0])
     s = coarse(f) if abs(f.pitch - PITCH) > 1e-3 else f
     tris = np.load(args[2]) if len(args) > 2 else None
-    keep = walkable(s, tris, float(opts.get('--slope', 40)), float(opts.get('--step', 0.28)))
+    keep = cast(BoolArray, walkable(s, tris, float(opts.get('--slope', 40)), float(opts.get('--step', 0.28))))
     r = score(s, keep, args[1])
     print(f"reference layers {r['reference']}: found {r['found']:.1f}% (within 0.8 m {r['found_near']:.1f}%), "
           f"extra {r['extra']:.1f}% (far {r['extra_far']:.1f}%); agreement within 0.8 m: {r['within_one_cell']:.2f}%")

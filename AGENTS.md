@@ -14,4 +14,5 @@
 - `docs/opfor-bfbc2/` is OPFOR's own documentation, kept unchanged as reference.
 - Run `python -B run_tests.py quick` before a commit and `python -B run_tests.py bf1943 --strict` before a push; a
   SKIP or `ok*` line means that test's data was missing, so the run is not full coverage.
-- Write new tests as pytest-style files (README "Writing a test"); keep `ruff check` clean (pyproject.toml settings).
+- Write new tests as pytest-style files (README "Writing a test"); keep `ruff check` clean and `pyright` at 0 errors
+  (pyproject.toml settings; README "Lint", "Types").

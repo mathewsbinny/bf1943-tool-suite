@@ -64,7 +64,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   ground on two islands, tested on the samples), 0.8 m against 0.2 m, the wading band, where each rule fired and its
   near-misses, and the playable area. Where it lists a column's surfaces, a terrain surface carries its ground
   material (core `materialmap1943.py`, the level's terrain material map). The checks are in
-  `tools\navaudit1943_checks.py`. Reports: `work\levels\<level>\audit\audit.{json,md}`.
+  the package `tools\navaudit1943_checks` (a module per check). Reports: `work\levels\<level>\audit\audit.{json,md}`.
 - **The export for our navigation runtime** (`tools\navexport1943.py`, new 2026-10-24): `navexport1943.py <level>
   [--big-endian] [--check]` writes `work\levels\<level>\navkit\<level>.rsnv` (`.be.rsnv` big-endian), the build in
   the runtime's own format (core `rsnv.py`): the route graph with integer costs (1/16 m) and edge kinds (walk, ladder
@@ -263,7 +263,7 @@ whole-centimetre rule NavKit now defaults to moves columns on a sector line (17,
 it waits for a rebuild and an audit (`detailed1943.py` counts stacked floors by the same rule).
 
 **Tools in this variant:** `detailed1943.py`, `levelobjects1943.py`, `navsample1943.py`, `routecheck1943.py`,
-`soldier1943.py`, `jumplinks1943.py`, `navaudit1943.py` with `navaudit1943_checks.py`, `navexport1943.py`,
+`soldier1943.py`, `jumplinks1943.py`, `navaudit1943.py` with `navaudit1943_checks` (a package), `navexport1943.py`,
 `rsnvtool.py`, `enclosure_probe1943.py`, `vehicleclasses1943.py`, `groundnav1943.py`, `seanav1943.py`,
 `airnav1943.py`, `rsnvgrid1943.py`, `navexport_vehicles1943.py`, `navkitjson1943.py` (navkit.json and its stamps,
 shared by `navkit.py` and the tools) (`enclosure_probe1943.py <level> <x> <y> <z> [radius] [--png out.png]`: why a
@@ -293,7 +293,8 @@ tools\               this variant's NavKit tools (Python 3 + numpy); the shared 
                        a ledge apart (SHIP_LEDGES) (ladder records of kind 'jump'); a raised-floor rule
                        (RAISED_FLOORS) is kept but off - see operation-rising-sun NAVMESH_AUDIT.md
   navaudit1943.py      BF1943: the audit - the build's walkable masks, then the checks
-  navaudit1943_checks.py  BF1943: the audit's checks (required positions, reachability, consistency, layers, rules)
+  navaudit1943_checks\ BF1943: the audit's checks, a package of a module per check (required positions,
+                       reachability, consistency, resolution, layers, water, rules, playable area; __init__ lists them)
   navexport1943.py     BF1943: the build exported for our navigation runtime (<level>.rsnv, core rsnv.py)
   rsnvtool.py          BF1943: look inside an RSNV export - info, validate, locate, los, route, pockets, picture, diff
   vehicleclasses1943.py  BF1943: the vehicle classes (jeep, tank, lcvp, plane) from the blueprints and collision

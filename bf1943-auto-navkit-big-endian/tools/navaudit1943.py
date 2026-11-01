@@ -16,7 +16,7 @@ samples it was built from. Nothing here changes a build; every input is hashed i
       audit.json and audit.md.
 
 Settings the audit adds (not in the game's data, not in NavKit): OBJECTIVE_REACH, FLOOR_DY, LAYER_WINDOW (below),
-and navaudit1943_checks.py's BOAT_REACH, VEHICLE_REACH, MOUNT_DROP, AIRBORNE and USABLE_SHARE.
+and navaudit1943_checks' (its config.py) BOAT_REACH, VEHICLE_REACH, MOUNT_DROP, AIRBORNE and USABLE_SHARE.
 """
 import argparse
 import json

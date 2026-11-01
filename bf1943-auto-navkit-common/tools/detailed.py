@@ -22,6 +22,7 @@ import math
 import os
 import sys
 from collections import Counter
+from collections.abc import Iterable
 
 import numpy as np
 
@@ -40,7 +41,8 @@ STACK_GAP = 2.0        # m between the lowest and highest standable surface of a
 SLOPE_MAX = 40.0
 
 
-def flagged_sectors(level_dir, common, xoff, zoff, margin=MARGIN):
+def flagged_sectors(level_dir: str, common: Iterable[str], xoff: int, zoff: int,
+                    margin: float = MARGIN) -> set[tuple[int, int]]:
     """Sectors (X, Z) within margin of a NeedsDetailedPathfinding object's collision box (objects.json). ValueError on
     an objects.json from before that flag was extracted (2026-10-31): prepare the level again."""
     bases = [b for b in [os.path.join(level_dir, 'pkg'), os.path.join(level_dir, 'dist')] + list(common) if os.path.isdir(b)]
@@ -70,7 +72,8 @@ def flagged_sectors(level_dir, common, xoff, zoff, margin=MARGIN):
     return out
 
 
-def stacked_columns(samples_path, xoff, zoff, slope_max=SLOPE_MAX, cm_sectors=True):
+def stacked_columns(samples_path: str, xoff: int, zoff: int, slope_max: float = SLOPE_MAX,
+                    cm_sectors: bool = True) -> Counter[tuple[int, int]]:
     """{sector (X, Z): columns holding standable surfaces at least STACK_GAP apart} from 0.8 m samples. slope_max: the
     steepest standable surface (deg; BF1943's soldier: soldier1943.SLOPE_MAX). cm_sectors: a column's sector in whole
     centimetres (navsample.column_sectors, as navbuild's default Settings); False: from its float position, as the
@@ -94,19 +97,21 @@ def stacked_columns(samples_path, xoff, zoff, slope_max=SLOPE_MAX, cm_sectors=Tr
     return Counter(zip((np.floor(x / 100).astype(int) - xoff).tolist(), (np.floor(z / 100).astype(int) - zoff).tolist()))
 
 
-def choose(level_dir, common, samples_path, xoff, zoff, margin=MARGIN, stacked_min=STACKED_MIN):
+def choose(level_dir: str, common: Iterable[str], samples_path: str | None, xoff: int, zoff: int,
+           margin: float = MARGIN, stacked_min: int = STACKED_MIN) -> tuple[list[tuple[int, int]], dict[str, int]]:
     """(sorted [(X, Z)], {'flag': n, 'stacked': n}) - the detailed sectors of a level."""
     flag = flagged_sectors(level_dir, common, xoff, zoff, margin)
     stacked = {k for k, n in stacked_columns(samples_path, xoff, zoff).items() if n >= stacked_min} if samples_path else set()
     return sorted(flag | stacked), {'flag': len(flag), 'stacked': len(stacked), 'stacked only': len(stacked - flag)}
 
 
-def sampled_record_path(p02):
+def sampled_record_path(p02: str) -> str:
     """The record a pitch-0.2 sampling run leaves next to its samples: which sectors it covered, at which offsets."""
     return p02[:-4] + '.sectors.json'
 
 
-def write_sampled_record(p02, sectors, xoff, zoff, pending=False):
+def write_sampled_record(p02: str, sectors: Iterable[tuple[int, int]], xoff: int, zoff: int,
+                         pending: bool = False) -> None:
     """pending: written as a 0.2 m run starts, replaced by the covered sectors when both its runs finish - so the
     samples of a run that failed part-way are never taken for good ones."""
     tmp = sampled_record_path(p02) + '.tmp'
@@ -118,7 +123,8 @@ def write_sampled_record(p02, sectors, xoff, zoff, pending=False):
     os.replace(tmp, sampled_record_path(p02))
 
 
-def sampled_problem(p02, samples08, sectors, xoff, zoff):
+def sampled_problem(p02: str, samples08: str | None, sectors: Iterable[tuple[int, int]], xoff: int,
+                    zoff: int) -> str | None:
     """Why the pitch-0.2 samples p02 do not fit the detailed sectors chosen now (None: they fit). With the run's record:
     a finished run (not "pending": one that failed part-way leaves that), the same sector offsets, and every chosen
     sector among those it covered. Without one (a run from before the record): the 0.8 m samples the choice came
@@ -143,7 +149,7 @@ def sampled_problem(p02, samples08, sectors, xoff, zoff):
     return None
 
 
-def score(chosen, dice_pathdata):
+def score(chosen: Iterable[tuple[int, int]], dice_pathdata: str) -> tuple[int, int, int]:
     """Against DICE's choice (evaluation only): (found, DICE detailed, chosen sectors DICE builds at 0.8)."""
     import hpdtool
     import kymesh
@@ -154,7 +160,7 @@ def score(chosen, dice_pathdata):
     return len(det & c), len(det), len(norm & c)
 
 
-def offsets_of(root, lv, given=None):
+def offsets_of(root: str, lv: str, given: str | None = None) -> tuple[int, int]:
     """(xoff, zoff): --offsets X,Z when given, else the level's navkit.json (navkit_le.py prepare); ValueError if neither."""
     if given:
         try:
@@ -170,7 +176,7 @@ def offsets_of(root, lv, given=None):
     return int(s['xoff']), int(s['zoff'])
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if any(a in ('-h', '--help') for a in argv[1:]):
         print(__doc__)
         return 0

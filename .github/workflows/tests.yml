@@ -2,7 +2,8 @@
 # .NET Framework C# compiler). CI has no game copy, no research workspace and no Xenia, and downloads none: only
 # Python libraries from PyPI. The tools run from the checkout without an install, as end users run them; the
 # package install is checked last, apart. Two jobs:
-#   quick      the lint (ruff), then the quick tier through run_tests.py --strict, then the package install
+#   quick      the lint (ruff), the type check (pyright), then the quick tier through run_tests.py --strict, then the
+#              package install
 #   coverage   the quick tier again, through pytest (so pytest's way is run too), with line coverage of every
 #              process it starts; the report is uploaded as the artifact "coverage", then the total must reach
 #              pyproject.toml's [tool.coverage.report] fail_under (a threshold that only goes up: tests/test_repo.py)
@@ -45,6 +46,13 @@ jobs:
 
       - name: Lint (ruff, pinned in the "ci" group; settings in pyproject.toml [tool.ruff])
         run: python -m ruff check --no-cache .
+
+      - name: Type check (pyright, pinned in the "ci" group; settings in pyproject.toml [tool.pyright])
+        # Node.js from the nodejs-wheel PyPI package (pyright[nodejs]), not the image's, and no PyPI version lookup
+        env:
+          PYRIGHT_PYTHON_GLOBAL_NODE: '0'
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: '1'
+        run: python -m pyright
 
       - name: No game copy, no research workspace
         # empty folders: a test that needs either skips with its reason, and --strict below fails on any skip

@@ -14,6 +14,7 @@ Usage:
 import struct
 import sys
 from collections import Counter
+from typing import Any, cast
 
 MAGIC = bytes.fromhex('57e0e05710c0c010')
 
@@ -28,9 +29,12 @@ SIMPLE = {T_BOOL: ('?', 1), T_CHAR: ('b', 1), T_INT8: ('b', 1), T_UINT8: ('B', 1
 VEC = {T_VECTOR4: 4, T_QUATERNION: 4, T_MATRIX3: 12, T_ROTATION: 12, T_QSTRANSFORM: 12, T_MATRIX4: 16,
        T_TRANSFORM: 16}
 
+# a class description's key: its hkClass object's offset, or ('given', name) for a layout given to Packfile
+type ClassKey = int | tuple[str, str]
+
 
 class Packfile:
-    def __init__(self, data, base=None, classes=None):
+    def __init__(self, data: bytes, base: int | None = None, classes: dict[str, dict[str, Any]] | None = None) -> None:
         """classes: {name: {'size': n, 'parent': name or None, 'members': [...]}} for files without __types__."""
         if base is None:
             base = data.find(MAGIC)
@@ -49,14 +53,14 @@ class Packfile:
         self.member_size = 20 if self.contents_version.startswith('Havok-4.') else 24
         if base + 0x40 + 0x30 * self.nsections > len(data):
             raise ValueError(f'damaged Havok packfile: {self.nsections} sections run past the end ({len(data)} bytes)')
-        self.sections = []
+        self.sections: list[dict[str, Any]] = []
         for i in range(self.nsections):
             o = base + 0x40 + i * 0x30
             name = data[o:o + 20].split(b'\0')[0].decode('ascii', 'replace')
             start, local, glob, virt, exp, imp, end = struct.unpack_from(E + '7I', data, o + 20)
             self.sections.append({'name': name, 'start': base + start, 'local': local, 'global': glob,
                                   'virtual': virt, 'exports': exp, 'imports': imp, 'end': end})
-        self.ptr = {}      # absolute file offset of a pointer slot -> absolute file offset of its target
+        self.ptr: dict[int, int] = {}  # absolute file offset of a pointer slot -> absolute file offset of its target
         for s in self.sections:
             st = s['start']
             for k in range(s['local'], min(s['global'], len(data) - st - 7), 8):
@@ -69,7 +73,7 @@ class Packfile:
                 if src == 0xFFFFFFFF:
                     continue
                 self.ptr[st + src] = self._section(sec)['start'] + dst
-        self.objects = []  # (absolute offset, class name)
+        self.objects: list[tuple[int, str]] = []  # (absolute offset, class name)
         for s in self.sections:
             st = s['start']
             for k in range(s['virtual'], min(s['exports'], len(data) - st - 11), 12):
@@ -79,7 +83,7 @@ class Packfile:
                 cname = self.cstr(self._section(sec)['start'] + name_off)
                 self.objects.append((st + src, cname))
         self.by_offset = {o: c for o, c in self.objects}
-        self.classes = {}
+        self.classes: dict[ClassKey, dict[str, Any]] = {}
         self._read_classes()
         for name, c in (classes or {}).items():   # given layouts, for classes the file does not describe
             if name not in self.class_by_name:
@@ -88,12 +92,12 @@ class Packfile:
                                      'size': c['size'], 'members': c['members']}
                 self.class_by_name[name] = key
 
-    def _section(self, k):
+    def _section(self, k: int) -> dict[str, Any]:
         if k >= len(self.sections):                 # 2026-10-31 fuzzing: an IndexError before
             raise ValueError(f'damaged Havok packfile: a fixup names section {k} of {len(self.sections)}')
         return self.sections[k]
 
-    def at(self, fmt, off):
+    def at(self, fmt: str, off: int | None) -> tuple[Any, ...]:
         """struct.unpack_from(self.e + fmt, data, off); ValueError when it lies outside the file (2026-10-31 fuzzing:
         struct.error before, and a negative offset read from the end)."""
         size = struct.calcsize(self.e + fmt)
@@ -101,7 +105,7 @@ class Packfile:
             raise ValueError(f'damaged Havok packfile: {size} bytes at {off} lie outside the file ({len(self.d)} bytes)')
         return struct.unpack_from(self.e + fmt, self.d, off)
 
-    def cstr(self, off):
+    def cstr(self, off: int | None) -> str:
         """The zero-ended string at off. ValueError when there is none inside the file (2026-10-31 fuzzing: a
         TypeError for a missing pointer, and str.index's 'subsection not found')."""
         e = self.d.find(b'\0', off) if off is not None and 0 <= off < len(self.d) else -1
@@ -109,11 +113,11 @@ class Packfile:
             raise ValueError(f'damaged Havok packfile: a string at {off} does not end inside the file')
         return self.d[off:e].decode('ascii', 'replace')
 
-    def deref(self, slot):
+    def deref(self, slot: int) -> int | None:
         return self.ptr.get(slot)
 
     # --- hkClass reflection --------------------------------------------------------------------------
-    def _read_classes(self):
+    def _read_classes(self) -> None:
         for off, cname in self.objects:
             if cname != 'hkClass':
                 continue
@@ -125,18 +129,19 @@ class Packfile:
             nmembers = self.at('i', off + 28)[0]
             if nmembers > 0 and (members_p is None or members_p + nmembers * self.member_size > len(self.d)):
                 raise ValueError(f'damaged Havok packfile: the {nmembers} members of class {name!r} lie outside the file')
-            members = []
+            members: list[dict[str, Any]] = []
             for k in range(max(0, nmembers)):
-                mo = members_p + k * self.member_size
+                mo = cast(int, members_p) + k * self.member_size      # not None: nmembers > 0
                 mname = self.cstr(self.deref(mo))
                 mclass = self.deref(mo + 4)
                 mtype, msub, carr, flags, moff = self.at('BBhHH', mo + 12)
                 members.append({'name': mname, 'class': mclass, 'type': mtype, 'subtype': msub,
                                 'carray': carr, 'offset': moff})
             self.classes[off] = {'name': name, 'parent': parent, 'size': size, 'members': members}
-        self.class_by_name = {c['name']: off for off, c in self.classes.items()}
+        # looked up with a member's class name too, None for a member without one
+        self.class_by_name: dict[str | None, ClassKey] = {c['name']: off for off, c in self.classes.items()}
 
-    def all_members(self, cname):
+    def all_members(self, cname: str | None) -> list[dict[str, Any]]:
         """Members of a class including inherited ones, as (name, member)."""
         off = self.class_by_name.get(cname)
         chain, seen = [], set()
@@ -146,19 +151,20 @@ class Packfile:
             seen.add(off)
             chain.append(self.classes[off])
             off = self.classes[off]['parent']
-        out = []
+        out: list[dict[str, Any]] = []
         for c in reversed(chain):
             out.extend(c['members'])
         return out
 
-    def member_class_name(self, m):
+    def member_class_name(self, m: dict[str, Any]) -> str | None:
         return self.classes[m['class']]['name'] if m['class'] in self.classes else None
 
-    def struct_size(self, cname):
+    def struct_size(self, cname: str | None) -> int | None:
         off = self.class_by_name.get(cname)
         return self.classes[off]['size'] if off is not None else None
 
-    def read_value(self, at, mtype, sub, mclass_name, carray=0, depth=0):
+    def read_value(self, at: int, mtype: int, sub: int, mclass_name: str | None, carray: int = 0,
+                   depth: int = 0) -> Any:
         if depth > 32:                              # 2026-10-31 review: a struct holding itself recursed without end
             raise ValueError(f'damaged Havok packfile: structs nested more than 32 deep at {at:#x}')
         if carray:
@@ -196,7 +202,7 @@ class Packfile:
             return [self.read_value(data_p + i * size, sub, 0, mclass_name, depth=depth + 1) for i in range(n)]
         return None
 
-    def elem_size(self, t, mclass_name):
+    def elem_size(self, t: int, mclass_name: str | None) -> int | None:
         if t in SIMPLE:
             return SIMPLE[t][1]
         if t in VEC:
@@ -207,9 +213,9 @@ class Packfile:
             return self.struct_size(mclass_name)
         return None
 
-    def read_object(self, at, cname, depth=0):
+    def read_object(self, at: int, cname: str | None, depth: int = 0) -> dict[str, Any]:
         """The object's fields by its class's members. ValueError for a field outside the file."""
-        out = {}
+        out: dict[str, Any] = {}
         for m in self.all_members(cname):
             if m['type'] in (T_ZERO, T_VOID, T_FUNCTIONPOINTER):
                 continue
@@ -217,15 +223,15 @@ class Packfile:
                                              m['carray'], depth)
         return out
 
-    def objects_of(self, cname):
+    def objects_of(self, cname: str) -> list[int]:
         return [off for off, c in self.objects if c == cname]
 
 
-def load(path):
+def load(path: str) -> Packfile:
     return Packfile(open(path, 'rb').read())
 
 
-def short(v, depth=0):
+def short(v: Any, depth: int = 0) -> str:
     if isinstance(v, dict):
         return '{' + ', '.join(f'{k}: {short(x, depth + 1)}' for k, x in v.items()) + '}'
     if isinstance(v, list):
@@ -241,7 +247,7 @@ def short(v, depth=0):
     return str(v)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(__doc__)
         return 1

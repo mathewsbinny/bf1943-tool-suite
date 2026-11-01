@@ -12,9 +12,13 @@ smooths the route through the areas, which this does not do (DESIGN.md section 7
 """
 import heapq
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
+import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from .navdata import NavData
 
 JOIN_XZ, JOIN_Y = 15.0, 4.0
 
@@ -22,26 +26,26 @@ JOIN_XZ, JOIN_Y = 15.0, 4.0
 @dataclass
 class Route:
     found: bool
-    nodes: List[int] = field(default_factory=list)        # node indices, start to end
+    nodes: list[int] = field(default_factory=list)        # node indices, start to end
     cost: float = 0.0                                     # sum of the stored edge costs (m)
     length: float = 0.0                                   # 3-D length of the node chain (m)
     straight: float = 0.0                                 # start to end, straight (m)
-    start_node: Optional[int] = None
-    end_node: Optional[int] = None
+    start_node: int | None = None
+    end_node: int | None = None
     start_join: float = 0.0                               # metres from the point to its node
     end_join: float = 0.0
-    start_island: Optional[int] = None
-    end_island: Optional[int] = None
-    gap: Optional[tuple] = None                           # (node in start island, node in end island, metres)
+    start_island: int | None = None
+    end_island: int | None = None
+    gap: tuple[int | None, int | None, float] | None = None  # (node in start island, node in end island, metres)
     reason: str = ''
     expanded: int = 0
 
 
-def ground_nodes(nav):
+def ground_nodes(nav: 'NavData') -> npt.NDArray[np.float64]:
     return nav.node_pos - np.array([0, nav.y_offset, 0])
 
 
-def join(nav, p):
+def join(nav: 'NavData', p: npt.NDArray[np.float64]) -> tuple[int | None, float]:
     """(node index, horizontal distance) nearest to p within the join limits, or (None, distance)."""
     if not len(nav.node_pos):
         return None, np.inf
@@ -54,7 +58,7 @@ def join(nav, p):
     return None, float(dist[nearest])
 
 
-def _adjacency(nav):
+def _adjacency(nav: 'NavData') -> tuple[npt.NDArray[np.intp], npt.NDArray[np.int64], npt.NDArray[np.float64]]:
     """(first edge per node, edge targets, edge costs), the edges grouped by their source node; kept on nav."""
     cache = getattr(nav, '_adj', None)
     if cache is None:
@@ -65,11 +69,12 @@ def _adjacency(nav):
             sources, targets, costs = np.zeros(0, int), np.zeros(0, int), np.zeros(0)
         first_edge = np.searchsorted(sources, np.arange(len(nav.node_pos) + 1))
         cache = (first_edge, targets, costs)
-        nav._adj = cache
+        # a cache kept on the object, not a NavData field
+        nav._adj = cache  # pyright: ignore[reportAttributeAccessIssue]
     return cache
 
 
-def cost_scale(nav):
+def cost_scale(nav: 'NavData') -> float:
     """The least stored cost per metre of length over the graph's edges, at most 1 (0 when an edge of some length
     costs nothing): the straight-line estimate times this never exceeds a route's cost. 2026-10-30 second review: the
     stored costs are rounded down to 1/16 m, so the plain distance overestimated and a dearer route came back (5.1875
@@ -85,11 +90,11 @@ def cost_scale(nav):
         if has_length.any():
             least = float((np.asarray(nav.edge_cost, float)[has_length] / length[has_length]).min())
             scale = max(0.0, min(1.0, least * (1.0 - 1e-9)))
-    nav._cost_scale = scale
+    nav._cost_scale = scale  # pyright: ignore[reportAttributeAccessIssue]  # as _adj
     return scale
 
 
-def closest_between(nav, ia, ib):
+def closest_between(nav: 'NavData', ia: int, ib: int) -> tuple[int | None, int | None, float] | None:
     """The closest pair of nodes of two islands (horizontal metres)."""
     nodes_a = np.nonzero(nav.node_island == ia)[0]
     nodes_b = np.nonzero(nav.node_island == ib)[0]
@@ -106,7 +111,7 @@ def closest_between(nav, ia, ib):
     return best
 
 
-def route(nav, start, end):
+def route(nav: 'NavData', start: npt.ArrayLike, end: npt.ArrayLike) -> Route:
     start, end = np.asarray(start, float), np.asarray(end, float)
     result = Route(False, straight=float(np.linalg.norm(end - start)))
     result.start_node, result.start_join = join(nav, start)
@@ -124,9 +129,9 @@ def route(nav, start, end):
     goal = result.end_node
     scale = cost_scale(nav)                                     # an estimate that never exceeds the stored costs
     best_cost = {result.start_node: 0.0}
-    came_from = {}
+    came_from: dict[int, int] = {}
     heap = [(scale * float(np.linalg.norm(pos[result.start_node] - pos[goal])), 0.0, result.start_node)]
-    closed = set()
+    closed: set[int] = set()
     while heap:
         _, cost, node = heapq.heappop(heap)
         if node in closed:

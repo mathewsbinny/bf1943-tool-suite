@@ -32,8 +32,11 @@ The plan, exactly (rsn_trip_plan does the same in the same order):
      turns the vehicle's metres into the soldier's (a craft at 22 m/s against a soldier at 5 m/s [E]: 58).
 """
 import heapq
+from collections.abc import Mapping
+from typing import Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 from . import rsnv
 
@@ -45,7 +48,7 @@ VEHICLE = {'water_scale': (256, 256, 256), 'kind_mask': (1 << 32) - 1, 'tight_ex
 DEFAULTS = {'vehicle_scale': 58, 'board_cost': 160, 'alight_cost': 160}
 
 
-def soldier_node(S, x, y, z, reach, dy):
+def soldier_node(S: rsnv.World, x: float, y: float, z: float, reach: float, dy: float) -> int | None:
     """The node nearest (x, z) horizontally within reach whose height is within dy of y; lowest index on a tie.
     Element-wise IEEE double operations (dx * dx + dz * dz, then the square root), as rsnav computes them."""
     P = S.node_pos
@@ -63,7 +66,8 @@ IN_SIGHT_DY = 2.0
 IN_SIGHT_TRIES = 32
 
 
-def in_sight_node(S, x, y, z, reach=IN_SIGHT_REACH, dy=IN_SIGHT_DY, tries=IN_SIGHT_TRIES):
+def in_sight_node(S: rsnv.World, x: float, y: float, z: float, reach: float = IN_SIGHT_REACH, dy: float = IN_SIGHT_DY,
+                  tries: int = IN_SIGHT_TRIES) -> int | None:
     """The node nearest (x, z) within reach and dy that (x, y, z) has line of sight to, or None (see the module)."""
     P = S.node_pos
     ddx, ddz = P[:, 0] - x, P[:, 2] - z
@@ -80,11 +84,11 @@ def in_sight_node(S, x, y, z, reach=IN_SIGHT_REACH, dy=IN_SIGHT_DY, tries=IN_SIG
     return None
 
 
-def reach_of(rec):
+def reach_of(rec: tuple[Any, ...]) -> tuple[float, float]:
     return (float(rec[8]) + 2.0, 3.5) if rec[0] == OFFM_BOARD else (2.0, 2.0)
 
 
-def resolve(S, rec):
+def resolve(S: rsnv.World, rec: tuple[Any, ...]) -> int | None:
     """The soldier node of a transfer in the soldier world S, or None (see the module's description)."""
     x, y, z = (float(np.float32(v)) for v in rec[4:7])
     reach, dy = reach_of(rec)
@@ -103,9 +107,9 @@ def resolve(S, rec):
     return soldier_node(S, x, y, z, reach, dy)
 
 
-def transfers(S, V):
+def transfers(S: rsnv.World, V: rsnv.World) -> list[tuple[int, int, int, int | None, int | None]]:
     """[(OFFM index, kind, team mask, vehicle node or None, soldier node or None)] of V's transfers."""
-    out = []
+    out: list[tuple[int, int, int, int | None, int | None]] = []
     for k, r in enumerate(V.offmesh):
         if r[0] not in (OFFM_BOARD, OFFM_ALIGHT, OFFM_DROP):
             continue
@@ -114,13 +118,13 @@ def transfers(S, V):
     return out
 
 
-def _cost(w, n, k, f):
+def _cost(w: rsnv.World, n: int, k: int, f: Mapping[str, Any]) -> int | None:
     if f.get('kind_mask') is not None and not (f['kind_mask'] >> int(w.edge_kind[k]) & 1):
         return None
     return rsnv.edge_cost(w, n, k, f['water_scale'], None, None, None, f.get('tight_extra', 0))
 
 
-def dijkstra(w, source, f, reverse=False):
+def dijkstra(w: rsnv.World, source: int, f: Mapping[str, Any], reverse: bool = False) -> npt.NDArray[np.int64]:
     """Costs from source (to source with reverse) over w's edges with filter f; INF where unreached."""
     n = len(w.node_pos)
     dist = np.full(n, INF, np.int64)
@@ -129,8 +133,10 @@ def dijkstra(w, source, f, reverse=False):
         if not hasattr(w, '_rev'):
             src = np.repeat(np.arange(n), np.diff(fe))
             order = np.argsort(tgt, kind='stable')
-            w._rev = (np.searchsorted(tgt[order], np.arange(n + 1)), src[order], order)
-        rfirst, rsrc, redge = w._rev
+            # a cache kept on the world, not a World field
+            w._rev = (np.searchsorted(tgt[order], np.arange(n + 1)),  # pyright: ignore[reportAttributeAccessIssue]
+                      src[order], order)
+        rfirst, rsrc, redge = w._rev  # pyright: ignore[reportAttributeAccessIssue]
     dist[source] = 0
     heap = [(0, source)]
     done = np.zeros(n, bool)
@@ -140,7 +146,9 @@ def dijkstra(w, source, f, reverse=False):
             continue
         done[u] = True
         if reverse:
-            items = ((int(rsrc[t]), int(redge[t])) for t in range(rfirst[u], rfirst[u + 1]))
+            # bound above: reverse is the same flag
+            items = ((int(rsrc[t]), int(redge[t]))  # pyright: ignore[reportPossiblyUnboundVariable]
+                     for t in range(rfirst[u], rfirst[u + 1]))  # pyright: ignore[reportPossiblyUnboundVariable]
             for v, k in items:
                 c = _cost(w, v, k, f)
                 if c is not None and d + c < dist[v]:
@@ -156,7 +164,8 @@ def dijkstra(w, source, f, reverse=False):
     return dist
 
 
-def plan(S, V, start, goal, team, params=None, fs=None, fv=None):
+def plan(S: rsnv.World, V: rsnv.World, start: int, goal: int, team: int, params: Mapping[str, int] | None = None,
+         fs: Mapping[str, Any] | None = None, fv: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The best trip from soldier node start to soldier node goal (see the module's description)."""
     p = dict(DEFAULTS, **(params or {}))
     fs, fv = fs or SOLDIER, fv or VEHICLE
@@ -172,7 +181,7 @@ def plan(S, V, start, goal, team, params=None, fs=None, fv=None):
     for b in boards:
         if d_from[b[4]] >= INF:
             continue
-        dv = dijkstra(V, b[3], fv)
+        dv = dijkstra(V, cast(int, b[3]), fv)              # boards keeps only transfers with both nodes
         for a in alights:
             if dv[a[3]] >= INF or d_to[a[4]] >= INF:
                 continue
@@ -190,12 +199,13 @@ def plan(S, V, start, goal, team, params=None, fs=None, fv=None):
     return {'mode': None, 'cost': None}
 
 
-def legs(S, V, t, start, goal, fs=None, fv=None):
+def legs(S: rsnv.World, V: rsnv.World, t: Mapping[str, Any], start: int, goal: int, fs: Mapping[str, Any] | None = None,
+         fv: Mapping[str, Any] | None = None) -> list[tuple[str, str, int, list[int]]]:
     """The trip's paths by rsnv.search (A*, the runtime's search): [(world 'S' or 'V', status, cost, [nodes])] - walk
     to the vehicle, ride, walk on; or the one walk."""
     fs, fv = fs or SOLDIER, fv or VEHICLE
 
-    def run(w, a, b, f):
+    def run(w: rsnv.World, a: int, b: int, f: Mapping[str, Any]) -> tuple[str, int, list[int]]:
         st, c, path, _e = rsnv.search(w, a, b, kind_mask=f['kind_mask'], water_scale=f['water_scale'],
                                       tight_extra=f.get('tight_extra', 0))
         return st, c, path

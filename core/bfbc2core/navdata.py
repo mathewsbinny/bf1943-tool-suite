@@ -25,9 +25,14 @@ import sys
 import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import List
+from collections.abc import Callable
+from typing import IO, TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from .terrain import Heightfield
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -57,20 +62,20 @@ LADDER_SLOPE = 1.5                          # ... and more than this many metres
 class NavArea:
     sector: int
     index: int                              # within its sector
-    tile: tuple
+    tile: tuple[int, int]
     layer: int
     pitch: float
     min_y: float
     max_y: float
-    outline: List[np.ndarray] = field(default_factory=list)      # polylines (ground + 0.95 m)
-    portals: List[tuple] = field(default_factory=list)           # (p0, p1, target area index in the sector)
-    borders: List[tuple] = field(default_factory=list)           # (p0, p1)
+    outline: list[npt.NDArray[np.float32]] = field(default_factory=list)  # polylines (ground + 0.95 m)
+    portals: list[tuple[Any, ...]] = field(default_factory=list)  # (p0, p1, target area index in the sector)
+    borders: list[tuple[Any, ...]] = field(default_factory=list)  # (p0, p1)
     island: int = -1                                             # index into NavData.islands
     cells: int = 0
     ladder: bool = False                                         # ground reached only through a ladder link
 
     @property
-    def detailed(self):
+    def detailed(self) -> bool:
         return self.pitch < DETAILED
 
 
@@ -79,31 +84,31 @@ class Island:
     group: int                              # graph group id (a node id of the group)
     nodes: int
     cells: int
-    centre: np.ndarray
+    centre: npt.NDArray[np.float64]
 
 
 @dataclass
 class NavData:
     path: str
-    areas: List[NavArea]
-    cell_xz: np.ndarray                     # (n, 2) cell centres
-    cell_y: np.ndarray                      # (n,) ground height
-    cell_area: np.ndarray                   # (n,) index into areas
-    node_pos: np.ndarray                    # (m, 3)
-    node_sector: np.ndarray                 # (m,)
-    edges: np.ndarray                       # (k, 2) node indices, source -> destination
-    edge_cost: np.ndarray                   # (k,) metres, as stored (the tag's floor(distance * 16) / 16)
-    node_island: np.ndarray                 # (m,) index into islands
-    islands: List[Island]
-    ladder_edge: np.ndarray = None          # (k,) bool: the edge is a ladder link (LADDER_DY / LADDER_SLOPE)
+    areas: list[NavArea]
+    cell_xz: npt.NDArray[np.float64]        # (n, 2) cell centres
+    cell_y: npt.NDArray[np.float64]         # (n,) ground height
+    cell_area: npt.NDArray[np.int32]        # (n,) index into areas
+    node_pos: npt.NDArray[np.float64]       # (m, 3)
+    node_sector: npt.NDArray[np.int_]       # (m,)
+    edges: npt.NDArray[np.int64]            # (k, 2) node indices, source -> destination
+    edge_cost: npt.NDArray[np.float64]      # (k,) metres, as stored (the tag's floor(distance * 16) / 16)
+    node_island: npt.NDArray[np.int32]      # (m,) index into islands
+    islands: list[Island]
+    ladder_edge: npt.NDArray[np.bool_] | None = None  # (k,) bool: the edge is a ladder link (LADDER_DY / LADDER_SLOPE)
     y_offset: float = Y_OFFSET              # node_pos and outlines stand this far above the ground (load's y_offset)
 
     @property
-    def sectors(self):
+    def sectors(self) -> list[int]:
         return sorted({a.sector for a in self.areas})
 
 
-def terrain_digest(heightfield):
+def terrain_digest(heightfield: object) -> str | None:
     """A hash of the height field's contents (bounds, size, samples), or None for a height source without them
     (whose results are then not cached). 2026-10-30: the key held only whether there was a height field, so a
     changed terrain under an unchanged .hpd got the old terrain's cell heights back from the cache."""
@@ -118,7 +123,7 @@ def terrain_digest(heightfield):
     return h.hexdigest()[:20]
 
 
-def _key(path, heightfield=None, y_offset=Y_OFFSET):
+def _key(path: str, heightfield: object = None, y_offset: float = Y_OFFSET) -> str:
     st = os.stat(path)
     hf = f'hf:{terrain_digest(heightfield)}' if heightfield is not None else 'est'
     return hashlib.sha1(f'{CACHE_VERSION}|{os.path.abspath(path).lower()}|{st.st_size}|{st.st_mtime_ns}|{hf}|{y_offset}'.encode()).hexdigest()[:20]
@@ -128,7 +133,8 @@ ON_TERRAIN = 0.1                            # m: a boundary point lies on the te
                                             # the terrain's height range half a cell around it, plus this
 
 
-def _ground(xz, est, heightfield, near=None):
+def _ground(xz: npt.NDArray[np.float64], est: npt.NDArray[np.float64], heightfield: 'Heightfield | None',
+            near: npt.NDArray[np.float64] | None = None) -> npt.NDArray[np.float64]:
     """Cell heights: the terrain height field's where the cell lies on terrain, else navdiff's estimate (the nearest
     boundary point's ground height). On terrain: the estimate is within 1.5 m of the terrain at the cell, and the
     boundary point the estimate came from (near, (n, 2) x, z) lies on the terrain itself - without that test a floor
@@ -145,7 +151,7 @@ def _ground(xz, est, heightfield, near=None):
     return np.where(on, t, est)
 
 
-def _write_cache(path, write):
+def _write_cache(path: str, write: Callable[[IO[bytes]], object]) -> None:
     """A cache file written beside itself and moved into place, so a tool closed while writing never leaves one cut
     short (2026-10-30: a cut .npz failed every later load of that level until deleted by hand)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -160,7 +166,9 @@ def _write_cache(path, write):
         raise
 
 
-def _cells(f, heightfield, cache_dir, path, y_offset):
+def _cells(f: hpdtool.HpdFile, heightfield: 'Heightfield | None', cache_dir: str | None, path: str,
+           y_offset: float) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.int32],
+                                     npt.NDArray[np.float64]]:
     if cache_dir:
         cp = os.path.join(cache_dir, _key(path, y_offset=y_offset) + '.npz')
         if os.path.isfile(cp):
@@ -194,7 +202,8 @@ def _cells(f, heightfield, cache_dir, path, y_offset):
     return xz, y, area, est
 
 
-def load(path, heightfield=None, cache_dir=None, y_offset=Y_OFFSET):
+def load(path: str, heightfield: 'Heightfield | None' = None, cache_dir: str | None = None,
+         y_offset: float = Y_OFFSET) -> NavData:
     """The file as NavData. y_offset: how far above the ground the file stores its nodes and outlines (DICE's 0.95;
     a BF1943 build's soldier1943.HEIGHT / 2). With cache_dir, the whole result is kept there per file (and per height
     source and y_offset), so opening a level again takes about a second. The key holds the height field's contents
@@ -217,7 +226,7 @@ AREA_EXTENT = 128.0                         # m: an area lies in one tile of its
                                             # largest in the four BF1943 builds spans 41.6 m
 
 
-def _check_area(path, sector, n, a):
+def _check_area(path: str, sector: int, n: int, a: kymesh.Area) -> None:
     """ValueError unless the area's boundary points (navdiff.segments: outlines, portals, border portals) are finite
     and span at most AREA_EXTENT on x and z. 2026-10-31 fuzzing: an infinite point raised OverflowError in
     navdiff.area_cells; review: one 1e30 m away made it sample every 0.8 m of the box between, without end."""
@@ -234,9 +243,9 @@ def _check_area(path, sector, n, a):
                          f'({AREA_EXTENT:g} m at most)')
 
 
-def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
+def _load(path: str, heightfield: 'Heightfield | None', cache_dir: str | None, y_offset: float = Y_OFFSET) -> NavData:
     f = hpdtool.parse(open(path, 'rb').read())
-    areas = []
+    areas: list[NavArea] = []
     for s in f.sectors:
         for n, a in enumerate(kymesh.parse_mesh(s.mesh).areas):
             _check_area(path, s.id, n, a)
@@ -270,7 +279,7 @@ def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
     edges = np.array(edges, dtype=np.int64).reshape(-1, 2)
     parent = np.arange(len(pos))
 
-    def find(a):
+    def find(a: int) -> int:
         while parent[a] != a:
             parent[a] = parent[parent[a]]
             a = parent[a]
@@ -290,7 +299,7 @@ def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
         ladder_edge = np.zeros(0, bool)
     walk = np.arange(len(pos))
 
-    def wfind(a):
+    def wfind(a: int) -> int:
         while walk[a] != a:
             walk[a] = walk[walk[a]]
             a = walk[a]
@@ -336,7 +345,7 @@ def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
     island_cells = Counter()
     for a in areas:
         island_cells[a.island] += a.cells
-    islands = []
+    islands: list[Island] = []
     for k, r in enumerate(order):
         sel = node_island == k
         islands.append(Island(int(r), int(sel.sum()), int(island_cells.get(k, 0)), pos[sel].mean(axis=0)))
@@ -344,17 +353,18 @@ def _load(path, heightfield, cache_dir, y_offset=Y_OFFSET):
                    node_island, islands, ladder_edge, y_offset)
 
 
-def compare_cells(cand, ref):
+def compare_cells(cand: NavData, ref: NavData) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
     """Per cell of each file: True where the other file has the same ground (navdiff's rule: the same 0.8 m
     cell; one floor on each side is the same ground, stacked floors pair by height within 4 m)."""
-    def keyed(nav):
+    def keyed(nav: NavData) -> npt.NDArray[np.int64]:
         ij = np.round(nav.cell_xz / GRID).astype(np.int64)
         return (ij[:, 0] + 50_000) * 100_000 + (ij[:, 1] + 50_000)
 
     kc, kr = keyed(cand), keyed(ref)
     yc, yr = np.asarray(cand.cell_y, np.float64), np.asarray(ref.cell_y, np.float64)
 
-    def same(keys, y, okeys, oy):
+    def same(keys: npt.NDArray[np.int64], y: npt.NDArray[np.float64], okeys: npt.NDArray[np.int64],
+             oy: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
         """For each (key, y): does the other file have the key, and (one floor each) or a floor within STACK_TOL?"""
         uk, counts = np.unique(keys, return_counts=True)
         mine_n = counts[np.searchsorted(uk, keys)]
@@ -377,7 +387,7 @@ def compare_cells(cand, ref):
     return same(kc, yc, kr, yr), same(kr, yr, kc, yc)
 
 
-def summary(nav):
+def summary(nav: NavData) -> dict[str, int]:
     return {'areas': len(nav.areas), 'detailed areas': sum(a.detailed for a in nav.areas), 'cells': int(len(nav.cell_xz)),
             'nodes': int(len(nav.node_pos)), 'edges': int(len(nav.edges)), 'islands': len(nav.islands),
             'large islands (25+ nodes)': sum(i.nodes >= 25 for i in nav.islands), 'sectors': len(nav.sectors),

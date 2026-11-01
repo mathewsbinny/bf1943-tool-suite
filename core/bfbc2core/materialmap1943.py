@@ -14,20 +14,26 @@ the height field's minimum + (index + 0.5) x pixel size, the height field's orie
 """
 import struct
 from dataclasses import dataclass
-from typing import List
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
+import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from .game1943 import Game
+    from .terrain import Heightfield
 
 
 @dataclass
 class MaterialMap:
-    names: List[str]
-    grid: np.ndarray            # (side, side) uint8 map index, [z, x]
+    names: list[str]
+    grid: npt.NDArray[np.uint8]  # (side, side) uint8 map index, [z, x]
     min_x: float = 0.0
     min_z: float = 0.0
     pixel: float = 1.0
 
-    def at(self, x, z):
+    def at(self, x: npt.ArrayLike, z: npt.ArrayLike) -> npt.NDArray[np.int_]:
         side = self.grid.shape[0]
         i = np.floor((np.asarray(x, float) - self.min_x) / self.pixel).astype(int)
         j = np.floor((np.asarray(z, float) - self.min_z) / self.pixel).astype(int)
@@ -36,12 +42,12 @@ class MaterialMap:
         out[ok] = self.grid[j[ok], i[ok]]
         return out
 
-    def name_at(self, x, z):
+    def name_at(self, x: npt.ArrayLike, z: npt.ArrayLike) -> list[str | None]:
         k = np.atleast_1d(self.at(x, z))
         return [self.names[v] if 0 <= v < len(self.names) else None for v in k]
 
 
-def read(data):
+def read(data: bytes) -> MaterialMap:
     """MaterialMap(names, grid) from the .res bytes (no placement: see place). ValueError for a file that is not a
     whole material map."""
     if len(data) < 6:                   # 2026-10-31 fuzzing: a struct.error before
@@ -72,6 +78,7 @@ def read(data):
         p += 512
         if sum(lens) != n:
             raise ValueError(f'tile {t}: row lengths sum to {sum(lens)}, the body is {n} bytes')
+        rows: list[bytes]
         rows, q = [], 0
         for ln in lens:
             row = body[q:q + ln]
@@ -117,14 +124,14 @@ def read(data):
     return MaterialMap(names, grid)
 
 
-def place(mm, heightfield):
+def place(mm: MaterialMap, heightfield: 'Heightfield') -> MaterialMap:
     """The map laid over the height field's extent."""
     mm.min_x, mm.min_z = float(heightfield.min[0]), float(heightfield.min[2])
     mm.pixel = float(heightfield.max[0] - heightfield.min[0]) / mm.grid.shape[0]
     return mm
 
 
-def resource_name(game_index, level):
+def resource_name(game_index: Iterable[str], level: str) -> str | None:
     """The level's material map in the bundle index: terrains/<level>/<level>-materialmap.res, or on Coral Sea
     terrains/coral_sea/terrain.terrainmaterialmapasset.res. None when the level has none."""
     pre = f'terrains/{level}/'
@@ -133,9 +140,9 @@ def resource_name(game_index, level):
     return sorted(names)[0] if names else None
 
 
-def for_level(game, level, heightfield):
+def for_level(game: 'Game', level: str, heightfield: 'Heightfield') -> MaterialMap | None:
     """The level's material map placed over its height field, from a game1943.Game (None when it has none)."""
     name = resource_name(game.names(), level)
     if name is None:
         return None
-    return place(read(game.data(name)), heightfield)
+    return place(read(cast(bytes, game.data(name))), heightfield)     # a name from game.names(): its data is there

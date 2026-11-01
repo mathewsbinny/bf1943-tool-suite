@@ -1107,6 +1107,15 @@
       },
       "moved": "2026-10-31T17:18:23-04:00",
       "note": "NavKit's modules both variants use are one copy in bf1943-auto-navkit-common, merged with the big-endian variant's copies (the builder with explicit Settings: BFBC2 NavKit's defaults, BF1943 soldier1943.SETTINGS); the driver and window renamed navkit_le.py / navkitGUI_le.pyw so no module name is in both variants; an OPFOR change to any of these is merged by hand at its new place"
+    },
+    {
+      "kind": "move",
+      "destination": "bf1943-auto-navkit-little-endian",
+      "paths": {
+        "navkit.py": "bf1943-auto-navkit-little-endian/navkit_le.py (the steps and the command line) and bf1943-auto-navkit-little-endian/navkit_le_project.py (the project layer: the OPFOR folder, its tools, the project's paths, the file helpers)"
+      },
+      "moved": "2026-10-31T21:39:02-04:00",
+      "note": "navkit_le.py split in two, the code moved verbatim; navkit_le.py imports the project layer's names back, so navkit_le.<name> is every name it had; an OPFOR change to navkit.py is merged by hand into whichever of the two holds that code"
     }
   ]
 }

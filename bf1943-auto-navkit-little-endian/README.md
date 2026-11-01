@@ -54,6 +54,8 @@ QUICKSTART.md        how to build path data for a level, step by step
 navkitGUI_le.pyw     the NavKit window (Tkinter): the steps below as buttons (navkitGUI.pyw until 2026-10-31)
 navkit_le.py         driver: levels / prepare / sample / build / check / apply / install / restore / status / all /
                      compare (navkit.py until 2026-10-31)
+navkit_le_project.py the driver's project layer: the Project OPFOR folder, the toolkit's tools, a level's paths, the
+                     file helpers (in navkit_le.py until 2026-10-31; navkit_le.<name> still has every name)
 tools\               this variant's own NavKit tools (Python 3.13 + numpy / matplotlib)
   ordercheck.py      scoring: AI order positions on the areas, pairwise route check, self-check
   navcompare.py      two files on a level's AI positions: coverage, main network, pairwise, size

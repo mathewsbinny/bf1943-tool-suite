@@ -22,6 +22,11 @@ of operations, as rsnav.
 """
 import heapq
 import math
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from .rsnv import World
 
 TWO_PI = 6.283185307179586
 BUCKET_NUDGE = 1e-3          # m: the buckets are looked up this far inside a sector (a cell on a sector edge)
@@ -36,10 +41,11 @@ KINDS = {
 KIND_IDS = {'car': 0, 'tracked': 1, 'boat': 2}      # rsnav's RSN_DRIVE_* numbering
 
 
-def _sweep(theta0, direction, turn, R, length, pitch, reach, n_sub):
+def _sweep(theta0: float, direction: int, turn: int, R: float, length: float, pitch: float, reach: float,
+           n_sub: int) -> list[tuple[float, float]]:
     """Points (x, z) in cells swept by a move: centre line samples and the reach points ahead / behind. direction is +1
     forward or -1 reverse, turn +1, -1 or 0 (straight); R the turning radius; x and z in cells of the pitch."""
-    points = []
+    points: list[tuple[float, float]] = []
     for k in range(1, n_sub + 1):
         t = length * k / n_sub
         if turn == 0 or R == 0:
@@ -55,7 +61,7 @@ def _sweep(theta0, direction, turn, R, length, pitch, reach, n_sub):
     return points
 
 
-def table(kind):
+def table(kind: str) -> dict[str, Any]:
     """The motion primitives of a kind: {'kind', 'pitch', 'headings', 'prims': [per heading [(dI, dJ, h_end, dir, cost,
     [(ci, cj)], n_centre)]], ...}: the swept cells, the centre line's (with the end) first. Deterministic: rsnav's C
     table is generated from it (tools/gen_hybrid_tables.py)."""
@@ -63,10 +69,10 @@ def table(kind):
     H, pitch, R = spec['headings'], spec['pitch'], spec['radius']
     arc = (R if R else 2.0 * pitch) * TWO_PI / H       # one heading's turn (or a straight step for pivoting kinds)
     step = arc
-    prims = []
+    prims: list[list[tuple[int, int, int, int, int, list[tuple[int, int]], int]]] = []
     for h in range(H):
         theta = TWO_PI * h / H
-        heading_prims = []
+        heading_prims: list[tuple[int, int, int, int, int, list[tuple[int, int]], int]] = []
         if R:
             moves = [(1, 0), (1, 1), (1, -1), (-1, 0), (-1, 1), (-1, -1)]        # (direction, turn)
         else:
@@ -79,7 +85,7 @@ def table(kind):
             dI, dJ = int(round(end_x)), int(round(end_z))
             h_end = (h + direction * turn) % H
             # the centre line's cells first (and the end), then the body's reach ahead and behind
-            cells = []
+            cells: list[tuple[int, int]] = []
             for x, z in points[0::3]:
                 cell = (int(round(x)), int(round(z)))
                 if cell != (0, 0) and cell not in cells:
@@ -109,11 +115,11 @@ def table(kind):
     return {'kind': kind, 'pitch': pitch, 'headings': H, 'prims': prims, 'switch': spec['switch'], 'radius': R}
 
 
-def heading_of(yaw, H=16):
+def heading_of(yaw: float, H: int = 16) -> int:
     return int(math.floor(yaw / TWO_PI * H + 0.5)) % H
 
 
-def cell_ground(w, x, z, yref, dy):
+def cell_ground(w: 'World', x: float, z: float, yref: float, dy: float) -> float | None:
     """The ground of the walkable cell at (x, z) nearest yref within dy (the lowest area index on a tie), or None."""
     best = None                                         # (height difference, area index, ground)
     for area_index in w.areas_near(x + BUCKET_NUDGE, z + BUCKET_NUDGE):
@@ -129,7 +135,7 @@ def cell_ground(w, x, z, yref, dy):
     return None if best is None else best[2]
 
 
-def corridor_d2(x, z, corridor):
+def corridor_d2(x: float, z: float, corridor: Sequence[tuple[float, float]]) -> float | None:
     """Squared distance from (x, z) to the polyline corridor [(x, z)] (doubles)."""
     best = None
     if len(corridor) == 1:
@@ -155,9 +161,13 @@ SNAP = sorted(((di, dj) for dj in range(-2, 3) for di in range(-2, 3) if di * di
 DEFAULTS = {'max_expansions': 6000, 'corridor': 10.0, 'tol': 2, 'htol': 1, 'weight': 320, 'start_dy': 1.5}
 
 
-def plan(w, T, start, goal, corridor, start_y, params=None):
+def plan(w: 'World', T: Mapping[str, Any], start: tuple[int, int, int], goal: tuple[int, int, int],
+         corridor: Sequence[tuple[float, float]], start_y: float,
+         params: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """start, goal: (I, J, heading); start_y: the vehicle's ground height; corridor: [(x, z)] (pass float32 values for
     parity with rsnav). Returns {'status': 'done' | 'partial' | 'none', 'cost', 'poses', 'expansions'}."""
+    if len(corridor) == 0:                              # as rsn_hybrid_plan: n_corridor == 0 is RSN_ERR_ARG
+        raise ValueError('rsnvhybrid.plan: the corridor is empty (it needs at least one point)')
     opts = dict(DEFAULTS, **(params or {}))
     pitch, H = T['pitch'], T['headings']
     prims = T['prims']
@@ -165,7 +175,7 @@ def plan(w, T, start, goal, corridor, start_y, params=None):
     weight = opts['weight'] / 256.0
     goal_I, goal_J, goal_h = goal
 
-    def heuristic(I, J):
+    def heuristic(I: int, J: int) -> int:
         dI, dJ = I - goal_I, J - goal_J
         dist = math.sqrt(float(dI * dI + dJ * dJ))
         v = (16.0 * pitch) * dist
@@ -182,16 +192,16 @@ def plan(w, T, start, goal, corridor, start_y, params=None):
         return {'status': 'none', 'cost': None, 'poses': [], 'expansions': 0}
     # the states, one list per field (index = state number): cell, heading, direction of the last move, ground,
     # cost so far, the state it was reached from, closed, heuristic
-    states = {'I': [I0], 'J': [J0], 'h': [h0], 'd': [1], 'y': [y0], 'g': [0], 'parent': [-1], 'closed': [False],
-              'hv': [heuristic(I0, J0)]}
+    states: dict[str, list[Any]] = {'I': [I0], 'J': [J0], 'h': [h0], 'd': [1], 'y': [y0], 'g': [0], 'parent': [-1],
+                                    'closed': [False], 'hv': [heuristic(I0, J0)]}
     index = {(I0, J0, h0, 1): 0}
     heap = [(states['hv'][0], 0, 0)]                    # (f, push sequence, state)
     seq = 1
     expansions = 0
-    nearest = None                                      # (heuristic, state) of the closed state nearest the goal
+    nearest: tuple[int, int] | None = None              # (heuristic, state) of the closed state nearest the goal
 
-    def poses(state):
-        out = []
+    def poses(state: int) -> list[tuple[int, int, int, int, float]]:
+        out: list[tuple[int, int, int, int, float]] = []
         while state != -1:
             out.append((states['I'][state], states['J'][state], states['h'][state], states['d'][state],
                         states['y'][state]))
@@ -216,7 +226,8 @@ def plan(w, T, start, goal, corridor, start_y, params=None):
         y = states['y'][state]
         for dI, dJ, h_end, direction, cost, cells, n_centre in prims[h]:
             I2, J2 = I + dI, J + dJ
-            if corridor_d2(I2 * pitch, J2 * pitch, corridor) > corridor_max2:
+            # None only for an empty corridor, which plan refuses at its start
+            if cast(float, corridor_d2(I2 * pitch, J2 * pitch, corridor)) > corridor_max2:
                 continue
             clear = True
             # out of the start state only the centre line: the vehicle may have squeezed where its body test fails,

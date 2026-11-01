@@ -5,16 +5,23 @@ stage (the first part of stage() until 2026-10-31)."""
 import copy
 import math
 import time
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 import navsample
 import navwalk
 
 from .config import BFBC2, CLIP_TO_REFERENCE, LINK_RULE, MAX_WATER_DEPTH, PITCH, BuildError, grid_at
 
+if TYPE_CHECKING:
+    from .config import Grid, Ladder, Log, Points, Settings, Water
 
-def water_tops(s, vertices, triangles):
+
+def water_tops(s: navsample.Samples, vertices: npt.ArrayLike | None, triangles: npt.NDArray[Any]
+               ) -> npt.NDArray[np.float64]:
     """The water surface height over every sample column (-inf where there is no water). The columns are a regular
     grid, so each water triangle only visits the columns its bounding box covers."""
     nx, nz, p = s.nx, s.nz, s.pitch
@@ -46,7 +53,7 @@ def water_tops(s, vertices, triangles):
     return top.ravel()
 
 
-def outside_bounds(s, bounds):
+def outside_bounds(s: navsample.Samples, bounds: Sequence[float]) -> npt.NDArray[np.bool_]:
     """Surfaces whose column lies outside bounds (minX, minZ, maxX, maxZ) - bool per surface (CLIP_TO_REFERENCE)."""
     col = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start[:s.nx * s.nz + 1]))
     x, z = s.min_x + (col % s.nx) * s.pitch, s.min_z + (col // s.nx) * s.pitch
@@ -54,7 +61,7 @@ def outside_bounds(s, bounds):
     return (x < bounds[0] - e) | (x > bounds[2] + e) | (z < bounds[1] - e) | (z > bounds[3] + e)
 
 
-def deep_water(s, water, limit=MAX_WATER_DEPTH):
+def deep_water(s: navsample.Samples, water: 'Water | None', limit: float = MAX_WATER_DEPTH) -> npt.NDArray[np.bool_]:
     """Surfaces more than limit metres under the level's water (bool per surface). water: (vertices, triangles)."""
     if water is None:
         return np.zeros(len(s.y), dtype=bool)
@@ -68,7 +75,10 @@ class Level:
     (grid_at; the normal grid by default); settings: the build's Settings, which the area, outline and node rules
     read."""
 
-    def __init__(self, s, keep, step, gx=None, gz=None, stair=None, grid=None, settings=BFBC2):
+    def __init__(self, s: navsample.Samples, keep: npt.NDArray[np.bool_], step: float,
+                 gx: navwalk.FloatArray | None = None, gz: navwalk.FloatArray | None = None,
+                 stair: npt.NDArray[np.bool_] | None = None, grid: 'Grid | None' = None,
+                 settings: 'Settings' = BFBC2) -> None:
         self.grid = grid if grid is not None else grid_at(PITCH, settings)
         self.settings = settings
         self.s, self.keep, self.step = s, keep, step
@@ -80,19 +90,19 @@ class Level:
         self.col_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))
         self.terrain = (s.hit[:, 0] == navwalk.TERRAIN_SHAPE_VTABLE) if s.hit is not None else np.ones(len(s.y), bool)
 
-    def on_grid(self, grid):
+    def on_grid(self, grid: 'Grid') -> 'Level':
         """The same surfaces with another Grid's step rule (a shallow copy; merge_detailed)."""
         other = copy.copy(self)
         other.grid = grid
         return other
 
-    def surfaces(self, gi, gj):
+    def surfaces(self, gi: int, gj: int) -> list[int] | range:
         if not (0 <= gi < self.s.nx and 0 <= gj < self.s.nz):
             return range(0)
         c = gj * self.s.nx + gi
         return [k for k in range(self.s.start[c], self.s.start[c + 1]) if self.keep[k]]
 
-    def connected(self, k, n, di, dj, rule=None):
+    def connected(self, k: int, n: int, di: int, dj: int, rule: str | None = None) -> bool:
         """Surface n (direction di, dj from k) links to k by rule ('slope', 'raw', 'terrain'; LINK_RULE if None)."""
         rule = rule or LINK_RULE
         if rule == 'slope' or (rule == 'terrain' and not (self.terrain[k] and self.terrain[n])):
@@ -113,7 +123,8 @@ class Level:
                         return True
         return False
 
-    def neighbour(self, k, gi, gj, di, dj, prefer=None, rule=None):
+    def neighbour(self, k: int, gi: int, gj: int, di: int, dj: int, prefer: 'set[int] | dict[int, Any] | None' = None,
+                  rule: str | None = None) -> int | None:
         """The kept surface in column (gi+di, gj+dj) connected to surface k, or None. With prefer (a set of
         surfaces, e.g. those of k's own area), a connected surface in that set is returned first."""
         best, bd = None, 9e9
@@ -127,7 +138,7 @@ class Level:
         return best
 
 
-def to_pitch(f, pitch, what):
+def to_pitch(f: navsample.Samples, pitch: float, what: str) -> navsample.Samples:
     # a sampling run on the build's grid: as it is at the build's pitch, coarsened from a finer one (navwalk.coarse),
     # an error otherwise (a run coarser than the build, or one coarse() cannot bring to this pitch)
     if abs(f.pitch - pitch) <= 1e-3:
@@ -138,7 +149,7 @@ def to_pitch(f, pitch, what):
     return navwalk.coarse(f, pitch)
 
 
-def same_grid(s, f, what):
+def same_grid(s: navsample.Samples, f: navsample.Samples, what: str) -> navsample.Samples:
     if (f.nx, f.nz) != (s.nx, s.nz) or abs(f.min_x - s.min_x) > 1e-3 or abs(f.min_z - s.min_z) > 1e-3 \
             or abs(f.pitch - s.pitch) > 1e-6:
         raise BuildError(f"{what}: grid {f.nx} x {f.nz} at ({f.min_x:g}, {f.min_z:g}) pitch {f.pitch:g} is not the main "
@@ -146,7 +157,8 @@ def same_grid(s, f, what):
     return f
 
 
-def column_sectors(s, cols, xoff, zoff, settings, pitch):
+def column_sectors(s: navsample.Samples, cols: npt.ArrayLike, xoff: int, zoff: int, settings: 'Settings', pitch: float
+                   ) -> tuple[list[int], list[int]]:
     """(X list, Y list): the sectors of sample columns cols of s, less the sector offsets. With the settings'
     column_sectors_cm (NavKit's default) from whole centimetres (navsample.column_sectors, as detailed.py counts);
     without, from the float position floor((min + i x pitch) / 100) at the pitch given - BF1943's builds before
@@ -164,10 +176,15 @@ def column_sectors(s, cols, xoff, zoff, settings, pitch):
     return X, Y
 
 
-def stage_level(samples_path, high_path, grid, settings, tris_path=None, step=0.28, log=print, dynamic_path=None,
-                narrow_path=None, stairs_path=None, exclude_path=None, exclude_foot_path=None, seeds=None, edits=None,
-                water=None, max_water_depth=MAX_WATER_DEPTH, bounds=None, order_points=None, seed_points=None,
-                ladders=None, t0=None):
+def stage_level(samples_path: str, high_path: str | None, grid: 'Grid', settings: 'Settings',
+                tris_path: str | None = None, step: float = 0.28, log: 'Log' = print, dynamic_path: str | None = None,
+                narrow_path: str | None = None, stairs_path: str | None = None, exclude_path: str | None = None,
+                exclude_foot_path: str | None = None, seeds: 'Points | None' = None,
+                edits: Sequence[dict[str, Any]] | None = None, water: 'Water | None' = None,
+                max_water_depth: float | None = MAX_WATER_DEPTH, bounds: Sequence[float] | None = None,
+                order_points: 'Points | None' = None, seed_points: 'Points | None' = None,
+                ladders: 'list[Ladder] | None' = None, t0: float | None = None
+                ) -> tuple['Level', list[tuple[int, int]]]:
     """A stage's input assembly (stage()'s first part until 2026-10-31): its sampling runs brought to the grid's pitch,
     the hand edits, water and reference-extent rules, the level's objects, the walkable surfaces (navwalk.walkable)
     and the ladder links' end surfaces. grid, settings: the stage's Grid and the build's Settings; the rest as
@@ -211,7 +228,8 @@ def stage_level(samples_path, high_path, grid, settings, tris_path=None, step=0.
     ex = np.load(exclude_path) if exclude_path else None
     exf = np.load(exclude_foot_path) if exclude_foot_path else None
     walk_stats = {}                              # navwalk's counts, for the log (roof islands dropped)
-    keep, gx, gz, stair = navwalk.walkable(s, tris, slope=settings.slope_max, step=step, dynamic_tris=dyn,
+    keep, gx, gz, stair = cast(tuple[navwalk.BoolArray, navwalk.FloatArray, navwalk.FloatArray, navwalk.BoolArray],
+                               navwalk.walkable(s, tris, slope=settings.slope_max, step=step, dynamic_tris=dyn,
                                     high_capsule=hi, headroom_band=settings.headroom_band, stats=walk_stats,
                                     return_gradients=True,
                                     return_stairs=True,
@@ -220,7 +238,7 @@ def stage_level(samples_path, high_path, grid, settings, tris_path=None, step=0.
                                     ladders=ladders, **hand,
                                     # roof pruning anchors: soldier spawns, AI order positions, and (stage b) the ground
                                     # the normal build kept - stage b drops only roofs that build did not have
-                                    anchors=list(seeds or []) + list(order_points or []) + list(seed_points or []))
+                                    anchors=list(seeds or []) + list(order_points or []) + list(seed_points or [])))
     level = Level(s, keep, step, gx, gz, stair, grid=grid, settings=settings)
     log(f'{len(s.y)} surfaces, {int(keep.sum())} walkable kept ({time.time() - t0:.0f} s)'
         + (f'; roof islands dropped {walk_stats.get("dropped", 0)} ({walk_stats.get("surfaces", 0)} surfaces)'

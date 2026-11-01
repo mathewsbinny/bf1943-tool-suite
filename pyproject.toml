@@ -7,7 +7,7 @@
 #                                 install's .pth file), so the bootstrap adds nothing for them; the NavKit variants
 #                                 are still chosen by each script
 #   pip install --group ci        the libraries, as CI installs them (pinned: the versions this PC runs), and the
-#                                 check tools (ruff, pytest, coverage)
+#                                 check tools (ruff, pyright, pytest, coverage)
 #
 # A wheel (`pip install .`) holds the package bfbc2core only (suitepath finds the suite's folders from where it lies,
 # so it is used from a clone). The tools stay in the clone.
@@ -48,8 +48,11 @@ ci = [
     "imgui-bundle==1.92.900",
     "capstone==5.0.9",
     "pillow==12.3.0",
-    # the checks: the lint, tests through pytest, and coverage (CI's jobs; run_tests.py needs none of them)
+    # the checks: the lint, the type check, tests through pytest, and coverage (CI's jobs; run_tests.py needs none
+    # of them). pyright's [nodejs] extra brings Node.js as a PyPI wheel (nodejs-wheel-binaries), so the type check
+    # downloads nothing but PyPI packages; the pyright wheel holds its own JavaScript
     "ruff==0.17.3",
+    "pyright[nodejs]==1.1.414",
     "pytest==9.2.0",
     "coverage==7.17.0",
 ]
@@ -101,6 +104,38 @@ ignore = [
 ]
 # E402: a script's imports from other suite folders follow the bootstrap (core/suitepath.py) and
 # `sys.dont_write_bytecode = True` by design; each such import carries `# noqa: E402`
+
+# Types: `python -m pyright` (pinned in the "ci" group; README "Types"; set PYRIGHT_PYTHON_IGNORE_WARNINGS=1 so it does
+# not ask PyPI for a newer version). The folders whose code is annotated, checked at pyright's "standard" strictness;
+# a folder is added to `include` once it is annotated and passes.
+[tool.pyright]
+include = [
+    "core/bfbc2core",
+    "bf1943-auto-navkit-common/tools",
+]
+# the VMX validation's inputs are never edited (as in [tool.ruff]), so never checked: none may be in an included
+# folder (tests/test_repo.py checks it)
+exclude = ["**/work", "**/output", "**/__pycache__"]
+# where the included code's imports are found: the folders suitepath.use puts on sys.path (SHARED and both NavKit
+# variants; no module name is in two of them, so the order changes nothing)
+extraPaths = [
+    "core",
+    "bf1943-fbrb-tool",
+    "bf1943-apt-tools",
+    "bf1943-spawn-map",
+    "bf1943-console-readers/stfs",
+    "bf1943-xenia-kit",
+    "bf1943-automated-map-and-bot-test-harness/xenia-run",
+    "bf1943-xex-tools",
+    "bf1943-auto-navkit-common/tools",
+    "bf1943-auto-navkit-big-endian/tools",
+    "bf1943-auto-navkit-big-endian",
+    "bf1943-auto-navkit-little-endian/tools",
+    "bf1943-auto-navkit-little-endian",
+]
+pythonVersion = "3.13"
+pythonPlatform = "Windows"
+typeCheckingMode = "standard"
 
 # Tests under pytest (`python -B -m pytest`, README "Tests"); run_tests.py needs none of this.
 [tool.pytest.ini_options]

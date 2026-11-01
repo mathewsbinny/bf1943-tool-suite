@@ -56,6 +56,8 @@ Usage: python -B -m navbuild <samples.bin> <forbid_tris.npy> <XOffset> <ZOffset>
                    [--stairs stair_tris.npy] [--exclude exclude_tris.npy] [--exclude-foot exclude_footprint_tris.npy]
 """
 import time
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 # the package's modules, re-exported: navbuild.<name> is every name navbuild.py had (tests set
 # navbuild.<module>.<CONSTANT> where they switch a rule, the module that reads it)
@@ -85,11 +87,18 @@ from .merge import (  # noqa: F401
 from .write import (  # noqa: F401
     cells_path, read_cells, write_cells, write_file)
 
+if TYPE_CHECKING:
+    from .config import Ladder, Log, Points, Water
 
-def build(samples_path, tris_path, xoff, zoff, out_path, step=0.28, log=print, dynamic_path=None, high_path=None,
-          narrow_path=None, stairs_path=None, exclude_path=None, exclude_foot_path=None, seeds=None, edits=None,
-          water=None, max_water_depth=MAX_WATER_DEPTH, bounds=None, order_points=None, detailed=None, ladders=None,
-          settings=BFBC2):
+
+def build(samples_path: str, tris_path: str | None, xoff: int, zoff: int, out_path: str, step: float = 0.28,
+          log: 'Log' = print, dynamic_path: str | None = None, high_path: str | None = None,
+          narrow_path: str | None = None, stairs_path: str | None = None, exclude_path: str | None = None,
+          exclude_foot_path: str | None = None, seeds: 'Points | None' = None,
+          edits: Sequence[dict[str, Any]] | None = None, water: 'Water | None' = None,
+          max_water_depth: float | None = MAX_WATER_DEPTH, bounds: Sequence[float] | None = None,
+          order_points: 'Points | None' = None, detailed: dict[str, Any] | None = None,
+          ladders: 'list[Ladder] | None' = None, settings: Settings = BFBC2) -> BuildState:
     """settings: what the build is made for (Settings: BFBC2, NavKit's defaults, or soldier1943.SETTINGS).
     edits: the operations of a navigation side file (navedits.py applies the walkability ones).
     water: the level's water mesh (vertices, triangles; core/bfbc2core/water.py): ground more than max_water_depth
@@ -101,10 +110,11 @@ def build(samples_path, tris_path, xoff, zoff, out_path, step=0.28, log=print, d
     Returns the build's BuildState (its order nodes, ladder counts and the areas' cells)."""
     t0 = time.time()
     state = BuildState(detailed_sectors=set((detailed or {}).get('sectors') or ()))
-    common = dict(tris_path=tris_path, step=step, log=log, dynamic_path=dynamic_path, narrow_path=narrow_path,
-                  stairs_path=stairs_path, exclude_path=exclude_path, exclude_foot_path=exclude_foot_path,
-                  edits=edits, water=water, max_water_depth=max_water_depth, bounds=bounds,
-                  order_points=order_points, t0=t0, ladders=ladders, settings=settings, state=state)
+    common: dict[str, Any] = dict(tris_path=tris_path, step=step, log=log, dynamic_path=dynamic_path,
+                                  narrow_path=narrow_path, stairs_path=stairs_path, exclude_path=exclude_path,
+                                  exclude_foot_path=exclude_foot_path, edits=edits, water=water,
+                                  max_water_depth=max_water_depth, bounds=bounds, order_points=order_points, t0=t0,
+                                  ladders=ladders, settings=settings, state=state)
     a = stage(samples_path, high_path, xoff, zoff, seeds=seeds, grid=grid_at(PITCH, settings), **common)
     graphs = merge_detailed(a, detailed, xoff, zoff, seeds, common, log) if detailed else a['graphs']
     if ladders:

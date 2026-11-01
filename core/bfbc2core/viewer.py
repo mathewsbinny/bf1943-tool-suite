@@ -9,9 +9,12 @@ the mouse; fly - hold the right button and use W A S D (Q / E down / up, Shift f
 import math
 import os
 import time
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, cast
 
 import moderngl
 import numpy as np
+import numpy.typing as npt
 from imgui_bundle import hello_imgui, imgui, immapp
 
 MAX_LAYERS = 32
@@ -85,7 +88,7 @@ void main() { color = vec4(v_col, 1.0); }
 
 # ------------------------------------------------------------------------------------------------ scene
 
-def triangle_colors(colors, n, per=3):
+def triangle_colors(colors: npt.ArrayLike | None, n: int, per: int = 3) -> npt.NDArray[np.uint8]:
     """Per-vertex RGBA bytes from one RGB per primitive (alpha 255), or zeros (alpha 0: the layer's colour)."""
     if colors is None:
         return np.zeros((n * per, 4), dtype=np.uint8)
@@ -98,15 +101,18 @@ def triangle_colors(colors, n, per=3):
 class Scene:
     """Triangles to draw: add batches, then the viewer uploads them once."""
 
-    def __init__(self):
-        self.layers = []                  # (name, colour)
-        self.batches = []                 # (positions (n*3, 3) float32, tags (n*3,) uint32, colours (n*3, 4) uint8)
-        self.line_batches = []            # (positions (n*2, 3) float32, tags (n*2,) uint32, colours (n*2, 4) uint8)
-        self.ranges = []                  # per triangle batch: (first vertex, vertex count), for Viewer.set_colors
+    def __init__(self) -> None:
+        self.layers: list[tuple[str, Sequence[float]]] = []  # (name, colour)
+        # (positions (n*3, 3) float32, tags (n*3,) uint32, colours (n*3, 4) uint8)
+        self.batches: list[tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32], npt.NDArray[np.uint8]]] = []
+        # (positions (n*2, 3) float32, tags (n*2,) uint32, colours (n*2, 4) uint8)
+        self.line_batches: list[tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32], npt.NDArray[np.uint8]]] = []
+        # per triangle batch: (first vertex, vertex count), for Viewer.set_colors
+        self.ranges: list[tuple[int, int]] = []
         self._vertices = 0
-        self._sample = []
+        self._sample: list[npt.NDArray[np.float32]] = []
 
-    def layer(self, name, colour):
+    def layer(self, name: str, colour: Sequence[float]) -> int:
         for i, (n, _) in enumerate(self.layers):
             if n == name:
                 return i
@@ -115,7 +121,8 @@ class Scene:
         self.layers.append((name, colour))
         return len(self.layers) - 1
 
-    def add_triangles(self, triangles, object_id, layer, colors=None):
+    def add_triangles(self, triangles: npt.ArrayLike, object_id: npt.ArrayLike, layer: int,
+                      colors: npt.ArrayLike | None = None) -> int:
         """triangles: (n, 3, 3) world positions. object_id: one id, or one per triangle (an (n,) array).
         colors: None (the layer's colour) or one RGB per triangle ((n, 3) floats 0-1). Returns the batch index."""
         t = np.asarray(triangles, dtype=np.float32).reshape(-1, 3)
@@ -130,7 +137,7 @@ class Scene:
         return len(self.batches) - 1
 
     @property
-    def bounds(self):
+    def bounds(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]] | None:
         """Where the bulk of the geometry is: the 1-99 % range of a sample of positions (a few far-away objects,
         such as sky or background pieces, do not decide the camera's first view)."""
         if not self._sample:
@@ -138,20 +145,22 @@ class Scene:
         pts = np.concatenate(self._sample)
         return np.percentile(pts, 1, axis=0), np.percentile(pts, 99, axis=0)
 
-    def add_indexed(self, vertices, triangles, object_id, layer):
+    def add_indexed(self, vertices: npt.ArrayLike, triangles: npt.ArrayLike, object_id: npt.ArrayLike,
+                    layer: int) -> None:
         self.add_triangles(np.asarray(vertices, dtype=np.float32)[np.asarray(triangles)], object_id, layer)
 
-    def add_box(self, centre, size, object_id, layer):
+    def add_box(self, centre: npt.ArrayLike, size: float, object_id: npt.ArrayLike, layer: int) -> None:
         c = np.asarray(centre, dtype=np.float32)
         h = size / 2.0
         corners = np.array([[x, y, z] for x in (-h, h) for y in (-h, h) for z in (-h, h)], dtype=np.float32) + c
         faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
-        tris = []
+        tris: list[npt.NDArray[np.float32]] = []
         for a, b, cc, d in faces:
             tris += [corners[[a, b, cc]], corners[[a, cc, d]]]
         self.add_triangles(np.array(tris), object_id, layer)
 
-    def add_lines(self, segments, object_id, layer, colors=None):
+    def add_lines(self, segments: npt.ArrayLike, object_id: npt.ArrayLike, layer: int,
+                  colors: npt.ArrayLike | None = None) -> None:
         """segments: (n, 2, 3) world positions; object_id one id or one per segment; colors None or (n, 3)."""
         s = np.asarray(segments, dtype=np.float32).reshape(-1, 3)
         n = len(s) // 2
@@ -159,20 +168,20 @@ class Scene:
         tag = np.repeat((np.uint32(layer) << np.uint32(24)) | ids, 2).astype(np.uint32)
         self.line_batches.append((s, tag, triangle_colors(colors, n, per=2)))
 
-    def add_polyline(self, points, object_id, layer, closed=False):
+    def add_polyline(self, points: npt.ArrayLike, object_id: npt.ArrayLike, layer: int, closed: bool = False) -> None:
         p = np.asarray(points, dtype=np.float32)
         if len(p) < 2:
             return
         q = np.concatenate([p, p[:1]]) if closed else p
         self.add_lines(np.stack([q[:-1], q[1:]], axis=1), object_id, layer)
 
-    def triangle_count(self):
+    def triangle_count(self) -> int:
         return sum(len(x[0]) for x in self.batches) // 3
 
 
 # ------------------------------------------------------------------------------------------------ camera
 
-def perspective(fov_y, aspect, near, far):
+def perspective(fov_y: float, aspect: float, near: float, far: float) -> npt.NDArray[np.float32]:
     f = 1.0 / math.tan(math.radians(fov_y) / 2)
     m = np.zeros((4, 4), dtype=np.float32)
     m[0, 0], m[1, 1] = f / aspect, f
@@ -181,7 +190,7 @@ def perspective(fov_y, aspect, near, far):
     return m
 
 
-def look_at(eye, target, up=(0, 1, 0)):
+def look_at(eye: npt.ArrayLike, target: npt.ArrayLike, up: npt.ArrayLike = (0, 1, 0)) -> npt.NDArray[np.float32]:
     eye, target, up = (np.asarray(v, dtype=np.float64) for v in (eye, target, up))
     f = target - eye
     f /= np.linalg.norm(f)
@@ -197,37 +206,37 @@ def look_at(eye, target, up=(0, 1, 0)):
 
 
 class Camera:
-    def __init__(self):
-        self.target = np.zeros(3)
+    def __init__(self) -> None:
+        self.target: npt.NDArray[np.float64] = np.zeros(3)
         self.yaw, self.pitch, self.distance = 0.6, 0.6, 300.0
         self.fly = False
-        self.eye_fly = np.array([0.0, 100.0, 0.0])
+        self.eye_fly: npt.NDArray[np.float64] = np.array([0.0, 100.0, 0.0])
         self.fov = 60.0
 
-    def frame(self, lo, hi):
+    def frame(self, lo: npt.ArrayLike, hi: npt.ArrayLike) -> None:
         self.target = (np.asarray(lo) + np.asarray(hi)) / 2
         self.distance = float(np.linalg.norm(np.asarray(hi) - np.asarray(lo))) * 0.6 + 10
 
-    def direction(self):
+    def direction(self) -> npt.NDArray[np.float64]:
         return np.array([math.cos(self.pitch) * math.sin(self.yaw), math.sin(self.pitch), math.cos(self.pitch) * math.cos(self.yaw)])
 
-    def eye(self):
+    def eye(self) -> npt.NDArray[np.float64]:
         return self.eye_fly if self.fly else self.target + self.direction() * self.distance
 
-    def matrices(self, aspect):
+    def matrices(self, aspect: float) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
         eye = self.eye()
         target = eye - self.direction() if self.fly else self.target
         near = max(0.05, (self.distance if not self.fly else 50.0) / 2000.0)
         return perspective(self.fov, aspect, near, near * 200000.0), look_at(eye, target)
 
-    def toggle_fly(self):
+    def toggle_fly(self) -> None:
         if not self.fly:
             self.eye_fly = self.eye().copy()
         else:
             self.target = self.eye_fly - self.direction() * self.distance
         self.fly = not self.fly
 
-    def focus(self, point, distance=None):
+    def focus(self, point: npt.ArrayLike, distance: float | None = None) -> None:
         self.fly = False
         self.target = np.asarray(point, dtype=np.float64)
         if distance:
@@ -239,8 +248,26 @@ class Camera:
 class Viewer:
     """Runs the window. panels: functions called every frame inside ImGui (for the tool's windows).
     on_pick(object_id or None): called when the user clicks; the tool decides what selecting means."""
+    # set when the window opens (_init) or later
+    prog: moderngl.Program
+    layer_ranges: dict[int, tuple[int, int]]
+    vbo_pos: moderngl.Buffer
+    vbo_tag: moderngl.Buffer
+    vbo_col: moderngl.Buffer
+    vao: moderngl.VertexArray
+    line_vao: moderngl.VertexArray | None
+    line_ranges: dict[int, tuple[int, int]]
+    line_vbos: tuple[moderngl.Buffer, ...]
+    overlay_prog: moderngl.Program
+    overlay_vbo: moderngl.Buffer
+    overlay_vao: moderngl.VertexArray
+    _overlay_count: int
+    pick_fbo: moderngl.Framebuffer | None
+    _hover_due: float | None
+    _fps_frames: int
 
-    def __init__(self, scene, title, panels=(), on_pick=None, size=(1600, 950)):
+    def __init__(self, scene: Scene, title: str, panels: Iterable[Callable[['Viewer'], object]] = (),
+                 on_pick: Callable[[int | None], object] | None = None, size: tuple[int, int] = (1600, 950)) -> None:
         self.scene, self.title, self.panels, self.on_pick, self.size = scene, title, list(panels), on_pick, size
         self.camera = Camera()
         if scene.bounds is not None:
@@ -248,25 +275,27 @@ class Viewer:
         self.hidden = 0
         self.selected = NO_ID
         self.hovered = NO_ID
-        self.hover_point = None
-        self.ctx = None
+        self.hover_point: npt.NDArray[np.float64] | None = None
+        self.ctx: moderngl.Context | None = None
         self.renderer = ''                # the GPU OpenGL runs on (set when the window opens)
         self.fps = 0.0
         self._last = time.time()
         self._frames = 0
-        self.exit_after = None            # frames, for screenshots in tests
-        self.screenshot = None
-        self._click_start = None
+        self.exit_after: int | None = None  # frames, for screenshots in tests
+        self.screenshot: npt.NDArray[Any] | None = None
+        self._click_start: tuple[float, float] | None = None
         self._last_click = 0.0
-        self.pick_point = None            # world point of the last click (None: clicked the sky)
+        self.pick_point: npt.NDArray[np.float64] | None = None  # world point of the last click (None: clicked the sky)
         self.select_on_click = True       # a tool's mode (measuring) can turn selection by click off
-        self._problems = {}               # errors caught in a frame: (where, type, message) -> text shown
-        self.overlay = []                 # (a, b, colour) segments, set by the tool (set_overlay), drawn over the scene
-        self._overlay_key = None
+        # errors caught in a frame: (where, type, message) -> text shown
+        self._problems: dict[tuple[str, str, str], str] = {}
+        # (a, b, colour) segments, set by the tool (set_overlay), drawn over the scene
+        self.overlay: list[tuple[Sequence[float], Sequence[float], Sequence[float]]] = []
+        self._overlay_key: int | None = None
         self._overlay_version = 0
 
     # --- GPU ----------------------------------------------------------------------------------------
-    def _init(self):
+    def _init(self) -> None:
         io = imgui.get_io()                  # a panel that fails half-way: its windows are closed, not an assert
         io.config_error_recovery = True
         io.config_error_recovery_enable_assert = False
@@ -318,56 +347,59 @@ class Viewer:
         self.overlay_vao = self.ctx.vertex_array(self.overlay_prog, [(self.overlay_vbo, '3f 3f', 'in_pos', 'in_col')])
         self._overlay_count = 0
         palette = [c for _, c in self.scene.layers] + [(0.5, 0.5, 0.5)] * (MAX_LAYERS - len(self.scene.layers))
-        self.prog['palette'].value = [tuple(float(x) for x in c) for c in palette]
+        # moderngl's stubs give prog[name] as Uniform | UniformBlock | Attribute | Varying: the ignores on uniforms
+        self.prog['palette'].value = [tuple(float(x) for x in c)  # pyright: ignore[reportAttributeAccessIssue]
+                                      for c in palette]
         light = np.array([0.4, 0.8, 0.3])
-        self.prog['light'].value = tuple(light / np.linalg.norm(light))
+        self.prog['light'].value = tuple(light / np.linalg.norm(light))  # pyright: ignore[reportAttributeAccessIssue]
         self.pick_fbo = None
         self.scene.batches = []           # uploaded; free the CPU copy
         self.scene.line_batches = []
 
-    def _ensure_pick_fbo(self, w, h):
+    def _ensure_pick_fbo(self, w: int, h: int) -> None:
         if self.pick_fbo is None or self.pick_fbo.size != (w, h):
             if self.pick_fbo is not None:
                 self.pick_fbo.release()
-            self.pick_fbo = self.ctx.framebuffer(color_attachments=[self.ctx.texture((w, h), 4)],
-                                                 depth_attachment=self.ctx.depth_texture((w, h)))
+            self.pick_fbo = cast(moderngl.Context, self.ctx).framebuffer(
+                color_attachments=[cast(moderngl.Context, self.ctx).texture((w, h), 4)],
+                depth_attachment=cast(moderngl.Context, self.ctx).depth_texture((w, h)))
 
-    def _mvp(self, w, h):
+    def _mvp(self, w: int, h: int) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32], npt.NDArray[np.float32]]:
         proj, view = self.camera.matrices(w / max(h, 1))
         return proj @ view, proj, view
 
-    def _draw(self):
+    def _draw(self) -> None:
         w, h = self._window_size()
         if w <= 0 or h <= 0:
             return
-        self.ctx.viewport = (0, 0, w, h)
-        self.ctx.clear(0.13, 0.14, 0.16, depth=1.0)
-        self.ctx.enable(moderngl.DEPTH_TEST)
+        cast(moderngl.Context, self.ctx).viewport = (0, 0, w, h)
+        cast(moderngl.Context, self.ctx).clear(0.13, 0.14, 0.16, depth=1.0)
+        cast(moderngl.Context, self.ctx).enable(moderngl.DEPTH_TEST)
         mvp, _, _ = self._mvp(w, h)
-        self.prog['mvp'].write(mvp.T.astype(np.float32).tobytes())
-        self.prog['hidden'].value = self.hidden
-        self.prog['selected'].value = self.selected
-        self.prog['hovered'].value = self.hovered
-        self.prog['pick'].value = 0
-        self.prog['lines'].value = 0
+        self.prog['mvp'].write(mvp.T.astype(np.float32).tobytes())  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['hidden'].value = self.hidden  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['selected'].value = self.selected  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['hovered'].value = self.hovered  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['pick'].value = 0  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['lines'].value = 0  # pyright: ignore[reportAttributeAccessIssue]
         self._render_layers()
-        self.ctx.disable(moderngl.DEPTH_TEST)
+        cast(moderngl.Context, self.ctx).disable(moderngl.DEPTH_TEST)
         self._draw_overlay(mvp)
 
-    def _render_layers(self):
+    def _render_layers(self) -> None:
         """The visible layers only: each is one range of the triangle (and line) buffer."""
         for lay, (first, count) in self.layer_ranges.items():
             if count and self.layer_visible(lay):
                 self.vao.render(moderngl.TRIANGLES, vertices=count, first=first)
         if self.line_vao is not None:
-            lines = self.prog['lines'].value
-            self.prog['lines'].value = 1
+            lines = self.prog['lines'].value  # pyright: ignore[reportAttributeAccessIssue]
+            self.prog['lines'].value = 1  # pyright: ignore[reportAttributeAccessIssue]
             for lay, (first, count) in self.line_ranges.items():
                 if count and self.layer_visible(lay):
                     self.line_vao.render(moderngl.LINES, vertices=count, first=first)
-            self.prog['lines'].value = lines
+            self.prog['lines'].value = lines  # pyright: ignore[reportAttributeAccessIssue]
 
-    def _draw_overlay(self, mvp):
+    def _draw_overlay(self, mvp: npt.NDArray[np.float32]) -> None:
         if not self.overlay:
             return
         key = self._overlay_version
@@ -376,10 +408,11 @@ class Viewer:
             data = np.array([[*a, *c, *b, *c] for a, b, c in seg], dtype=np.float32)
             self.overlay_vbo.write(data.tobytes())
             self._overlay_count, self._overlay_key = 2 * len(seg), key
-        self.overlay_prog['mvp'].write(mvp.T.astype(np.float32).tobytes())
+        self.overlay_prog['mvp'].write(  # pyright: ignore[reportAttributeAccessIssue]
+            mvp.T.astype(np.float32).tobytes())
         self.overlay_vao.render(moderngl.LINES, vertices=self._overlay_count)
 
-    def set_colors(self, batch, colors):
+    def set_colors(self, batch: int, colors: npt.ArrayLike | None) -> None:
         """New colours for a triangle batch after upload: one RGB per triangle ((n, 3) floats 0-1), or None for
         the layer's colour again. (Before the window opens, the scene's own copy is changed.)"""
         start, count = self.scene.ranges[batch]
@@ -390,12 +423,12 @@ class Viewer:
             return
         self.vbo_col.write(data.tobytes(), offset=start * 4)
 
-    def set_overlay(self, segments):
+    def set_overlay(self, segments: Iterable[tuple[Sequence[float], Sequence[float], Sequence[float]]]) -> None:
         """Replace the overlay: a list of (a, b, (r, g, b)) segments, uploaded once per call."""
         self.overlay = list(segments)
         self._overlay_version += 1
 
-    def project(self, point):
+    def project(self, point: Sequence[float]) -> tuple[float, float] | None:
         """Window position (x, y from the top left, in imgui units) of a world point, or None if behind the camera."""
         w, h = self._window_size()
         mvp, _, _ = self._mvp(w, h)
@@ -405,29 +438,30 @@ class Viewer:
         s = imgui.get_io().display_framebuffer_scale
         return ((p[0] / p[3] + 1) / 2 * w / s.x, (1 - p[1] / p[3]) / 2 * h / s.y)
 
-    def pick(self, x, y):
+    def pick(self, x: float, y: float) -> tuple[int | None, npt.NDArray[np.float64] | None]:
         """Object id under window pixel (x, y from the top left), or None; also the world point there."""
         w, h = self._window_size()
         px, py = int(x), int(h - 1 - y)
         if not (0 <= px < w and 0 <= py < h):
             return None, None
         self._ensure_pick_fbo(w, h)
-        self.pick_fbo.use()
-        self.ctx.viewport = (0, 0, w, h)
-        self.pick_fbo.clear(1.0, 1.0, 1.0, 1.0, depth=1.0)
-        self.ctx.enable(moderngl.DEPTH_TEST)
-        self.ctx.scissor = (px, py, 1, 1)           # only the pixel under the mouse is drawn
+        cast(moderngl.Framebuffer, self.pick_fbo).use()
+        cast(moderngl.Context, self.ctx).viewport = (0, 0, w, h)
+        cast(moderngl.Framebuffer, self.pick_fbo).clear(1.0, 1.0, 1.0, 1.0, depth=1.0)
+        cast(moderngl.Context, self.ctx).enable(moderngl.DEPTH_TEST)
+        cast(moderngl.Context, self.ctx).scissor = (px, py, 1, 1)           # only the pixel under the mouse is drawn
         mvp, proj, view = self._mvp(w, h)
-        self.prog['mvp'].write(mvp.T.astype(np.float32).tobytes())
-        self.prog['hidden'].value = self.hidden
-        self.prog['pick'].value = 1
+        self.prog['mvp'].write(mvp.T.astype(np.float32).tobytes())  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['hidden'].value = self.hidden  # pyright: ignore[reportAttributeAccessIssue]
+        self.prog['pick'].value = 1  # pyright: ignore[reportAttributeAccessIssue]
         self._render_layers()
-        self.prog['pick'].value = 0
-        self.ctx.scissor = None
-        rgba = self.pick_fbo.read(viewport=(px, py, 1, 1), components=4)
-        depth = np.frombuffer(self.pick_fbo.read(viewport=(px, py, 1, 1), attachment=-1, dtype='f4'), dtype=np.float32)[0]
-        self.ctx.screen.use()
-        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.prog['pick'].value = 0  # pyright: ignore[reportAttributeAccessIssue]
+        cast(moderngl.Context, self.ctx).scissor = None
+        rgba = cast(moderngl.Framebuffer, self.pick_fbo).read(viewport=(px, py, 1, 1), components=4)
+        depth = np.frombuffer(cast(moderngl.Framebuffer, self.pick_fbo).read(viewport=(px, py, 1, 1), attachment=-1,
+                                                                             dtype='f4'), dtype=np.float32)[0]
+        cast(moderngl.Context, self.ctx).screen.use()
+        cast(moderngl.Context, self.ctx).disable(moderngl.DEPTH_TEST)
         oid = rgba[0] | (rgba[1] << 8) | (rgba[2] << 16)
         if oid == NO_ID:
             return None, None
@@ -435,13 +469,13 @@ class Viewer:
         world = np.linalg.inv(mvp.astype(np.float64)) @ ndc
         return oid, world[:3] / world[3]
 
-    def _window_size(self):
+    def _window_size(self) -> tuple[int, int]:
         d = imgui.get_io().display_size
         s = imgui.get_io().display_framebuffer_scale
         return int(d.x * s.x), int(d.y * s.y)
 
     # --- input --------------------------------------------------------------------------------------
-    def _input(self):
+    def _input(self) -> None:
         io = imgui.get_io()
         scale = io.display_framebuffer_scale
         mx, my = io.mouse_pos.x * scale.x, io.mouse_pos.y * scale.y
@@ -497,19 +531,19 @@ class Viewer:
         # hover: once the mouse has moved and then rests for a moment (a pick re-renders the scene)
         if abs(dx) + abs(dy) > 0:
             self._hover_due = time.time() + 0.12
-        elif getattr(self, '_hover_due', None) and time.time() >= self._hover_due:
+        elif getattr(self, '_hover_due', None) and time.time() >= cast(float, self._hover_due):
             self._hover_due = None
             oid, point = self.pick(mx, my)
             self.hovered = oid if oid is not None else NO_ID
             self.hover_point = point
 
     # --- frame --------------------------------------------------------------------------------------
-    def _background(self):
+    def _background(self) -> None:
         if self.ctx is None:
             return
         self._guarded('drawing the 3D view', self._draw)
 
-    def _guarded(self, where, fn, *args):
+    def _guarded(self, where: str, fn: Callable[..., object], *args: Any) -> None:
         """Runs one part of a frame; an error is logged once (with its cause) and listed in the Problems window
         instead of closing the tool."""
         try:
@@ -522,7 +556,7 @@ class Viewer:
                 cause, fix = errors.explain(e)
                 self._problems[key] = f'{where}: {cause}  ({fix})'
 
-    def _problems_window(self):
+    def _problems_window(self) -> None:
         if not self._problems:
             return
         from . import errors
@@ -538,7 +572,7 @@ class Viewer:
         imgui.text_disabled(f'Details: {errors._state.get("path") or "(no log file)"}')
         imgui.end()
 
-    def _gui(self):
+    def _gui(self) -> None:
         self._frames += 1
         self._fps_frames = getattr(self, '_fps_frames', 0) + 1
         now = time.time()
@@ -552,13 +586,13 @@ class Viewer:
         if self.exit_after is not None and self._frames >= self.exit_after:
             hello_imgui.get_runner_params().app_shall_exit = True
 
-    def layer_visible(self, layer):
+    def layer_visible(self, layer: int) -> bool:
         return not (self.hidden >> layer) & 1
 
-    def set_layer_visible(self, layer, visible):
+    def set_layer_visible(self, layer: int, visible: bool) -> None:
         self.hidden = (self.hidden & ~(1 << layer)) if visible else (self.hidden | (1 << layer))
 
-    def run(self):
+    def run(self) -> None:
         p = hello_imgui.RunnerParams()
         p.app_window_params.window_title = self.title
         p.app_window_params.window_geometry.size = self.size

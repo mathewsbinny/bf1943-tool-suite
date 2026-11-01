@@ -11,14 +11,21 @@ every triangle's indices below the vertex count, and contiguous array data.
 
 Only classes whose layout is established are listed; add others the same way.
 """
+from typing import TYPE_CHECKING, Any
+
 from hkpack import T_ARRAY, T_UINT8, T_UINT16, T_UINT32, T_VECTOR4, T_VOID
 
+if TYPE_CHECKING:
+    import hkpack
 
-def member(name, offset, mtype, subtype=0):
+type Point = tuple[float, float, float]
+
+
+def member(name: str, offset: int, mtype: int, subtype: int = 0) -> dict[str, Any]:
     return {'name': name, 'class': None, 'type': mtype, 'subtype': subtype, 'carray': 0, 'offset': offset}
 
 
-CLASSES = {
+CLASSES: dict[str, dict[str, Any]] = {
     # the triangle mesh storage of an hkStorageExtendedMeshShape: +0 vtable, +4 memory size and reference count;
     # triangles are 4 x uint16 each (a, b, c, then padding: usually 0, but not always cleared by the exporter)
     'hkStorageExtendedMeshShapeMeshSubpartStorage': {'size': 0x50, 'parent': None, 'members': [
@@ -36,7 +43,7 @@ BOX_FACES = [(0, 1, 3), (0, 3, 2), (4, 6, 7), (4, 7, 5), (0, 4, 5), (0, 5, 1), (
              (0, 2, 6), (0, 6, 4), (1, 5, 7), (1, 7, 3)]
 
 
-def convex_vertices(pf, off):
+def convex_vertices(pf: 'hkpack.Packfile', off: int) -> list[Point]:
     """Vertices [(x, y, z)] of an hkConvexVerticesShape: +0x10 convex radius, +0x20 / +0x30 its box half-extents and
     centre (hkVector4), +0x40 rotatedVertices (hkArray of 'four transposed points': x0..3, y0..3, z0..3, 48 bytes
     each), +0x4c the vertex count, +0x50 planeEquations (hkArray of hkVector4). Layout from the files (2026-10-23)."""
@@ -51,7 +58,7 @@ def convex_vertices(pf, off):
         return []
     if p < 0 or p + 48 * groups > len(d):
         raise ValueError(f'damaged Havok packfile: {groups} vertex groups at {p:#x} run past the end of the file')
-    out = []
+    out: list[Point] = []
     for g in range(groups):
         x = struct.unpack_from(e + '4f', d, p + 48 * g)
         y = struct.unpack_from(e + '4f', d, p + 48 * g + 16)
@@ -60,7 +67,7 @@ def convex_vertices(pf, off):
     return out[:n]
 
 
-def convex_box(pf, off):
+def convex_box(pf: 'hkpack.Packfile', off: int) -> tuple[list[list[Point]], Point, Point]:
     """(the 12 triangles of an hkConvexVerticesShape's vertex bounding box as [[(x, y, z)] * 3],
     stored half-extents, stored centre) - NavKit's BFBC2 reader uses the same box for convex shapes."""
     import struct
@@ -75,7 +82,7 @@ def convex_box(pf, off):
     return [[corners[a], corners[b], corners[c]] for a, b, c in BOX_FACES], half, centre
 
 
-def triangles(pf, off):
+def triangles(pf: 'hkpack.Packfile', off: int) -> tuple[list[tuple[float, ...]], list[tuple[int, ...]]]:
     """(vertices [(x, y, z)], triangles [(a, b, c)]) of an hkStorageExtendedMeshShapeMeshSubpartStorage. ValueError
     when a triangle names a vertex the storage does not have (2026-10-31 fuzzing: read, then an IndexError in
     levelobjects1943.collision; on BF1943's files every index is below the vertex count, tests/test_havok461.py)."""

@@ -3,26 +3,36 @@ their boundaries traced into portals, border portals and outlines with 45-degree
 between sectors (pipeline steps 2 to 5 in navbuild's docstring)."""
 import math
 from collections import defaultdict, deque
+from collections.abc import Container, Iterable, Sequence
+from typing import TYPE_CHECKING, cast
 
 import kymesh
 
 from .config import (AREA_LINK, BISECT_AREAS, BRIDGE_UNION, MAX_AREA, ONE_WAY_PORTALS, SYMMETRIC_PORTALS,
     TILE_20M_SECTORS)
 
+if TYPE_CHECKING:
+    from .config import (AreaDict, BorderRun, BuildState, CellRef, EdgeMap, Grid, OneWay, Resolver, SectorInfo,
+        SectorKey, StageResult, Traced, Vec3)
+    from .inputs import Level
 
-def sector_origin_index(level, X, Y, xoff, zoff):
+    type Bridge = tuple[int, int, int, int]                 # (i, j, di, dj): a 45-degree bridge from cell (i, j)
+    type BridgeSeg = tuple[int, Vec3, Vec3]                 # (bridge, (ax, az, ya), (bx, bz, yb)) in local units
+
+
+def sector_origin_index(level: 'Level', X: int, Y: int, xoff: int, zoff: int) -> tuple[int, int, float, float]:
     """Global sample index of the sector's local sample (0, 0)."""
     s, p = level.s, level.grid.pitch
     ox, oz = (X + xoff) * 100.0, (Y + zoff) * 100.0
     return int(round((ox - s.min_x) / p)), int(round((oz - s.min_z) / p)), ox, oz
 
 
-def tiling(sid, grid):
+def tiling(sid: int, grid: 'Grid') -> tuple[int, int]:
     """(samples per tile, tiles per axis) of a sector on the stage's grid."""
     return (25, 6) if TILE_20M_SECTORS and sid in TILE_20M_SECTORS else (grid.tile, grid.tiles)
 
 
-def sector_window(X, Y, level, state):
+def sector_window(X: int, Y: int, level: 'Level', state: 'BuildState') -> tuple[range, range]:
     """MIXED_OVERLAP: a sector's window, grown by the settings' mixed_overlap (m) on each side whose neighbour is
     built on the other grid (a 0.2 m sector beside a 0.8 m one, and the other way): the two grids' cells then overlap
     where a seam's edges cross, and each grid shows the ground the other leaves out there (2026-10-26: on Coral Sea's
@@ -35,7 +45,7 @@ def sector_window(X, Y, level, state):
     e = int(math.ceil(overlap / grid.pitch - 1e-9))
     detailed = state.detailed_sectors
 
-    def side(n):
+    def side(n: 'SectorKey') -> int:
         return e if n in state.normal_sectors and (n in detailed) != fine and ((X, Y) in detailed) == fine else 0
     lo_x, hi_x = side((X - 1, Y)), side((X + 1, Y))
     lo_z, hi_z = side((X, Y - 1)), side((X, Y + 1))
@@ -43,7 +53,8 @@ def sector_window(X, Y, level, state):
     return (range(w[0] - lo_x, w[-1] + 1 + hi_x), range(w[0] - lo_z, w[-1] + 1 + hi_z))
 
 
-def build_areas(level, gi0, gj0, start=(-1, -1), tile=None, tiles=None, win=None):
+def build_areas(level: 'Level', gi0: int, gj0: int, start: Sequence[int] = (-1, -1), tile: int | None = None,
+                tiles: int | None = None, win: tuple[range, range] | None = None) -> 'list[AreaDict]':
     """Areas of one sector: list of dicts {tile: (tx, tz), cells: [(i, j, k)]} (local i, j). start: the local sample
     index where the tiles begin on x and z (-1, or 0 on a side with no neighbouring sector - EDGE_SECTOR_TILES).
     tile, tiles: the level's grid's by default; win: the sector's window (x range, z range of local samples), the
@@ -68,7 +79,7 @@ def build_areas(level, gi0, gj0, start=(-1, -1), tile=None, tiles=None, win=None
     return areas
 
 
-def components(level, members, gi0, gj0):
+def components(level: 'Level', members: dict[int, tuple[int, int]], gi0: int, gj0: int) -> 'list[list[CellRef]]':
     """8-connected components (AREA_LINK rule) of the given surfaces {k: (i, j)}. An area is single-layer in plan: a
     surface whose column the component already holds (a second floor reached round a corner) starts its own."""
     seen, out = set(), []
@@ -95,13 +106,13 @@ def components(level, members, gi0, gj0):
     return out
 
 
-def _cliff(level, n, ij, cols):
+def _cliff(level: 'Level', n: int, ij: tuple[int, int], cols: dict[tuple[int, int], int]) -> bool:
     """AREA_CLIFF: surface n at column ij would sit beside a cell of the area higher or lower than a 45-degree slope
     plus the step, and at least the settings' area_cliff m, away - the area reached it round a ramp (a bridge deck
     beside the ground under it: Wake Island's com_bridge_t07, cells 6.3 m apart side by side, 2026-10-26). A height
     grid cannot hold such an edge inside one area, so the surface goes to an area of its own."""
     y, step, pitch = level.y, level.step, level.grid.pitch
-    cliff = level.settings.area_cliff
+    cliff = cast(float, level.settings.area_cliff)       # set: components calls _cliff only then
     i, j = ij
     for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
         m = cols.get((i + di, j + dj))
@@ -121,7 +132,7 @@ def _cliff(level, n, ij, cols):
     return False
 
 
-def bisect(level, comp, gi0, gj0):
+def bisect(level: 'Level', comp: 'list[CellRef]', gi0: int, gj0: int) -> 'list[list[CellRef]]':
     i0, i1 = min(c[0] for c in comp), max(c[0] for c in comp)
     j0, j1 = min(c[1] for c in comp), max(c[1] for c in comp)
     if i1 - i0 + 1 <= MAX_AREA and j1 - j0 + 1 <= MAX_AREA:
@@ -139,11 +150,11 @@ def bisect(level, comp, gi0, gj0):
     return out
 
 
-def clip_bridges(bsegs, bridges):
+def clip_bridges(bsegs: 'Iterable[BridgeSeg]', bridges: 'Sequence[Bridge]') -> 'list[BridgeSeg]':
     """Outline of overlapping 45-degree bridges is the boundary of their union: where edges of two bridges
     cross (one cell with diagonal-only neighbours on both sides of an empty cell), split them at the crossing
     and drop the pieces lying inside the other bridge's strip (half-width 1/sqrt 2 sample about the diagonal)."""
-    def inside(px, pz, b):
+    def inside(px: float, pz: float, b: int) -> bool:
         i, j, di, dj = bridges[b]
         rx, rz = px - i, pz - j
         along = (rx * di + rz * dj) / 2.0                   # 0..1 between the two cell centres
@@ -180,7 +191,8 @@ def clip_bridges(bsegs, bridges):
     return out
 
 
-def bridge_union(bridges, cell_k, level):
+def bridge_union(bridges: 'Sequence[Bridge]', cell_k: dict[tuple[int, int], int], level: 'Level'
+                 ) -> 'tuple[set[tuple[str, float, int]], list[tuple[Vec3, Vec3]]]':
     """BRIDGE_UNION: the outline of an area's 45-degree bridges as the boundary of their union, exactly. A bridge
     between diagonal-only cells A (i, j) and B (i + di, j + dj) covers half of each of the two empty cells beside the
     shared corner - per empty cell, the two quarter triangles (base: a cell side, apex: the centre) whose bases touch
@@ -204,7 +216,8 @@ def bridge_union(bridges, cell_k, level):
                 if q not in quarters:
                     quarters[q] = (bi, ya, yb, toward_a, toward_b)
                     order.append(q)
-    def corners(ei, ej, side):                      # the two corners of a quarter's base, in half units
+    # the two corners of a quarter's base, in half units
+    def corners(ei: int, ej: int, side: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
         sx, sz = side
         if sx:
             return ((2 * ei + sx, 2 * ej - 1), (2 * ei + sx, 2 * ej + 1))
@@ -240,7 +253,8 @@ def bridge_union(bridges, cell_k, level):
     return drop, segs
 
 
-def trace(level, sector, areas, area_of, gi0, gj0, ox, oz):
+def trace(level: 'Level', sector: 'SectorKey', areas: 'Sequence[AreaDict]', area_of: dict[int, int], gi0: int, gj0: int,
+          ox: float, oz: float) -> 'list[Traced]':
     """Boundary edges of every area -> merged runs. Returns per area: portals, borders, outlines. One sector on its
     own: one-way portal pieces are kept ('keep') or become outline (otherwise) - build() decides them level-wide
     ('restore', restore_one_way)."""
@@ -249,7 +263,8 @@ def trace(level, sector, areas, area_of, gi0, gj0, ox, oz):
     return trace_emit(level, areas, per_area, gi0, gj0, ox, oz)
 
 
-def trace_edges(level, areas, area_of, gi0, gj0, win=None):
+def trace_edges(level: 'Level', areas: 'Sequence[AreaDict]', area_of: dict[int, int], gi0: int, gj0: int,
+                win: tuple[range, range] | None = None) -> 'tuple[list[EdgeMap], list[OneWay]]':
     """Boundary edges of every area: (per area {(kind, target, axis, line, dir): [(along, y)]}, one-way candidates).
     Portals are symmetric (SYMMETRIC_PORTALS): every portal edge A -> B also stands as B -> A, replacing an outline
     edge B had there - neighbour() picks the nearest surface in height, so with two surfaces in a column the two
@@ -317,7 +332,7 @@ def trace_edges(level, areas, area_of, gi0, gj0, win=None):
     return per_area, one_way
 
 
-def drop_one_way(per_area, one_way, keep):
+def drop_one_way(per_area: 'list[EdgeMap]', one_way: 'Sequence[OneWay]', keep: Container[int]) -> None:
     """One-way candidates (trace_edges) not in keep (indices) become outline on their source area."""
     for n, (src, _t, key, along) in enumerate(one_way):
         if n in keep:
@@ -328,7 +343,9 @@ def drop_one_way(per_area, one_way, keep):
         se[('E', None, key[2], key[3], key[4])].extend(ys)
 
 
-def restore_one_way(sectors, shared):
+def restore_one_way(sectors: 'dict[SectorKey, tuple[list[EdgeMap], list[OneWay]]]',
+                    shared: 'Iterable[tuple[tuple[SectorKey, int], tuple[SectorKey, int]]]'
+                    ) -> 'dict[SectorKey, set[int]]':
     """ONE_WAY_PORTALS 'restore': which one-way candidates to keep. sectors: {sector: (per_area, one_way)} from
     trace_edges; shared: pairs ((sector, area), (sector, area)) joined across sectors (one surface in both - the
     sectors' two-sample overlap). Areas are joined through every portal piece that is not a candidate and through
@@ -336,14 +353,14 @@ def restore_one_way(sectors, shared):
     joins them). Returns {sector: set of kept candidate indices}."""
     parent = {}
 
-    def find(x):
+    def find(x: 'tuple[SectorKey, int]') -> 'tuple[SectorKey, int]':
         parent.setdefault(x, x)
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
 
-    def union(a, b):
+    def union(a: 'tuple[SectorKey, int]', b: 'tuple[SectorKey, int]') -> None:
         ra, rb = find(a), find(b)
         if ra != rb:
             parent[ra] = rb
@@ -368,7 +385,8 @@ def restore_one_way(sectors, shared):
     return keep
 
 
-def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
+def trace_emit(level: 'Level', areas: 'Sequence[AreaDict]', per_area: 'list[EdgeMap]', gi0: int, gj0: int, ox: float,
+               oz: float) -> 'list[Traced]':
     """Per area (portals, borders, outline) from its boundary edges: runs merged, 45-degree bridges."""
     result = []
     p, yoff = level.grid.pitch, level.settings.y_offset
@@ -437,7 +455,8 @@ def trace_emit(level, areas, per_area, gi0, gj0, ox, oz):
     return result
 
 
-def sector_links(X, Y, areas, mesh_areas, resolve):
+def sector_links(X: int, Y: int, areas: 'Sequence[AreaDict]', mesh_areas: Sequence[kymesh.Area], resolve: 'Resolver'
+                 ) -> list[kymesh.NeighbourLink]:
     """The neighbour links of a sector: for every border portal (C), the area across it - resolve(other, area,
     border) gives its (tile x, tile z, layer) in the other sector, or None."""
     links = defaultdict(lambda: defaultdict(list))
@@ -458,7 +477,7 @@ def sector_links(X, Y, areas, mesh_areas, resolve):
     return mesh_links
 
 
-def border_cell(a, b):
+def border_cell(a: 'AreaDict', b: 'BorderRun') -> tuple[int, int, int | None, int, int]:
     """(i, j, k) of the area's cell just inside a border portal (the middle of its run), and the step (di, dj)."""
     bp, t0_, t1_, line = b
     di, dj = int(bp.direction[0]), int(bp.direction[2])
@@ -468,11 +487,11 @@ def border_cell(a, b):
     return i - di, j - dj, k, di, dj
 
 
-def same_grid_resolver(level, info, X, Y):
+def same_grid_resolver(level: 'Level', info: 'dict[SectorKey, SectorInfo]', X: int, Y: int) -> 'Resolver':
     """resolve for sector_links within one stage: the connected surface across, in the other sector's areas."""
     gi0, gj0, _ox, _oz = info[(X, Y)]['origin']
 
-    def resolve(other, a, b):
+    def resolve(other: 'SectorKey', a: 'AreaDict', b: 'BorderRun') -> tuple[int, int, int] | None:
         if other not in info:
             return None
         i, j, k_here, di, dj = border_cell(a, b)
@@ -487,7 +506,7 @@ def same_grid_resolver(level, info, X, Y):
     return resolve
 
 
-def cross_grid_resolver(here, there, X, Y):
+def cross_grid_resolver(here: 'StageResult', there: 'StageResult', X: int, Y: int) -> 'Resolver':
     """resolve for sector_links across two stages (a detailed sector next to a normal one): the cell just across
     the border, in world coordinates, looked up on the other stage's grid - its kept surface nearest in height
     (within 0.8 m) that belongs to the other sector's areas."""
@@ -496,7 +515,7 @@ def cross_grid_resolver(here, there, X, Y):
     p_here, olv, p_there = here['pitch'], there['level'], there['pitch']
     os_ = olv.s
 
-    def resolve(other, a, b):
+    def resolve(other: 'SectorKey', a: 'AreaDict', b: 'BorderRun') -> tuple[int, int, int] | None:
         if other not in there['info']:
             return None
         i, j, k_here, di, dj = border_cell(a, b)

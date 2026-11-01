@@ -14,6 +14,7 @@ temporary work folder).
   python -B test_navkit_review3.py
 """
 import contextlib
+import glob
 import io
 import json
 import os
@@ -176,7 +177,10 @@ if __name__ == '__main__':
         import navaudit1943_checks
         import jumplinks1943
         for name, mod in (('navaudit1943_checks', navaudit1943_checks), ('jumplinks1943', jumplinks1943)):
-            src = open(mod.__file__, encoding='utf-8').read()
+            # a package (navaudit1943_checks since 2026-10-31): all of its modules
+            files = glob.glob(os.path.join(os.path.dirname(mod.__file__), '*.py')) \
+                if os.path.basename(mod.__file__) == '__init__.py' else [mod.__file__]
+            src = ''.join(open(f, encoding='utf-8').read() for f in files)
             check('nj.prepared_heightfield(st, lv,' in src, f'{name} reads the prepared height field too')
         game1943.Game, game1943.find_game = real[0], real[1]
 

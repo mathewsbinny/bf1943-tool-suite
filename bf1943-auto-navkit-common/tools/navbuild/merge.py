@@ -2,6 +2,7 @@
 merged with the normal build (merge_detailed, which runs the seam passes), and nodes at one position folded into one
 (merge_coincident_border)."""
 from collections import defaultdict
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -11,8 +12,12 @@ from .areas import cross_grid_resolver, same_grid_resolver, sector_links
 from .stages import stage
 from .seams import seam_far_links, seam_fine_links, seam_gap_nodes
 
+if TYPE_CHECKING:
+    from .config import GraphPoint, Log, Points, SectorGraph, StageResult
 
-def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
+
+def merge_detailed(a: 'StageResult', detailed: dict[str, Any], xoff: int, zoff: int, seeds: 'Points | None',
+                   common: dict[str, Any], log: 'Log') -> 'list[SectorGraph]':
     """The second pass: DICE's detailed-zone sectors built at pitch 0.2 from their own sampling run (stage b),
     merged with the normal build a. Stage b is seeded from a's walkable ground in those sectors (ground joined to the
     rest of the level only through normal sectors would otherwise be lost) and continues a's node ids. Shared nodes
@@ -117,14 +122,14 @@ def merge_detailed(a, detailed, xoff, zoff, seeds, common, log):
     return merged
 
 
-def merge_coincident_border(graphs, log=print):
+def merge_coincident_border(graphs: 'list[SectorGraph]', log: 'Log' = print) -> 'list[SectorGraph]':
     """Nodes at one position in one sector (with BORDER_SEAM_LINE, a seam-line node and a node carried across a
     mixed-pitch seam onto a nearby surface: zero-length edges, which hpdcheck refuses): border nodes there become one
     id, the lowest, in every sector, and an ordinary node there becomes that border node. Returns the graphs."""
-    parent = {}
+    parent: dict[int, int] = {}
     key = lambda p: tuple(round(float(v), 3) for v in p[1])
 
-    def find(x):
+    def find(x: int) -> int:
         while parent.get(x, x) != x:
             x = parent[x]
         return x
@@ -157,7 +162,7 @@ def merge_coincident_border(graphs, log=print):
                 rep[nid] = q
         order = list(dict.fromkeys(ids))
         index = {nid: n for n, nid in enumerate(order)}
-        new_pts = [(nid,) + tuple(pts[rep[nid]][1:]) for nid in order]
+        new_pts = [cast('GraphPoint', (nid,) + tuple(pts[rep[nid]][1:])) for nid in order]
         seen, new_pairs = set(), []
         for a_, b_, d in pairs:
             u, v = index[ids[a_]], index[ids[b_]]

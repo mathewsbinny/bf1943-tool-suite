@@ -15,8 +15,9 @@ from the structured model (areas, portals, outlines, cells, neighbour links).
 import os
 import struct
 import sys
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import Any
 
 if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
     import pathlib
@@ -38,7 +39,7 @@ MESH_MARKER = b'KynogonRuntimeMesh'
 class Node:
     id: int                  # node id; high bit = border node shared with a neighbouring sector
                              # (same id and position appear in that sector too)
-    pos: Tuple[float, float, float]  # world position, Y up
+    pos: tuple[float, float, float]  # world position, Y up
     flags: int               # always 0x80000000
     value: float             # DistEdgeMax on the first node of a sector (infantry 15, vehicle 50), else 0
     a: int                   # index of this node's first outgoing edge + 1 (edges are sorted by source)
@@ -56,19 +57,19 @@ class Edge:
 @dataclass
 class Sector:
     id: int                  # grid coordinates, 0xXXYY
-    bounds: Tuple[float, ...]  # minX, maxX, minY, maxY, minZ, maxZ
+    bounds: tuple[float, ...]  # minX, maxX, minY, maxY, minZ, maxZ
     reserved: int            # always 0 so far
     date: int                # build date YYMMDD, zero-based month (100007 = 2010-01-07)
     time: int                # build time HHMMSScc
-    nodes: List[Node] = field(default_factory=list)
-    edges: List[Edge] = field(default_factory=list)
+    nodes: list[Node] = field(default_factory=list)
+    edges: list[Edge] = field(default_factory=list)
     mesh: bytes = b''        # runtime mesh record (starts with "KynogonRuntimeMesh"), raw for now
 
 
 @dataclass
 class HpdFile:
-    header: Tuple[int, ...]  # the 36 header words (word 2 = sector count, rewritten on save)
-    sectors: List[Sector]
+    header: tuple[int, ...]  # the 36 header words (word 2 = sector count, rewritten on save)
+    sectors: list[Sector]
 
 
 def parse(data: bytes) -> HpdFile:
@@ -81,7 +82,7 @@ def parse(data: bytes) -> HpdFile:
     blocks = HEADER_SIZE + count * TABLE_ENTRY.size
     if blocks > len(data):
         raise ValueError(f'truncated: {count} sector entries need {blocks} bytes, the file has {len(data)}')
-    sectors = []
+    sectors: list[Sector] = []
     running = 0
     for i in range(count):
         e = TABLE_ENTRY.unpack_from(data, HEADER_SIZE + i * TABLE_ENTRY.size)
@@ -97,12 +98,12 @@ def parse(data: bytes) -> HpdFile:
         if 8 + n_nodes * NODE.size + n_edges * EDGE.size > size:
             raise ValueError(f'sector {i} ({sid:#x}): {n_nodes} nodes and {n_edges} edges do not fit its {size}-byte block')
         pos = 8
-        nodes = []
+        nodes: list[Node] = []
         for _ in range(n_nodes):
             v = NODE.unpack_from(block, pos)
             nodes.append(Node(v[0], (v[1], v[2], v[3]), v[4], v[5], v[6], v[7], v[8]))
             pos += NODE.size
-        edges = []
+        edges: list[Edge] = []
         for _ in range(n_edges):
             edges.append(Edge(*EDGE.unpack_from(block, pos)))
             pos += EDGE.size
@@ -121,11 +122,12 @@ def parse(data: bytes) -> HpdFile:
 MESH_OBJECT_HEADER = 0x50
 
 
-def mesh_layout(m: bytes):
+def mesh_layout(m: bytes) -> tuple[list[tuple[int, int, str]], list[tuple[int, list[tuple[Any, ...]], int | None]],
+                                   dict[int, int], list[tuple[int, int, int]], list[int]]:
     """Walk a runtime mesh record (offsets relative to its start) and return a list of
     (start, end, label) regions plus the parsed structure. Raises ValueError on inconsistencies."""
     u32 = lambda o: _at('<I', m, o)[0]
-    regions = [(0, 0x50, 'header')]
+    regions: list[tuple[int, int, str]] = [(0, 0x50, 'header')]
     nx, nz = u32(0x38), u32(0x3C)
     tiles_off, links_n, links_off = u32(0x44), u32(0x48), u32(0x4C)
     if tiles_off != 0x50:
@@ -135,8 +137,8 @@ def mesh_layout(m: bytes):
         raise ValueError(f'a tile table of {nx} x {nz} tiles runs past the end of the mesh')
     regions.append((0x50, 0x50 + (tile_count + 1) * 4, 'tile table'))
     tile_offs = [u32(0x50 + i * 4) for i in range(tile_count + 1)]
-    objects = {}
-    tiles = []
+    objects: dict[int, int] = {}
+    tiles: list[tuple[int, list[tuple[Any, ...]], int | None]] = []
     for t in range(tile_count):
         to = tile_offs[t]
         n = u32(to)
@@ -158,7 +160,7 @@ def mesh_layout(m: bytes):
     if u32(len(m) - 8) != len(m) - 8 or u32(len(m) - 4) != 0:
         raise ValueError('mesh trailer not found')
     regions.append((len(m) - 8, len(m), 'trailer'))
-    links = []
+    links: list[tuple[int, int, int]] = []
     if links_n:
         if links_off + 12 * links_n > len(m):
             raise ValueError(f'{links_n} neighbour links run past the end of the mesh')
@@ -176,7 +178,7 @@ def mesh_layout(m: bytes):
     return regions, tiles, objects, links, tile_offs
 
 
-def _at(fmt, m, o):
+def _at(fmt: str, m: bytes, o: int) -> tuple[Any, ...]:
     """struct.unpack_from(fmt, m, o); ValueError when it runs past the mesh (2026-10-31 fuzzing: struct.error, and a
     negative offset read from the end)."""
     size = struct.calcsize(fmt)
@@ -202,7 +204,7 @@ def _object_end(m: bytes, o: int) -> int:
     return end
 
 
-def mesh_coverage(m: bytes):
+def mesh_coverage(m: bytes) -> tuple[list[tuple[int, int]], list[tuple[int, int, str]]]:
     regions, *_ = mesh_layout(m)
     regions.sort()
     gaps, overlaps, pos = [], [], 0
@@ -241,7 +243,7 @@ def write(f: HpdFile) -> bytes:
     return bytes(out)
 
 
-def _files(args):
+def _files(args: Iterable[str]) -> Iterator[str]:
     for a in args:
         if os.path.isdir(a):
             for dp, _, fs in os.walk(a):
@@ -252,7 +254,7 @@ def _files(args):
             yield a
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(__doc__)
         return 1
