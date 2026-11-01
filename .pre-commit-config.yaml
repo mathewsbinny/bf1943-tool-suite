@@ -1,0 +1,25 @@
+# pre-commit (2026-11-01): the fast checks CI runs, before each commit. The hooks run the tools already installed
+# from pyproject's `ci` group (`pip install --group ci`), so their versions are the ones CI pins and nothing is
+# fetched by pre-commit itself. Set up once with `pip install pre-commit` and `pre-commit install`; run them all
+# with `pre-commit run --all-files`. The test tiers stay a separate step: `python -B run_tests.py quick --strict`.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        entry: ruff check
+        language: system
+        types_or: [python, pyi]
+        exclude: ^work/
+      - id: pyright
+        name: pyright (types)
+        entry: pyright
+        language: system
+        pass_filenames: false
+        files: ^(core/bfbc2core|bf1943-auto-navkit-common/tools)/.*\.py$
+      - id: repository-rules
+        name: repository rules (tests/test_repo.py)
+        entry: python -B tests/test_repo.py
+        language: system
+        pass_filenames: false
+        always_run: true

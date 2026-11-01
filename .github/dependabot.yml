@@ -1,0 +1,17 @@
+# Dependabot (2026-11-01): weekly pull requests for the CI workflow's actions (pinned by commit hash; Dependabot
+# moves the hash and its version comment together) and for the Python dependencies in pyproject.toml.
+# Major-version upgrades come as their own pull requests, so each can be checked against CI before it is merged.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps

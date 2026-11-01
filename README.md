@@ -193,6 +193,19 @@ errors (`PLE`). An import that must follow the bootstrap or `sys.dont_write_byte
 fingerprint's Python inputs (`bf1943-xex-tools/vmx_inputs.py` `INPUTS`) are left out, as they
 are never edited; `tests/test_repo.py` keeps that list equal to `INPUTS`.
 
+### Before a commit: pre-commit
+
+`.pre-commit-config.yaml` runs ruff, pyright and `tests/test_repo.py` before each commit, using the tools the `ci`
+group installs (local hooks, so their versions are CI's and pre-commit downloads nothing). Set it up once with
+`pip install pre-commit` and `pre-commit install`; `pre-commit run --all-files` runs every hook. The test tiers
+stay their own step (`python -B run_tests.py quick --strict`).
+
+### CI's pins
+
+The workflow's actions are pinned by commit hash, each with its version in a comment, so a moved tag cannot change
+what CI runs. Dependabot (`.github/dependabot.yml`) opens weekly pull requests that move those pins and the Python
+dependencies; a major version comes as its own pull request, checked by CI before it is merged.
+
 ### Types
 
 The shared library code is annotated (Python 3.13 syntax: `list[int]`, `X | None`, numpy arrays as
