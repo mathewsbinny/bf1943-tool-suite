@@ -47,7 +47,7 @@ ci = [
     "glfw==2.11.0",
     "imgui-bundle==1.92.900",
     "capstone==5.0.9",
-    "pillow==12.3.0",
+    "pillow==13.0.0",
     # the checks: the lint, the type check, tests through pytest, and coverage (CI's jobs; run_tests.py needs none
     # of them). pyright's [nodejs] extra brings Node.js as a PyPI wheel (nodejs-wheel-binaries), so the type check
     # downloads nothing but PyPI packages; the pyright wheel holds its own JavaScript
