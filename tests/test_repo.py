@@ -26,6 +26,8 @@ import tempfile
 
 SUITE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 GAME_TYPES = re.compile(r'\.(dbx|res|fbrb|hpd|sb|raw|bik|fsb|fev|dds|tga|hkx)$', re.I)
+OWNER = 'mathewsbinny <32554119+mathewsbinny@users.noreply.github.com>'
+DEPENDABOT = 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>'
 MAX_BLOB = 1_000_000
 LARGE_ALLOWED = {'bf1943-dbx-tools/tests/fingerprints_795745.txt'}       # SHA-1 hashes only
 LOWERED = re.compile(r'^Coverage-threshold-lowered: \S', re.M)     # a commit allowed to lower fail_under (its reason)
@@ -151,8 +153,16 @@ def main(argv):
     messages = git('log', '--all', '--format=%H%x00%B%x01').split('\x01')
     bad = [m.split('\x00')[0][:10] for m in messages if '\x00' in m and ATTRIBUTION.search(m.split('\x00', 1)[1])]
     results.append(('no co-author / generated-by lines in commit messages', bad))
-    authors = sorted(set(git('log', '--all', '--format=%an <%ae>').splitlines()))
-    results.append((f'one author ({authors[0] if authors else "none"})', authors[1:]))
+    # who may author a commit (2026-11-03): the owner, under the GitHub noreply address; Dependabot's update commits;
+    # and merges GitHub itself commits when the owner merges a pull request on the site (those carry the account's
+    # web address, which the history should not have to name)
+    others = []
+    for line in git('log', '--all', '--format=%h%x00%an <%ae>%x00%cn%x00%p').splitlines():
+        sha, author, committer, parents = line.split('\x00')
+        if author in (OWNER, DEPENDABOT) or (committer == 'GitHub' and len(parents.split()) == 2):
+            continue
+        others.append(f'{sha} {author}')
+    results.append((f'commits by the owner ({OWNER}), Dependabot, or GitHub merges of pull requests', others))
 
     tracked = git('ls-files').splitlines()
     results.append(('no build output or caches tracked', [t for t in tracked if TRACKED_NEVER.search(t)]))
