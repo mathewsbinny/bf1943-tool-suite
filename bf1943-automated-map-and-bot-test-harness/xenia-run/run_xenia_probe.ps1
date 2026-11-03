@@ -25,7 +25,14 @@ if (!$KitOut) { $KitOut = "$kit/output" }
 $manifestPath = "$KitOut/kit-manifest.json"
 if (!(Test-Path -LiteralPath $manifestPath)) { throw "No Xenia kit build ($manifestPath): build it first (python xeniakit.py build <package> <xenia folder>)" }
 $m = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-function Get-Sha256($path) { (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLower() }
+# .NET's SHA256, not Get-FileHash (2026-11-03): Windows PowerShell started from PowerShell 7 inherits its module
+# path, loads PowerShell 7's Utility module and has no Get-FileHash; .NET's works in both
+function Get-Sha256($path) {
+    $stream = [System.IO.File]::OpenRead($path)
+    try { $bytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash($stream) }
+    finally { $stream.Dispose() }
+    ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+}
 function Test-Kit { & python -B "$kit/xeniakit.py" verify --out $KitOut | Out-Host; if ($LASTEXITCODE -ne 0) { throw 'The Xenia kit build differs from its manifest (xeniakit.py verify)' } }
 # Start-Process joins its arguments with spaces and quotes none of them: each value is quoted here, so that a path
 # with a space (BF1943_WORK, the suite's folder) stays one argument

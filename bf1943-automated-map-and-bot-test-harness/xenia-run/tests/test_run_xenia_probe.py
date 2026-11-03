@@ -69,6 +69,11 @@ def main():
                 env['FAKE_XENIA_SLEEP'] = str(sleep)
             return subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', PROBE, '-Session',
                                    session, '-KitOut', base, *extra], env=env, capture_output=True, text=True)
+        # 2026-11-03: started from PowerShell 7 (CI's shell), Windows PowerShell inherits its module path and has no
+        # Get-FileHash, so the probe hashes with .NET; CI's own run from PowerShell 7 is the full check of that
+        code_lines = [line for line in open(PROBE, encoding='utf-8') if not line.lstrip().startswith('#')]
+        check(not any('Get-FileHash' in line for line in code_lines),
+              'the probe hashes with .NET, not Get-FileHash (missing when started from PowerShell 7)')
         r = run('spaces', '-FunctionTrace')
         check(r.returncode == 0, 'a session on the made-up build completes' + ('' if r.returncode == 0 else ': ' + r.stderr[-400:]))
         if r.returncode == 0:

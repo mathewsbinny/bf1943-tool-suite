@@ -206,6 +206,10 @@ def unpacking(root):
     pr.unpack('bundle.fbrb', legacy, QUIET)
     check(runs == [] and os.path.isfile(os.path.join(legacy, navkit.UNPACKED)),
           'a complete unpack from before the marker is kept (every .dbx has its .xml)')
+    # 2026-11-03: CI checks out on D: with its temporary folders on C:; a log line's path across drives is whole
+    other_drive = 'Q:\\' if os.path.splitdrive(root)[0].upper() != 'Q:' else 'R:\\'
+    check(navkit.shown(other_drive + 'game\\bundle.fbrb', root) == other_drive + 'game\\bundle.fbrb',
+          'a path on another drive is logged whole, not refused (os.path.relpath raises across drives)')
 
 
 def game_log(root):

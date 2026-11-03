@@ -47,6 +47,16 @@ def read_json(path: str) -> Any:
         return json.load(f)
 
 
+
+def shown(path: str, base: str) -> str:
+    """A path for a log line: relative to base, or whole when it is on another drive (2026-11-03: CI checks the suite
+    out on D: while its temporary folders are on C:, and os.path.relpath raises across drives)."""
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return os.path.abspath(path)
+
+
 def unpack_complete(dest: str) -> bool:
     """An unpack folder from before the UNPACKED marker counts as complete when every .dbx has its converted .xml."""
     dbx = xml = 0
@@ -180,16 +190,16 @@ class Project:
         unpack is redone from an empty folder."""
         marker = os.path.join(dest, UNPACKED)
         if os.path.isfile(marker):
-            log(f'  {os.path.relpath(dest, self.root)} already unpacked')
+            log(f'  {shown(dest, self.root)} already unpacked')
             return
         if os.path.isdir(dest) and os.listdir(dest):
             if unpack_complete(dest):
                 write_text(marker, 'FbrbTool unpack and DbxEdit xml finished (found complete)\n')
-                log(f'  {os.path.relpath(dest, self.root)} already unpacked')
+                log(f'  {shown(dest, self.root)} already unpacked')
                 return
-            log(f'  {os.path.relpath(dest, self.root)} was not unpacked completely - unpacking it again')
+            log(f'  {shown(dest, self.root)} was not unpacked completely - unpacking it again')
             shutil.rmtree(dest)
-        log(f'  unpacking {os.path.relpath(bundle, self.game)} ...')
+        log(f'  unpacking {shown(bundle, self.game)} ...')
         self.run([self.fbrbtool, 'unpack', bundle, dest], log)
         log('  converting binary DBX to XML ...')
         out = self.run([self.dbxedit, 'xml', dest], log)

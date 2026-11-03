@@ -69,7 +69,7 @@ SAMPLE_DONE = re.compile(r'navsample: (done|no physics|cannot create|empty box|n
 # the project layer (navkit_le_project.py since 2026-10-31), every name of it navkit_le.<name> as before
 from navkit_le_project import (  # noqa: E402,F401
     BACKUP_SUFFIX, HERE, NO_WINDOW, NONE_SUFFIX, UNPACKED, NavKitError, Project, find_opfor, find_tool, read_json,
-    unpack_complete, write_json, write_text)
+    shown, unpack_complete, write_json, write_text)
 
 type Log = Callable[[str], object]
 type Confirm = Callable[[str], bool]          # asks the user a yes/no question
@@ -155,7 +155,7 @@ def prepare(project: Project, lv: str, log: Log = print, box: Sequence[float] | 
     log(f'  box {fmt(sampled_box)} ({settings["box_source"]}), y {fmt(settings["y"])}, '
         f'sector offsets {settings["xoff"]}, {settings["zoff"]} ({settings["offsets_source"]}); '
         f'{columns / 1e6:.1f} M columns per sampling run')
-    log(f'  settings: {os.path.relpath(project.settings_path(lv), project.root)}')
+    log(f'  settings: {shown(project.settings_path(lv), project.root)}')
 
 
 def sector_offsets(path: str) -> tuple[int, int]:
@@ -405,7 +405,7 @@ def sample(project: Project, lv: str, log: Log = print, confirm: Confirm | None 
         # which detailed sectors these samples cover, at which offsets: build checks them against its own choice
         detailed.write_sampled_record(project.samples(lv, suffix_of_pitch),
                                       sectors_in_box(project, lv, settings['box']), settings['xoff'], settings['zoff'])
-    log('  samples: ' + ', '.join(os.path.relpath(project.samples(lv, suffix + suffix_of_pitch), project.root)
+    log('  samples: ' + ', '.join(shown(project.samples(lv, suffix + suffix_of_pitch), project.root)
                                   for _, _, suffix in AGENTS))
     return True
 
@@ -557,7 +557,7 @@ def build(project: Project, lv: str, log: Log = print) -> None:
         raise NavKitError(f'{lv}: samples missing ({os.path.basename(project.samples(lv))} and its _hi run) '
                           '- run sample first')
     out = os.path.join(project.out_dir(lv), 'pathdata.hpd')
-    log(f'== build {lv} -> {os.path.relpath(out, project.root)}')
+    log(f'== build {lv} -> {shown(out, project.root)}')
     started = time.time()
     try:
         navbuild.build(samples08, os.path.join(level_dir, 'forbid_tris.npy'), settings['xoff'], settings['zoff'], out,
@@ -614,7 +614,7 @@ def check(project: Project, lv: str, log: Log = print) -> None:
         import navcompare
         log('  summary against the original:')
         navcompare.report(navcompare.compare(xml, reference, ours), lambda message: log('    ' + message))
-    log(f'  full report: {os.path.relpath(report, project.root)}')
+    log(f'  full report: {shown(report, project.root)}')
 
 
 def compare(project: Project, lv: str, log: Log = print, reference: str | None = None,
@@ -629,8 +629,8 @@ def compare(project: Project, lv: str, log: Log = print, reference: str | None =
     if not os.path.isfile(candidate):
         raise NavKitError(f'{lv}: no candidate file {candidate} (build first, or pass --candidate)')
     xml = os.path.join(project.level_work(lv), 'dist', 'levels', settings['level'] + '.xml')
-    log(f'== compare {lv}: reference {os.path.relpath(reference, project.root)}, '
-        f'candidate {os.path.relpath(candidate, project.root)}')
+    log(f'== compare {lv}: reference {shown(reference, project.root)}, '
+        f'candidate {shown(candidate, project.root)}')
     navcompare.report(navcompare.compare(xml, reference, candidate), lambda message: log('  ' + message))
 
 
@@ -669,12 +669,12 @@ def install(project: Project, lv: str, log: Log = print, src: str | None = None)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-    log(f'== installed {os.path.relpath(ours, project.root)} as {os.path.relpath(dest, project.root)}')
+    log(f'== installed {shown(ours, project.root)} as {shown(dest, project.root)}')
     traversal = traversal_path(os.path.dirname(ours), lv)
     traversal_dest = traversal_path(os.path.dirname(dest), lv)
     if os.path.isfile(traversal):
         shutil.copyfile(traversal, traversal_dest)
-        log(f'  traversal annotations installed as {os.path.relpath(traversal_dest, project.root)}')
+        log(f'  traversal annotations installed as {shown(traversal_dest, project.root)}')
     elif os.path.isfile(traversal_dest):
         os.remove(traversal_dest)                # none with this file: no stale annotations from an earlier one
 
@@ -697,8 +697,8 @@ def restore(project: Project, lv: str, log: Log = print) -> None:
     traversal = traversal_path(os.path.dirname(dest), lv)
     if os.path.isfile(traversal):
         os.remove(traversal)
-    log(f'== restored the original {os.path.relpath(dest, project.root)}' if backup else
-        f'== removed NavKit\'s {os.path.relpath(dest, project.root)} (the level had no path data)')
+    log(f'== restored the original {shown(dest, project.root)}' if backup else
+        f'== removed NavKit\'s {shown(dest, project.root)} (the level had no path data)')
 
 
 def read_back(path: str) -> bytes:
@@ -789,8 +789,8 @@ def _apply(project: Project, lv: str, navtune_path: str | None, out: str | None,
             samples, xoff, zoff, files = navregress.inputs(project.root, lv)
         except RuntimeError as e:
             raise NavKitError(str(e)) from e
-        log(f'== apply {lv}: {len(tune.operations)} edit(s) from {os.path.relpath(navtune_path, project.root)} '
-            f'-> {os.path.relpath(out, project.root)}')
+        log(f'== apply {lv}: {len(tune.operations)} edit(s) from {shown(navtune_path, project.root)} '
+            f'-> {shown(out, project.root)}')
         # the same inputs as build (detailed zones and ladders included): without edits the result is the build's
         try:
             navbuild.build(samples, files['forbid_tris.npy'], xoff, zoff, out, dynamic_path=files['dynamic_tris.npy'],
@@ -818,7 +818,7 @@ def _apply(project: Project, lv: str, navtune_path: str | None, out: str | None,
             raise NavKitError(f'{lv}: --out {out} is the game\'s own path data; write the edited copy elsewhere')
         where['out'] = out
         log(f'== apply {lv}: {len(tune.operations)} edit(s) on a copy of DICE\'s file '
-            f'-> {os.path.relpath(out, project.root)} (for this PC only)')
+            f'-> {shown(out, project.root)} (for this PC only)')
         if tune.base_changed(src):
             log('  note: DICE\'s file is not the one the edits were made on (another game version?); the edits are '
                 'by position and are applied, but check them')
@@ -838,7 +838,7 @@ def _apply(project: Project, lv: str, navtune_path: str | None, out: str | None,
     if traversals:
         import navtraversal
         navtraversal.write(hpd, out, traversals, tune.level, traversal, log=log)
-        log(f'  {len(traversals)} traversal annotation(s) written to {os.path.relpath(traversal, project.root)} '
+        log(f'  {len(traversals)} traversal annotation(s) written to {shown(traversal, project.root)} '
             f'(for OPFOR\'s bot layer; not route edges - the game\'s AI cannot climb or jump them)')
     elif os.path.isfile(traversal):
         os.remove(traversal)                          # an earlier run's annotations no longer apply
