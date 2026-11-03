@@ -45,7 +45,7 @@ ci = [
     "matplotlib==3.11.2",
     "moderngl==5.13.0",
     "glfw==2.11.0",
-    "imgui-bundle==1.92.900",
+    "imgui-bundle==1.93.0",
     "capstone==5.0.9",
     "pillow==13.0.0",
     # the checks: the lint, the type check, tests through pytest, and coverage (CI's jobs; run_tests.py needs none
