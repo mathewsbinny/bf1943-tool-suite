@@ -12,7 +12,8 @@ r"""The repository's own rules, checked before anything is pushed (no game data 
 - the lint (ruff) leaves out exactly the VMX fingerprint's Python inputs, which are never edited, and the type check
   (pyright's include) covers none of them;
 - the coverage threshold (pyproject.toml [tool.coverage.report] fail_under) never goes down: in no commit of the
-  history (unless its message gives a "Coverage-threshold-lowered: <reason>" line) and not in the working copy.
+  history (unless its message gives a "Coverage-threshold-lowered: <reason>" line) and not in the working copy; nor
+  is branch coverage ([tool.coverage.run] branch), once on, turned off.
 
   python tests\test_repo.py
 """
@@ -97,12 +98,19 @@ def fail_under(text):
     return float(tomllib.loads(text).get('tool', {}).get('coverage', {}).get('report', {}).get('fail_under', 0))
 
 
+def branch_on(text):
+    """pyproject.toml's [tool.coverage.run] branch (False when it has none), from the file's text."""
+    import tomllib
+    return bool(tomllib.loads(text).get('tool', {}).get('coverage', {}).get('run', {}).get('branch', False))
+
+
 def coverage_ratchet():
     """(check, problems): the coverage threshold only goes up. Each commit that changed pyproject.toml (oldest first,
     the whole history: CI checks it out whole), then the working copy: a fail_under below the one before it is a
     problem, so a lowered threshold fails whether it is committed or not (README "Coverage"). The one exception: a
     commit whose message has a line "Coverage-threshold-lowered: <reason>" may lower it (a well-tested tool removed);
-    the working copy never may."""
+    the working copy never may. Branch coverage, once on, stays on under the same rule: with it the total counts lines
+    and branches together (2026-11-05), and turning it off would raise the total without a test added."""
     log = git('log', '--reverse', '--format=%H%x00%B%x01', '--', 'pyproject.toml').split('\x01')
     commits = [entry.strip('\n').split('\x00', 1) for entry in log if '\x00' in entry]
     versions = [(sha[:10], git('show', f'{sha}:pyproject.toml'), bool(LOWERED.search(message)))
@@ -112,12 +120,21 @@ def coverage_ratchet():
     if not versions or working != versions[-1][1]:      # an unchanged working copy is its last commit (reported once)
         versions.append(('working copy', working, False))
     problems, best, since = [], 0.0, None
+    branch_since = None                                 # where branch coverage was turned on (None: it is off)
     for name, text, lowered in versions:
         try:
             value = fail_under(text)
+            branch = branch_on(text)
         except (ValueError, TypeError) as e:            # tomllib.TOMLDecodeError is a ValueError
             problems.append(f'{name}: pyproject.toml does not read ({e})')
             continue
+        if branch_since and not branch and not lowered:
+            problems.append(f'{name}: branch coverage turned off (on since {branch_since}); the total would count '
+                            f'lines only')
+        elif branch and not branch_since:
+            branch_since = name
+        elif not branch:
+            branch_since = None
         if value < best and not lowered:
             problems.append(f'{name}: fail_under {value:g} is below {best:g} (set in {since}); raise coverage instead')
         elif value > best or lowered:

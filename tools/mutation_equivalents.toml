@@ -1,0 +1,361 @@
+# Equivalent mutants of tools/mutate.py (README "Mutation testing"): changes no test could see, as the code behaves
+# the same with them. Each is left out of its module's score. key: as `python -B tools\mutate.py --list` prints it;
+# reason: why the behaviour cannot change. A key that matches no mutant any more is reported, to be removed.
+
+# --- core/bfbc2core/dbx.py ---
+
+[[equivalent]]
+key = "dbx.py:_varint:constant:63 -> 64"
+reason = "shift only takes multiples of 7 (0, 7, ..., 63, 70): shift > 63 and shift > 64 are true for the same values"
+
+[[equivalent]]
+key = "dbx.py:_strings:compare:end < 0 -> end <= 0"
+reason = "a string found ends at or after its start, which is at least 24 (the header): end is -1 or at least 24"
+
+[[equivalent]]
+key = "dbx.py:_strings:constant:0 -> 1"
+reason = "end < 1 for end < 0: end is -1 or at least 24, as above"
+
+[[equivalent]]
+key = "dbx.py:_net_g:constant:1 -> 2"
+reason = "Decimal(2).scaleb(n) for Decimal(1).scaleb(n) as quantize's unit: quantize uses only the unit's exponent, the same"
+
+[[equivalent]]
+key = "dbx.py:_net_g:constant:1 -> 2 #3"
+reason = "the same change in the carry's second quantize: only the unit's exponent is used"
+
+[[equivalent]]
+key = "dbx.py:_net_g:constant:1 -> 2 #4"
+reason = "after a carry (9.99... rounded up) the value is exactly a power of ten; quantized one digit coarser it is the same power of ten, and the trailing zeros are stripped from the digits"
+
+[[equivalent]]
+key = "dbx.py:_net_g:compare:r < 0 -> r <= 0"
+reason = "r is never 0: a zero value returns '0' before, and a nonzero value quantized at its own exponent stays nonzero"
+
+[[equivalent]]
+key = "dbx.py:_net_g:drop:str(abs(r.scaleb(-cast(int, r.as_tuple().exponent)))).rstrip('0') or '0' -> str(abs(r.scaleb(-cast(int, r.as_tuple().exponent)))).rstrip('0')"
+reason = "the digits of a nonzero r have a nonzero first digit, so stripping zeros never leaves an empty string"
+
+[[equivalent]]
+key = "dbx.py:_net_r_double:compare:v > 0 -> v >= 0"
+reason = "only reached for an infinite v: v > 0 and v >= 0 agree on both infinities"
+
+[[equivalent]]
+key = "dbx.py:_net_r_double:constant:0 -> 1 #2"
+reason = "v > 1 for v > 0, only reached for an infinite v: both agree on both infinities"
+
+# --- core/bfbc2core/navpath.py ---
+
+[[equivalent]]
+key = "navpath.py:closest_between:constant:512 -> 513 #2"
+reason = "a chunk of 513 where the loop steps by 512: each chunk overlaps the next by one node, which is compared twice with the same distance and index; the result is the same"
+
+[[equivalent]]
+key = "navpath.py:route:arith:pos[result.start_node] - pos[goal] -> pos[result.start_node] + pos[goal]"
+reason = "the start's estimate only orders the first heap entry, which is alone and popped first whatever its value"
+
+[[equivalent]]
+key = "navpath.py:route:compare:len(result.nodes) > 1 -> len(result.nodes) >= 1"
+reason = "for a route of one node the summed length of no steps is 0.0, the same as the else branch's"
+
+# --- core/bfbc2core/terrain.py ---
+
+[[equivalent]]
+key = "terrain.py:read.fits:compare:2 <= n <= 32768 -> 2 <= n < 32768"
+reason = "only n = 32768 differs, and fits() then also needs 2 x 32768^2 bytes of samples: no file under 2 GiB fits with it either way (the reader is never given one)"
+
+[[equivalent]]
+key = "terrain.py:read.fits:constant:32768 -> 32769"
+reason = "the one size newly in range, 32769, is not a power of two, which fits() requires"
+
+[[equivalent]]
+key = "terrain.py:read.fits:constant:1 -> 2"
+reason = "n & (n - 2) == 0 holds for the same n >= 2 as n & (n - 1) == 0: the powers of two (checked for every n below 2^16)"
+
+[[equivalent]]
+key = "terrain.py:read:constant:1 -> 2"
+reason = "size & (size - 2) for size & (size - 1), with size >= 2 (checked just before): zero for the same sizes, the powers of two"
+
+[[equivalent]]
+key = "terrain.py:read:drop:fits('<') or not fits('>') -> not fits('>')"
+reason = "fits('<') true means a little-endian size of at most 2^15; the same four bytes read big-endian are at least 2^16, so fits('>') is false and not fits('>') is already true"
+
+# --- core/bfbc2core/navdata.py ---
+
+[[equivalent]]
+key = "navdata.py:_ground:drop:heightfield is None or not len(xz) -> heightfield is None"
+reason = "with no cells the computation runs on empty arrays and returns the same empty array as the early return"
+
+[[equivalent]]
+key = "navdata.py:_ground:arith:near[:, 0] + dx -> near[:, 0] - dx"
+reason = "the ring's offsets are symmetric ((0, 0), (+h, 0), (-h, 0), (0, +h), (0, -h)): the same five points, so the same min and max"
+
+[[equivalent]]
+key = "navdata.py:_ground:arith:near[:, 1] + dz -> near[:, 1] - dz"
+reason = "the ring's offsets are symmetric: the same five points, so the same min and max"
+
+[[equivalent]]
+key = "navdata.py:_cells:constant:0 -> 1 #5"
+reason = "near when there are no cells (a 1 x 2 array for a 0 x 2 one) is only read by _ground, which returns before it when there are no cells"
+
+[[equivalent]]
+key = "navdata.py:_cells:constant:2 -> 3 #2"
+reason = "near when there are no cells (0 x 3 for 0 x 2) is only read by _ground, which returns before it when there are no cells"
+
+[[equivalent]]
+key = "navdata.py:_load:constant:1 -> 2"
+reason = "reshape(-2, 3): numpy (2.5.4, the pinned version) reads any negative size as the remaining one, as -1"
+
+[[equivalent]]
+key = "navdata.py:_load:constant:1 -> 2 #2"
+reason = "reshape(-2, 2): numpy reads any negative size as the remaining one, as -1"
+
+[[equivalent]]
+key = "navdata.py:_load:constant:3 -> 4 #2"
+reason = "a fourth column in the areas' centres, never read (columns 0, 1 and 2 are)"
+
+[[equivalent]]
+key = "navdata.py:_load:drop:cand is None or not len(cand) -> cand is None"
+reason = "a sector's node list is made by appending a node, so it is never empty when present"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.keyed:arith:(ij[:, 0] + 50000) * 100000 + (ij[:, 1] + 50000) -> (ij[:, 0] + 50000) * 100000 - (ij[:, 1] + 50000)"
+reason = "cell keys are only compared for equality and order between the two files, both keyed by the same function; this encoding is as injective and as ordered for cells within +-40 km (50,000 cells of 0.8 m; BF1943 levels are about 2 km across), and the composite key that follows separates keys by 1e5"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.keyed:arith:ij[:, 0] + 50000 -> ij[:, 0] - 50000"
+reason = "cell keys are only compared for equality and order between the two files, both keyed by the same function; this encoding is as injective and as ordered for cells within +-40 km (50,000 cells of 0.8 m; BF1943 levels are about 2 km across), and the composite key that follows separates keys by 1e5"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.keyed:constant:50000 -> 50001"
+reason = "cell keys are only compared for equality and order between the two files, both keyed by the same function; this encoding is as injective and as ordered for cells within +-40 km (50,000 cells of 0.8 m; BF1943 levels are about 2 km across), and the composite key that follows separates keys by 1e5"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.keyed:constant:100000 -> 100001"
+reason = "cell keys are only compared for equality and order between the two files, both keyed by the same function; this encoding is as injective and as ordered for cells within +-40 km (50,000 cells of 0.8 m; BF1943 levels are about 2 km across), and the composite key that follows separates keys by 1e5"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.keyed:arith:ij[:, 1] + 50000 -> ij[:, 1] - 50000"
+reason = "cell keys are only compared for equality and order between the two files, both keyed by the same function; this encoding is as injective and as ordered for cells within +-40 km (50,000 cells of 0.8 m; BF1943 levels are about 2 km across), and the composite key that follows separates keys by 1e5"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.keyed:constant:50000 -> 50001 #2"
+reason = "cell keys are only compared for equality and order between the two files, both keyed by the same function; this encoding is as injective and as ordered for cells within +-40 km (50,000 cells of 0.8 m; BF1943 levels are about 2 km across), and the composite key that follows separates keys by 1e5"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.same:arith:(q >= 0) & (q < len(sk)) -> (q >= 0) | (q < len(sk))"
+reason = "q is clipped into the list (qq) and a hit also needs sk[qq] to be the cell's key: an index outside the list clips onto an element the other index already tests"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.same:compare:q < len(sk) -> q <= len(sk)"
+reason = "q = len(sk) is clipped to the last element, which q = p - 1 already tests with the same key check"
+
+[[equivalent]]
+key = "navdata.py:compare_cells.same:compare:other_n > 0 -> other_n >= 0"
+reason = "with other_n = 0 the one-floor rule is false and best stays infinite, so the result is false either way"
+
+[[equivalent]]
+key = "navdata.py:summary:arith:nav.ladder_edge.sum() // 2 -> nav.ladder_edge.sum() / 2"
+reason = "the result is wrapped in int(), which drops the half the same as // for a non-negative count"
+
+# --- core/bfbc2core/rsnvtrip.py ---
+
+[[equivalent]]
+key = "rsnvtrip.py:transfers:drop:r[3] == 4294967295 or r[3] >= len(V.node_pos) -> r[3] >= len(V.node_pos)"
+reason = "0xFFFFFFFF (no node) is past any world's node count (validate caps it at 2^24), so the second test alone gives None for it too"
+
+[[equivalent]]
+key = "rsnvtrip.py:transfers:constant:3 -> 4"
+reason = "r[4] (a float coordinate) == 0xFFFFFFFF is false, and r[3] >= len(V.node_pos) then gives None for 0xFFFFFFFF as before"
+
+[[equivalent]]
+key = "rsnvtrip.py:transfers:constant:4294967295 -> 4294967296"
+reason = "r[3] is a u32 and never equals 2^32; 0xFFFFFFFF is caught by r[3] >= len(V.node_pos) instead"
+
+[[equivalent]]
+key = "rsnvtrip.py:dijkstra:compare:d + c < dist[v] -> d + c <= dist[v]"
+reason = "an equal cost pushes the node again with the same distance; a node is finished once (done), so the distances are the same"
+
+[[equivalent]]
+key = "rsnvtrip.py:dijkstra:compare:d + c < dist[v] -> d + c <= dist[v] #2"
+reason = "the reverse search's same test: an equal cost changes nothing but a duplicate heap entry"
+
+# --- core/bfbc2core/materialmap1943.py ---
+
+[[equivalent]]
+key = "materialmap1943.py:MaterialMap.at:constant:0 -> 1"
+reason = "grid.shape[1] for grid.shape[0]: the map is square (side x side), so both are the side"
+
+[[equivalent]]
+key = "materialmap1943.py:place:constant:0 -> 1 #4"
+reason = "grid.shape[1] for grid.shape[0]: the map is square"
+
+[[equivalent]]
+key = "materialmap1943.py:read:arith:side // tile_rows -> side / tile_rows"
+reason = "side is a whole number of 512-pixel tiles (checked in the same test), so side / 256 is a whole number equal to side // 256"
+
+[[equivalent]]
+key = "materialmap1943.py:read:constant:4 -> 5 #7"
+reason = "the tile body sliced one byte longer (data[p + 4:p + 5 + n]): the rows are cut from it by their lengths, which sum to n (checked), so the extra byte is never read"
+
+[[equivalent]]
+key = "materialmap1943.py:read:constant:4 -> 5 #13"
+reason = "the name table sliced to p + 5 + nbytes: the file ends at p + 4 + nbytes (checked), so the slice is the same"
+
+[[equivalent]]
+key = "materialmap1943.py:read:constant:1 -> 2 #8"
+reason = "the table split at its zero bytes at most twice, not once, from the right: the last piece is the same whatever the number of splits"
+
+[[equivalent]]
+key = "materialmap1943.py:read:constant:1 -> 2 #11"
+reason = "the -1 (-2 here) used when the grid is empty: the grid is never empty (a side of at least 512, checked)"
+
+# --- core/bfbc2core/rsnv.py ---
+
+[[equivalent]]
+key = "rsnv.py:World.ground:arith:pmm // 2 -> pmm / 2"
+reason = "(hmm + pmm / 2) // pmm against (hmm + pmm // 2) // pmm: hmm and pmm are whole numbers, and adding the half a whole number cannot step past a multiple of pmm that the whole number did not reach"
+
+[[equivalent]]
+key = "rsnv.py:World.validate:drop:len(self.node_area) == n and n and (np.any((self.node_area != 65535) & (self.node_area >= n_area)) or np.any(self.nod... -> len(self.node_area) == n and (np.any((self.node_area != 65535) & (self.node_area >= n_area)) or np.any(self.node_sect..."
+reason = "with no nodes (n = 0) NAUX's arrays are empty (their count is n, the test before), so np.any of them is false either way"
+
+[[equivalent]]
+key = "rsnv.py:World.validate:constant:0 -> 1 #8"
+reason = "the reserved last field of the CEDG rows made from cond (a World made in code): validate never reads it"
+
+[[equivalent]]
+key = "rsnv.py:filter_scale:drop:tight_extra or 0 -> tight_extra"
+reason = "tight_extra is an int (0 by default; every caller passes an int): tight_extra or 0 is tight_extra"
+
+[[equivalent]]
+key = "rsnv.py:filter_scale:constant:0 -> 1 #2"
+reason = "[tight_extra or 1]: only used in min(extras) >= 0, and 1 >= 0 as 0 >= 0"
+
+[[equivalent]]
+key = "rsnv.py:filter_scale:constant:0 -> 1 #3"
+reason = "min's default for an empty list: extras always holds the tight entry, so the default is never used"
+
+[[equivalent]]
+key = "rsnv.py:search:constant:1 -> 2"
+reason = "max_expansions' default 2 << 30 for 1 << 30: validate caps a world at 2^24 nodes and a node is expanded at most once, so no search reaches either limit"
+
+[[equivalent]]
+key = "rsnv.py:search:constant:30 -> 31"
+reason = "max_expansions' default 1 << 31 for 1 << 30: no search expands 2^24 nodes or more (see above)"
+
+[[equivalent]]
+key = "rsnv.py:astar:constant:1 -> 2"
+reason = "astar's max_expansions default, as search's: never reached"
+
+[[equivalent]]
+key = "rsnv.py:astar:constant:30 -> 31"
+reason = "astar's max_expansions default, as search's: never reached"
+
+[[equivalent]]
+key = "rsnv.py:search:drop:int(kind[k]) > 31 or (kind_mask is not None and (not kind_mask >> int(kind[k]) & 1)) -> kind_mask is not None and (not kind_mask >> int(kind[k]) & 1)"
+reason = "an edge kind past 31 is skipped by edge_cost too (it returns None), so the search skips it either way"
+
+[[equivalent]]
+key = "rsnv.py:search:constant:31 -> 32"
+reason = "kind 32 newly let through to edge_cost, which closes any kind past 31 (None)"
+
+# --- core/bfbc2core/level1943.py ---
+
+[[equivalent]]
+key = "level1943.py:load:drop:e.children or () -> e.children"
+reason = "the instances iterated are containers, whose children dbx.parse always sets to a list"
+
+[[equivalent]]
+key = "level1943.py:load:drop:tr is None or assets is None or tr.kind != dbx.NUMBERS or (not assets.children) -> tr is None or assets is None or tr.kind != dbx.NUMBERS"
+reason = "an Assets array without items: the loop over its (empty) children adds nothing, as skipping it does"
+
+[[equivalent]]
+key = "level1943.py:load:drop:alt is not None and alt.children -> alt is not None"
+reason = "an AlternativeSpawnPoints array's children are always a list (a container's, dbx.parse); an empty one gives the same empty loop"
+
+[[equivalent]]
+key = "level1943.py:load:drop:lvl.entities[x.entity].blueprint or '' -> lvl.entities[x.entity].blueprint"
+reason = "a mesh is only made for an entity with a blueprint (the collision loop skips the others), so the blueprint is never None here"
+
+[[equivalent]]
+key = "level1943.py:load:drop:t is None and alias and (alias != e.blueprint) -> t is None and alias"
+reason = "an alias equal to the blueprint looks the same collision up again: the same None from the same cache"
+
+# --- core/bfbc2core/water.py ---
+
+[[equivalent]]
+key = "water.py:read_mesh:constant:1 -> 2"
+reason = "reshape(-2, 3): numpy (2.5.4, the pinned version) reads any negative size as the remaining one, as -1"
+
+[[equivalent]]
+key = "water.py:read_visual:compare:e < 0 -> e <= 0"
+reason = "d.find from o (at least 16, past the header) returns -1 or an index of at least 16, never 0"
+
+[[equivalent]]
+key = "water.py:read_visual:constant:0 -> 1"
+reason = "e < 1 for e < 0: find returns -1 or at least 16, as above"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:arith:max_dist / BUCKET -> max_dist * BUCKET"
+reason = "more buckets looked at around the point: every cell found is still kept only within max_dist, so the nearest is the same"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:constant:1 -> 2"
+reason = "one more row of buckets looked at (range(-r, r + 2)): cells are kept only within max_dist, so the nearest is the same"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:constant:1 -> 2 #2"
+reason = "one more column of buckets looked at: cells are kept only within max_dist, so the nearest is the same"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:arith:x + bi * BUCKET -> x - bi * BUCKET"
+reason = "bi runs over -r .. r, so x - bi * BUCKET visits the same buckets in another order; the areas are collected in a set and sorted"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:arith:z + bj * BUCKET -> z - bj * BUCKET"
+reason = "bj runs over -r .. r: the same buckets, collected in a set and sorted"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:arith:a.height - 1 -> a.height + 1"
+reason = "rows past the area's last are looked at too, and walkable() is false outside the bitmap"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:arith:a.width - 1 -> a.width + 1"
+reason = "columns past the area's last are looked at too, and walkable() is false outside the bitmap"
+
+[[equivalent]]
+key = "rsnv.py:World._lean:compare:f > 0 -> f >= 0"
+reason = "f = 0 is inside the graze band (abs(f) < 0.5 - LOS_GRAZE) and returns 0 before the comparison"
+
+[[equivalent]]
+key = "rsnv.py:World.on_cell:drop:si and self.walkable(a, i + si, j) -> self.walkable(a, i + si, j)"
+reason = "with si = 0 it tests walkable(a, i, j), which is false here (the line before returned for a walkable cell)"
+
+[[equivalent]]
+key = "rsnv.py:World.on_cell:drop:sj and self.walkable(a, i, j + sj) -> self.walkable(a, i, j + sj)"
+reason = "with sj = 0 it tests walkable(a, i, j), which is false here (the line before returned for a walkable cell)"
+
+[[equivalent]]
+key = "rsnv.py:World.on_cell:drop:si and sj and self.walkable(a, i + si, j + sj) -> sj and self.walkable(a, i + si, j + sj)"
+reason = "with si = 0 the diagonal test is walkable(a, i, j + sj), the same as the side test before it"
+
+[[equivalent]]
+key = "rsnv.py:World.on_cell:drop:si and sj and self.walkable(a, i + si, j + sj) -> si and self.walkable(a, i + si, j + sj)"
+reason = "with sj = 0 the diagonal test is walkable(a, i + si, j), the same as the side test before it"
+
+[[equivalent]]
+key = "level1943.py:load:constant:1 -> 2 #2"
+reason = "name.rsplit('/', 2)[-1] for name.rsplit('/', 1)[-1]: the last piece is the same whatever the number of splits"
+
+[[equivalent]]
+key = "level1943.py:load:constant:1 -> 2 #4"
+reason = "t.rsplit('.', 2)[-1] for t.rsplit('.', 1)[-1]: the same last piece"
+
+[[equivalent]]
+key = "level1943.py:load:constant:1 -> 2 #8"
+reason = "bp.rsplit('/', 2)[-1] for bp.rsplit('/', 1)[-1]: the same last piece"
+
+[[equivalent]]
+key = "level1943.py:load:constant:1 -> 2 #15"
+reason = "reshape(-2, 3): numpy (2.5.4, the pinned version) reads any negative size as the remaining one, as -1"

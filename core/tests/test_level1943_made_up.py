@@ -277,3 +277,141 @@ def test_water_from_bytes():
         pass
     else:
         raise AssertionError('a cut water mesh was read')
+
+
+# ---- edge cases (2026-11-05: mutation testing, tools/mutate.py) ---------------------------------------------------
+def to_node(el):
+    """A parsed element back as the writer's node."""
+    if el.kind == dbx.CONTAINER:
+        return node(el.tag, el.kind, el.attributes, None, [to_node(c) for c in el.children or ()])
+    if el.kind == dbx.TEXT:
+        return node(el.tag, el.kind, el.attributes, el.text)
+    return node(el.tag, el.kind, el.attributes, dbx.floats(el))
+
+
+# on and around a second US carrier, raised 20 m and moved 100 m along z, so its box (x 300..310, y 20..30, z 100..110)
+# tells its three axes apart
+EDGES = {'e_x0': (300, 25, 105), 'e_x1': (310, 25, 105), 'e_z0': (305, 25, 100), 'e_z1': (305, 25, 110),
+         'e_y0': (305, 19, 105), 'e_y1': (305, 31, 105), 'o_x': (299.9, 25, 105), 'o_y0': (305, 18.5, 105),
+         'o_y1': (305, 31.5, 105), 'o_z': (305, 25, 110.1), 'in_y': (305, 20.5, 105)}
+
+
+def edge_level_files():
+    """level_files() with the cases each rule must keep apart: a LevelData whose first fields are another text and a
+    Name that is not text; instances without a type or a guid; a Name that is numbers; static groups missing their
+    Transforms or Assets, an asset without a ref, two members, and a member whose blueprint is the ladder; a placed
+    object without a transform; a DMZ whose TeamId is numbers; a flag's spawn (owned by a team, still neutral); a base
+    spawn without alternates, one with an alternate without a ref, one on the Japanese carrier; spawns without a
+    position, on the carrier box's edges and just outside them; a map marker on the carrier."""
+    files = level_files()
+    base = dbx.parse(files[f'levels/{LV}.dbx'])
+    extra = [
+        instance('Levels.LevelData', 'ld0', [field('Other', 'Levels/Wrong'),
+                                             numbers('Name', [1]), field('Name', 'Levels/Sub/Made_Up')]),
+        node('instance', dbx.CONTAINER, [('guid', 'notype')], None, [at(7, 0, 7)]),
+        node('instance', dbx.CONTAINER, [('type', 'Entity.MapMarkerEntityData')], None, [at(8, 0, 8)]),
+        instance('Entity.MapMarkerEntityData', 'numname', [numbers('Name', [3])]),
+        instance('Entity.ReferenceObjectData', 'noat', [field('ReferencedObject', ref='objects/props/crate/BP')]),
+        instance('Entity.ReferenceObjectData', 'nobp', [at(9, 0, 9)]),
+        instance('Entity.DmzEntityData', 'd3', [numbers('TeamId', [2])]),
+        instance('Entity.SoldierSpawnEntityData', 'f1', [at(50, 0, 1)]),
+        instance('Entity.SoldierSpawnEntityData', 's4', [at(1, 0, 4)]),
+        instance('Entity.SoldierSpawnEntityData', 's5', [at(1, 0, 5), node('array', dbx.CONTAINER,
+                 [('name', 'AlternativeSpawnPoints')], None, [node('item', dbx.TEXT, [], '')])]),
+        instance('Entity.VehicleSpawnEntityData', 'v3', [at(-195, 10, 5)]),
+        instance('Entity.VehicleSpawnEntityData', 'nopos', []),
+        instance('Entity.MapMarkerEntityData', 'mm2', [at(305, 10, 5)]),
+        instance('Entity.DmzEntityData', 'd4', [field('TeamId', 'Team1')]),
+        instance('Entity.SoldierSpawnEntityData', 'sb2', [at(-1, 0, -1)]),
+        placed('us2', 'objects/ships2/us_carrier', 300, 20, 100),
+    ]
+    extra += [instance('Entity.SoldierSpawnEntityData', g, [at(*p)]) for g, p in EDGES.items()]
+    # the LevelData with the cases comes first, so that its Name is the one read
+    files[f'levels/{LV}.dbx'] = dbx_bytes(extra[:1] + [to_node(el) for el in base.instances] + extra[1:])
+    files['objects/ships2/us_carrier_havok.res'] = b'box'
+    files[f'levels/{LV}/more_havokasset.dbx'] = dbx_bytes([
+        instance('Physics.CompositeHavokAsset', 'g2', [
+            numbers('Transforms', [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 600, 0, 0, 1,
+                                   1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 700, 0, 0, 1]),
+            array('Assets', ['objects/rocks/rock_havok/R', 'objects/props/ladder_havok/L'])]),
+        instance('Physics.CompositeHavokAsset', 'g3', [array('Assets', ['objects/rocks/rock_havok/R'])]),
+        instance('Physics.CompositeHavokAsset', 'g4', [numbers('Transforms', [1] * 16)]),
+        instance('Physics.CompositeHavokAsset', 'g5', [numbers('Transforms', [1] * 16), node('array', dbx.CONTAINER,
+                 [('name', 'Assets')], None, [node('item', dbx.TEXT, [], '')])]),
+    ])
+    return files
+
+
+def test_edge_cases():
+    files = edge_level_files()
+    saved = list(SPAWN_MAP['objectives'])
+    SPAWN_MAP['objectives'] += [
+        {'guid': 'cpf', 'role': 'flag', 'initial_owner': 'Team2', 'spawns': [{'guid': 'f1'}]},
+        {'guid': 'cpb', 'role': 'base', 'initial_owner': 'Team1', 'spawns': [{'guid': 's4'}, {'guid': 's5'},
+                                                                            {'guid': 'v3'}]},
+        {'guid': 'cpj', 'role': 'base', 'initial_owner': 'Team2', 'spawns': [{'guid': 'sb2'}]}]
+    try:
+        lvl, _ = load(files)
+    finally:
+        SPAWN_MAP['objectives'] = saved
+    e = {x.guid: x for x in lvl.entities}
+    assert lvl.name == 'Made_Up', 'the first LevelData Name that is text, its last part'
+    assert e['notype'].category == level1943.category_1943(None) and e[''].category == 'map marker'
+    assert e['numname'].name is None, 'a Name that is not text'
+    members = sorted((m.guid, m.blueprint, m.partition, m.position.tolist(), m.category)
+                     for m in lvl.entities if m.group == 'more_havokasset.dbx')
+    assert members == [('g2#0', 'objects/rocks/rock', 'more_havokasset', [600.0, 0.0, 0.0], 'group member'),
+                       ('g2#1', 'objects/props/ladder', 'more_havokasset', [700.0, 0.0, 0.0], 'group member'),
+                       ('g5#0', '', 'more_havokasset', [1.0, 1.0, 1.0], 'group member')], members
+    assert e['noat'].category == 'destructible' and e['noat'].matrix is None
+    assert all(lvl.entities[m.entity].guid != 'noat' for m in lvl.meshes), 'no collision without a place'
+    assert e['nobp'].blueprint is None and e['nobp'].category == 'placed object'
+    assert e['d3'].team is None, 'a TeamId that is not text names no team'
+    assert e['f1'].team is None, 'a flag keeps its spawns neutral, whoever holds it first'
+    assert e['s4'].team == 1 and e['s5'].team == 1 and e['v3'].team == 1, 'a base owns them, even on the other carrier'
+    assert e['nopos'].team is None and e['mm2'].team is None
+    assert e['d4'].team == 1 and e['sb2'].team == 2
+    teams = {g: e[g].team for g in EDGES}
+    assert teams == {'e_x0': 1, 'e_x1': 1, 'e_z0': 1, 'e_z1': 1, 'e_y0': 1, 'e_y1': 1, 'o_x': None, 'o_y0': None,
+                     'o_y1': None, 'o_z': None, 'in_y': 1}, teams
+
+
+def test_level_without_terrain_data():
+    files = level_files()
+    base = dbx.parse(files[f'levels/{LV}.dbx'])
+    kept = [el for el in base.instances if not (el.attr('type') or '').endswith('TerrainEntityData')]
+    files[f'levels/{LV}.dbx'] = dbx_bytes([to_node(el) for el in kept])
+    lvl, _ = load(files)
+    assert lvl.notes == [f'no height field terrains/{LV}/{LV}.heightfield-000.res', 'no water mesh'], lvl.notes
+
+
+def test_terrain_name_and_flags():
+    def terrain_el(attrs, ref=None):
+        children = [dbx.Element('field', dbx.TEXT, [('name', 'TerrainAsset')] + ([('ref', ref)] if ref else []))]
+        return dbx.Element('instance', dbx.CONTAINER, attrs, children=children)
+    t = [('type', 'Entity.TerrainEntityData')]
+    assert level1943.terrain_name_1943([terrain_el(t, 'terrains/Wake_A/Wake_A/G')]) == 'wake_a'
+    assert level1943.terrain_name_1943([terrain_el(t, 'terrains/Wake/Other/G')]) == 'wake', 'the second part'
+    assert level1943.terrain_name_1943([terrain_el(t, 'terrains/a/b')]) == 'a', 'three parts are enough'
+    assert level1943.terrain_name_1943([terrain_el(t, 'terrains/a')]) is None
+    assert level1943.terrain_name_1943([terrain_el(t)]) is None, 'no ref'
+    assert level1943.terrain_name_1943([dbx.Element('instance', dbx.CONTAINER, [], children=[]),
+                                        terrain_el(t, 'terrains/x/x/G')]) == 'x', 'an instance without a type first'
+    assert level1943.FLAG_INDEX == {'forbid': 0, 'exclude': 1, 'dynamic': 3, 'detailed': 5, 'destructible': 6,
+                                    'ladder': 7}
+
+
+def test_terrain_stride_and_short_flags():
+    files = level_files()
+    files['terrains/made_up_t/made_up_t.heightfield-000.res'] = heightfield(size=8)
+    lvl, _ = load(files)
+    assert lvl.terrain is not None and len(lvl.terrain[0]) == 16 and len(lvl.terrain[1]) == 18, 'every 2nd sample'
+    # flags of six (older files): the destructible and ladder flags (7th and 8th) read as not set
+    saved = lo.blueprint_info
+    lo.blueprint_info = lambda g, bp: ((False, False, False, True, '', False), None)
+    try:
+        lvl, _ = load(level_files())
+    finally:
+        lo.blueprint_info = saved
+    e = {x.guid: x for x in lvl.entities}
+    assert e['l1'].category == 'dynamic object' and not e['c1'].destructible

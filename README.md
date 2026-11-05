@@ -40,16 +40,16 @@ Status: **ready** = works on BF1943 data today; **partly** = some parts read BF1
 
 | Folder | Tool | BF1943 status | Starting point |
 |---|---|---|---|
-| `bf1943-xenia-kit/` | turns your own BF1943 package into an offline Xenia setup: Local Match browser, CHOOSE YOUR SIDE, menu clean-ups, no automatic team; opt-in `--experiment-bots` (23 server-side bots that spawn at their bases and are on the scoreboard; their soldiers are stepped with input frames taken from a mailbox in guest memory, which the test harness's `guestmem.py` writes: walk, strafe, facing, sprint, jump, crouch, confirmed in game 2026-10-30; no decisions yet) | **ready** | new; findings from rising-sun `src/xeniaprobe`, `src/uiresearch` |
+| `bf1943-xenia-kit/` | turns your own BF1943 package into an offline Xenia setup: Local Match browser, CHOOSE YOUR SIDE, menu clean-ups, no automatic team; opt-in `--experiment-bots` (23 server-side bots that spawn at their bases and are on the scoreboard; their soldiers are stepped with input frames taken from a mailbox in guest memory, which the test harness's `guestmem.py` writes: walk, strafe, facing, sprint, jump, crouch, confirmed in game 2026-10-30; no decisions yet) | **ready** | new; findings from rising-sun `src/xeniaprobe`, `src/uiresearch`; how it is built: [ARCHITECTURE.md](bf1943-xenia-kit/ARCHITECTURE.md) |
 | `bf1943-apt-tools/` | menu movie (APT) reader, disassembler and rewriter | **ready** | rising-sun `src/uiresearch/apt.py` |
 | `bf1943-fbrb-tool/` | BF1943 bundles (FbRB directory v2): `fbrb1943.py` (`list`, `info`, `extract` with a manifest, `replace` into a copy) | **ready** (`fbrb1943.py` only; OPFOR's BFBC2 `FbrbTool` was removed) | OPFOR FbrbTool; BF1943 layout from rising-sun `src/assetresearch` |
 | `bf1943-spawn-map/` | each level's bases and flags with the soldier and vehicle spawns they own (`spawnmap.py`) | **ready** | new; uses `core/bfbc2core/dbx.py` and `bf1943-fbrb-tool` |
 | `bf1943-console-readers/` | read-only STFS package reader (`stfs/stfs.py`) | **ready** (STFS only: it extracts BF1943's package for the Xenia kit; the disc image reader was removed, BF1943 is download-only) | OPFOR console readers |
-| `bf1943-auto-navkit-big-endian/` | NavKit for BF1943's Xbox 360 levels (big-endian; Havok 4.6.1): `navkit.py` / `navkitGUI.pyw` prepare, sample (offline), build and check a level's navigation; `tools/navaudit1943.py` audits a build against its level; `tools/navexport1943.py` exports it as the navigation runtime's RSNV file (`tools/rsnvtool.py` inspects one); `tools/navexport_vehicles1943.py` builds the vehicle worlds (ground: `groundnav1943.py`, sea: `seanav1943.py`, planes: `airnav1943.py`) | **ready** (the BF1943 pipeline; all four MP maps built and audited 2026-10-24: every flag pair routed (Coral Sea has one flag), `hpdcheck` passes, every required position on land reachable but Coral Sea's South Base flag, whose walkable ground is 2.1 m away against the audit's 2 m reach) | a copy of the little-endian variant |
-| `bf1943-auto-navkit-little-endian/` | NavKit for little-endian levels: BFBC2 PC today, later BF1943 converted for the PC port (`navkit_le.py` / `navkitGUI_le.pyw`, named so since 2026-10-31) | **partly** (reads Havok 4.6.1; otherwise OPFOR's BFBC2 NavKit; its `prepare` needs BFBC2's FbrbTool, which this suite no longer has: it uses OPFOR's `tools\` copy) | OPFOR NavKit (kept in step with `tools/import_opfor.py --update`) |
-| `bf1943-auto-navkit-common/` | the NavKit modules both variants use, one copy (2026-10-31): the builder `navbuild` (a package, with explicit `Settings`: BFBC2's defaults or BF1943's `soldier1943.SETTINGS`), walkability rules, samples, the `.hpd` reader and writer, the Havok reader, level objects, the detailed-sector rule, `navdiff`; the format spec; their rule tests | **ready** (both variants' builds byte for byte as before the merge: four BF1943 maps with their RSNV exports, two BFBC2 levels) | the two variants' copies, merged |
+| `bf1943-auto-navkit-big-endian/` | NavKit for BF1943's Xbox 360 levels (big-endian; Havok 4.6.1): `navkit.py` / `navkitGUI.pyw` prepare, sample (offline), build and check a level's navigation; `tools/navaudit1943.py` audits a build against its level; `tools/navexport1943.py` exports it as the navigation runtime's RSNV file (`tools/rsnvtool.py` inspects one); `tools/navexport_vehicles1943.py` builds the vehicle worlds (ground: `groundnav1943.py`, sea: `seanav1943.py`, planes: `airnav1943.py`) | **ready** (the BF1943 pipeline; all four MP maps built and audited 2026-10-24: every flag pair routed (Coral Sea has one flag), `hpdcheck` passes, every required position on land reachable but Coral Sea's South Base flag, whose walkable ground is 2.1 m away against the audit's 2 m reach) | a copy of the little-endian variant; how it is built: [ARCHITECTURE.md](bf1943-auto-navkit-big-endian/ARCHITECTURE.md) |
+| `bf1943-auto-navkit-little-endian/` | NavKit for little-endian levels: BFBC2 PC today, later BF1943 converted for the PC port (`navkit_le.py` / `navkitGUI_le.pyw`, named so since 2026-10-31) | **partly** (reads Havok 4.6.1; otherwise OPFOR's BFBC2 NavKit; its `prepare` needs BFBC2's FbrbTool, which this suite no longer has: it uses OPFOR's `tools\` copy) | OPFOR NavKit (kept in step with `tools/import_opfor.py --update`); how it is built: [ARCHITECTURE.md](bf1943-auto-navkit-big-endian/ARCHITECTURE.md) |
+| `bf1943-auto-navkit-common/` | the NavKit modules both variants use, one copy (2026-10-31): the builder `navbuild` (a package, with explicit `Settings`: BFBC2's defaults or BF1943's `soldier1943.SETTINGS`), walkability rules, samples, the `.hpd` reader and writer, the Havok reader, level objects, the detailed-sector rule, `navdiff`; the format spec; their rule tests | **ready** (both variants' builds byte for byte as before the merge: four BF1943 maps with their RSNV exports, two BFBC2 levels) | the two variants' copies, merged; how it is built: [ARCHITECTURE.md](bf1943-auto-navkit-big-endian/ARCHITECTURE.md) |
 | `core/` | shared readers (DBX, terrain, water, ground materials), the game copy and its bundles (`game1943.py`), level loaders, vehicle entry points, the navigation runtime's RSNV file and its reference search and planners, 3D view | **ready for BF1943**: `dbx.py`, `terrain.py`, `water.py`, `materialmap1943.py`, `game1943.py`, `level1943.py`, `vehicles1943.py`, `navdata.py`, `navpath.py`, `rsnv.py`, `rsnvtrip.py`, `rsnvhybrid.py`; `level.py`, `xmlinst.py` and `navtune.py` stay BFBC2 | OPFOR `core/` |
-| `bf1943-dbx-tools/` | view, edit and check binary `.dbx` (DbxEdit, DbxEditGUI; `schema1943.py` writes the executable's reflection schema into DbxEdit for the level check) | **ready** (reads, writes and edits BF1943 partitions: all of Wake Island's round-trip byte for byte; the level check uses BF1943's own rules - what all five shipped levels satisfy, the executable's completed reflection schema (members, reference and element classes, enum values) and, with `--bundle`, the level's static cull trees - chosen from the file, BFBC2's on request; the slot fixer repairs BF1943 cull slots; the rules' in-game effects are not tried) | OPFOR DbxEdit |
+| `bf1943-dbx-tools/` | view, edit and check binary `.dbx` (DbxEdit, DbxEditGUI; `schema1943.py` writes the executable's reflection schema into DbxEdit for the level check) | **ready** (reads, writes and edits BF1943 partitions: all of Wake Island's round-trip byte for byte; the level check uses BF1943's own rules - what all five shipped levels satisfy, the executable's completed reflection schema (members, reference and element classes, enum values) and, with `--bundle`, the level's static cull trees - chosen from the file, BFBC2's on request; the slot fixer repairs BF1943 cull slots; the rules' in-game effects are not tried) | OPFOR DbxEdit; how it is built: [ARCHITECTURE.md](bf1943-dbx-tools/ARCHITECTURE.md) |
 | `bf1943-map-inspector/`, `bf1943-navigation-studio/` | 3D views of BF1943 levels (bases, flags, spawns by team) and of NavKit's navigation builds (path test; no editing) | **ready** | OPFOR tools of the same names |
 | `bf1943-diff-workbench/` | LevelDiff: two `.dbx` files compared instance by instance | **ready** (on BF1943's binary partitions) | OPFOR diff workbench |
 | `bf1943-automated-map-and-bot-test-harness/` | `xenia-run/`: `xeniarun.py` (the last Xenia session of the kit's build: patches, warnings, the bots' reports, a Xenia crash from Windows' Application log), `run_xenia_probe.ps1` (traced sessions), `guestmem.py` (the running game's memory from outside Xenia: the bots' mailbox), `capture_xenia_window.ps1`, `udp_join_probe.py`; map and bot tests planned | **partly** (the Xenia run tools are ready; OPFOR's BFBC2 crash reader was removed) | OPFOR test harness; probes from rising-sun `src/xeniaprobe` |
@@ -93,8 +93,8 @@ The tools need no install, and CI runs them without one.
 
 | Tier | Needs | Covers |
 |---|---|---|
-| `quick` | nothing (58 tests, two to three minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules (the shared modules: rules, edge cases, damaged files) and the little-endian driver's steps; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
-| `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 22, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace, the VMX recorder's checks among them (skipped without one) |
+| `quick` | nothing (117 tests, three to five minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; core's readers and rules value by value (DBX values, RSNV ground heights, line of sight, costs, search and checks, trips, terrain, water, material maps, navigation data and the path test, the level loader's edge cases); the mutation testing tool; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules (the shared modules: rules, edge cases, damaged files) and the little-endian driver's steps; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
+| `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 24, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace, the VMX recorder's checks among them (skipped without one) |
 
 Run `quick` before every commit and `bf1943 --strict` before every push.
 
@@ -105,7 +105,7 @@ runs the lint (`ruff check`) and the type check (`pyright`, below: "Types"), poi
 of the image) and runs the tools from the checkout, without an install; then it checks that the package installs (`pip install -e .`). It has no game copy, no research workspace and
 no Xenia, and downloads nothing but Python libraries: so every quick test runs without them, and a skip fails the run
 like a failure. A second job, `coverage`, runs the quick tier again through pytest (`--strict-skips`) with line
-coverage of every Python process it starts, uploads the report (text, XML and HTML) as the artifact `coverage`, and
+and branch coverage of every Python process it starts, uploads the report (text, XML and HTML) as the artifact `coverage`, and
 fails when the total is below the threshold (`fail_under`, below: "Coverage").
 The console's code page does not matter: the Xenia kit's `launch.cmd` switches to UTF-8 itself, and its test runs it
 under both the OEM page (437) and UTF-8 (65001).
@@ -234,8 +234,8 @@ The VMX fingerprint's inputs are never annotated or checked (`tests/test_repo.py
 
 ### Coverage
 
-Line coverage of a tier, the processes its tests start included (pyproject.toml `[tool.coverage]`), with coverage in
-the Python that runs the tests (the `ci` group):
+Line and branch coverage of a tier, the processes its tests start included (pyproject.toml `[tool.coverage]`, `branch =
+true` since 2026-11-05), with coverage in the Python that runs the tests (the `ci` group):
 
 ```
 set COVERAGE_PROCESS_START=%CD%\pyproject.toml
@@ -252,6 +252,15 @@ starts it), so the runner, its tests and their children all count. The three are
 children in other folders and coverage reads a relative path from each process's own folder. The report counts the
 suite's files, those that never ran too, and leaves out the tests themselves.
 
+**Branches.** Each `if`, loop and conditional expression counts both ways it can go, and the report's `Branch` and
+`BrPart` columns give the branches and those taken only one way; `python -m coverage report -m` lists them as
+`line->line` beside the missing lines. The total is lines and branches together (covered lines plus branches taken,
+over lines plus branches), so it is not the line-only figure from before 2026-11-05. The quick tier, measured as CI
+does (2026-11-05): before the branch tests, lines 83.7 %, branches 77.6 %, together 82.0 %; core (`core/bfbc2core`)
+lines 82.6 %, branches 79.6 %, together 81.8 %. After them: lines 84.8 %, branches 79.1 %, together 83.3 %; core lines
+87.3 %, branches 86.8 %, together 87.2 %; the shared NavKit tools (`bf1943-auto-navkit-common/tools`) 80.2 % together
+(78.0 % before). `fail_under` went from 80 (lines) to 82.5 (lines and branches) in the same change.
+
 **The threshold** is `fail_under` in `pyproject.toml` `[tool.coverage.report]`: `coverage report` exits 2 when the
 quick tier's total is below it, and CI's coverage job fails then (its last step; the reports are uploaded first). It is
 a ratchet, set a little below the measured total so that a small change does not trip it, and it only goes up:
@@ -262,6 +271,59 @@ raise it after adding tests: run the steps above with pytest as CI does (`python
 and set `fail_under` about one point below it, in the same commit as the tests. When coverage falls below it, add
 tests rather than lower it. The one exception, a well-tested tool removed, is a commit whose message has a line
 `Coverage-threshold-lowered: <reason>`: that commit may lower `fail_under`, and later ones are held to its value.
+Branch coverage, once on, stays on under the same rule (turning it off would raise the total without a test): the
+ratchet fails a `[tool.coverage.run] branch` turned off, unless that commit gives the same line.
+
+### Mutation testing
+
+Coverage says a test ran a line; mutation testing says whether a test notices when the line is wrong.
+[tools/mutate.py](tools/mutate.py) (standard library, and coverage from the `ci` group to pick the tests) makes each
+**mutant** of core's modules, one small change at a time: a comparison flipped (`<` for `<=`, `==` for `!=`, `in` for
+`not in`), an integer one off, `and` for `or`, one operand of `and` / `or` removed, a condition negated, `not x` for
+`x`, a `raise` removed, `+` for `-` (and `*` `/`, `//` `/`, `<<` `>>`, `&` `|`). It runs the quick-tier tests that run
+the changed line against it, fastest first, until one fails (**killed**) or all pass (**survived**); a test past three
+times its usual time plus 20 s is stopped with its children and counts as killing it. A module's score is its killed
+share, the **equivalent** mutants left out: changes no test could see, as the code behaves the same with them, each
+listed with its reason in [tools/mutation_equivalents.toml](tools/mutation_equivalents.toml). It is an opt-in command,
+not part of CI (a full run takes about an hour on 12 processes):
+
+```
+python -B tools\mutate.py                       all of pyproject.toml [tool.bf1943-mutation] modules
+python -B tools\mutate.py dbx navpath           some of them
+python -B tools\mutate.py --list rsnv           the mutants and their keys, run nothing
+python -B tools\mutate.py --workers 8           test processes at once (default: the config's workers, 2)
+```
+
+It never changes the suite: the suite's files (git's tracked and new ones) are copied to `work\mutation\copy-<n>`,
+one copy per worker, and the mutant is written into a copy, so a tool running from the suite meanwhile never imports
+one. It first runs every quick test once, unchanged, under coverage of the chosen modules (each test's time, and the
+lines it runs); a test that fails unchanged is left out (`repository rules` does, as a copy has no `.git`), and one whose
+coverage data does not read (a child stopped while writing it) counts as running every line. A canary
+(a module that raises on import) must be killed in every copy before any mutant runs. Tests see no game copy and no
+research workspace (`BF1943_GAME` and `BF1943_RESEARCH` point at an empty folder, as in CI). The scores go to the
+console and to `work\mutation\report.json` with every survivor's key and line; exit code 1 when a module is below
+`threshold` (80 %). Settings: `pyproject.toml` `[tool.bf1943-mutation]`.
+
+A surviving mutant gets a test that kills it, or, when no test could (the change is invisible: a bound no file under
+2 GiB can reach, a value numpy reads the same way, a branch whose other way gives the same result), an entry in
+`tools/mutation_equivalents.toml` with its key (as `--list` prints it) and its reason. A key that matches no mutant
+any more is reported, to be removed. Scores, 2026-11-05 (killed share, equivalents left out; before, the tests at
+e534787; after, with the tests added then):
+
+| Module | Mutants | Before | After | Survived after | Equivalent |
+|---|---|---|---|---|---|
+| `dbx.py` | 273 | 64.5 % | 100.0 % | 0 | 10 |
+| `rsnv.py` | 1275 | 57.6 % | 86.4 % | 170 | 24 |
+| `game1943.py` | 32 | 75.0 % | 100.0 % | 0 | 0 |
+| `terrain.py` | 142 | 69.0 % | 100.0 % | 0 | 5 |
+| `navpath.py` | 111 | 43.2 % | 100.0 % | 0 | 3 |
+| `navdata.py` | 225 | 40.9 % | 99.0 % | 2 | 19 |
+| `rsnvtrip.py` | 259 | 59.1 % | 92.1 % | 20 | 5 |
+| `materialmap1943.py` | 185 | 57.3 % | 100.0 % | 0 | 7 |
+| `water.py` | 144 | 76.4 % | 100.0 % | 0 | 3 |
+| `level1943.py` | 212 | 70.3 % | 99.5 % | 1 | 9 |
+
+All ten: 2,858 mutants, 59.1 % killed before and 93.0 % after (85 equivalent). The survivors left (rsnv's line of sight between areas, a few of the trip plan's transfer filters, two area centres in the navigation reader, the level loader's mesh alias) are listed in the report; each is a test to write.
 
 Only tests about BF1943 are kept. The tests OPFOR's tools came with ran on BFBC2 data (Project OPFOR's copy) and were
 removed; a copied tool gets BF1943 tests when it is adapted (they remain in OPFOR's `bfbc2-tool-suite` and in this

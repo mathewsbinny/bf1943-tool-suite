@@ -105,3 +105,51 @@ def test_lowering_with_a_reason_passes(tmp_path):
     plain.mkdir()
     history(plain, [70, 66], messages={1: 'Coverage-threshold-lowered:\n'})
     assert len(ratchet(plain)[1]) == 1, 'a marker without a reason does not count'
+
+
+def with_branch(value, branch):
+    """A pyproject.toml with fail_under = value and [tool.coverage.run] branch set (None: not given)."""
+    run = '' if branch is None else f'[tool.coverage.run]\nbranch = {"true" if branch else "false"}\n\n'
+    return '[project]\nname = "x"\n\n' + run + f'[tool.coverage.report]\nfail_under = {value}\n'
+
+
+def history_texts(root, texts, working=None, messages=None):
+    """history() with each commit's whole pyproject.toml text given."""
+    run = lambda *a: subprocess.run(['git', '-C', str(root), *a], check=True, capture_output=True)  # noqa: E731
+    run('init', '-q')
+    run('config', 'user.name', 'test')
+    run('config', 'user.email', 'test@example.invalid')
+    path = os.path.join(root, 'pyproject.toml')
+    for k, text in enumerate(texts):
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
+        run('add', 'pyproject.toml')
+        run('commit', '-q', '-m', (messages or {}).get(k, f'commit {k}'))
+    if working is not None:
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(working)
+
+
+def test_branch_coverage_turned_on_passes(tmp_path):
+    # 2026-11-05: branch coverage on; the total (lines and branches together) stays above the old line threshold
+    history_texts(tmp_path, [with_branch(80, None), with_branch(82, True), with_branch(83, True)])
+    name, problems = ratchet(tmp_path)
+    assert problems == [] and 'now 83' in name, (name, problems)
+
+
+def test_branch_coverage_turned_off_fails(tmp_path):
+    history_texts(tmp_path, [with_branch(80, True), with_branch(80, False)])
+    problems = ratchet(tmp_path)[1]
+    assert len(problems) == 1 and 'branch coverage turned off (on since ' in problems[0], problems
+    removed = tmp_path / 'removed'
+    removed.mkdir()
+    history_texts(removed, [with_branch(80, True)], working=with_branch(81, None))
+    problems = ratchet(removed)[1]
+    assert len(problems) == 1 and problems[0].startswith('working copy: branch coverage turned off'), problems
+
+
+def test_branch_coverage_turned_off_with_a_reason_passes(tmp_path):
+    lowered = 'drop branch coverage\n\nCoverage-threshold-lowered: measured by lines again\n'
+    history_texts(tmp_path, [with_branch(80, True), with_branch(80, False), with_branch(81, False),
+                             with_branch(82, True)], messages={1: lowered})
+    assert ratchet(tmp_path)[1] == []

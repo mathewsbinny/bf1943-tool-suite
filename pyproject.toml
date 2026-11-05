@@ -142,6 +142,7 @@ include = [
     "bf1943-xex-tools/xenonrecomp_reference.py",
     "bf1943-xex-tools/xexrefs.py",
     "tools/import_opfor.py",
+    "tools/mutate.py",
     "run_tests.py",
     "tests/functions.py",
     "conftest.py",
@@ -181,7 +182,7 @@ addopts = ["--import-mode=importlib", "-p", "no:cacheprovider"]
 python_files = ["test_*.py"]
 norecursedirs = [".*", "work", "output", "docs", "provenance", "__pycache__", "research"]
 
-# Line coverage of a tier, its child processes included (README "Coverage"; CI's coverage job). Set, all absolute
+# Line and branch coverage of a tier, its child processes included (README "Coverage"; CI's coverage job). Set, all absolute
 # (tests start children in other folders, and coverage reads relative paths from each process's own folder):
 #   COVERAGE_PROCESS_START=<suite>\pyproject.toml   every Python started with it set measures itself (coverage
 #                                                   installs a .pth file that starts it): the runner, its tests and
@@ -191,6 +192,7 @@ norecursedirs = [".*", "work", "output", "docs", "provenance", "__pycache__", "r
 # then `python -B run_tests.py quick` (or pytest), `python -m coverage combine`, `python -m coverage report`.
 [tool.coverage.run]
 parallel = true                     # one data file per process, joined by `coverage combine`
+branch = true                       # branch coverage too: the total counts lines and branches together
 source = ["${COVERAGE_SOURCE-.}"]
 omit = ["*/work/*", "*/output/*"]
 
@@ -201,5 +203,29 @@ skip_empty = true
 precision = 1
 # the quick tier's threshold: `coverage report` exits 2 below it, and CI's coverage job fails. A ratchet: it only
 # goes up (tests/test_repo.py checks every commit of this file); README "Coverage" says how to raise it.
-# 2026-10-31: quick tier 83.2 % (80.5 % without the parsers' fuzz tests)
-fail_under = 80
+# 2026-10-31: quick tier 83.2 % (80.5 % without the parsers' fuzz tests), lines only
+# 2026-11-05: branch coverage on, so the total is lines and branches together: 82.0 % before the branch tests
+# (lines 83.7 %, branches 77.6 %), 83.3 % with them (lines 84.8 %, branches 79.1 %; core 87.2 %)
+fail_under = 82.5
+
+# Mutation testing of core (tools/mutate.py; README "Mutation testing"): an opt-in command, not part of CI (slow).
+# Each module's mutants are run against the quick-tier tests that run the changed line; a module scores the killed
+# share of its mutants, the equivalent ones (tools/mutation_equivalents.toml, each with its reason) left out.
+[tool.bf1943-mutation]
+modules = [
+    "core/bfbc2core/dbx.py",
+    "core/bfbc2core/rsnv.py",
+    "core/bfbc2core/game1943.py",
+    "core/bfbc2core/terrain.py",
+    "core/bfbc2core/navpath.py",
+    "core/bfbc2core/navdata.py",
+    "core/bfbc2core/rsnvtrip.py",
+    "core/bfbc2core/materialmap1943.py",
+    "core/bfbc2core/water.py",
+    "core/bfbc2core/level1943.py",
+]
+threshold = 80                      # percent of a module's mutants killed; mutate.py exits 1 below it
+workers = 2                         # test processes at once (--workers), each in its own copy of the suite
+timeout_factor = 3.0                # a test's limit: this x its unchanged time + timeout_extra seconds
+timeout_extra = 20.0
+equivalents = "tools/mutation_equivalents.toml"
