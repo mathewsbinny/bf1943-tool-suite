@@ -6,7 +6,8 @@
 
 Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-24) - `navkit.py` and `navkitGUI.pyw` are the
 BF1943 pipeline: from a level of your BF1943 copy to a checked navigation build, and `tools\navaudit1943.py`
-audits a build against its level. **To use it, start with [QUICKSTART.md](QUICKSTART.md).**
+audits a build against its level. **To use it, start with [QUICKSTART.md](QUICKSTART.md).** How NavKit is built
+(the pipeline, the `navkit.json` stamps, the shared modules, BF1943 against BFBC2): [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```
 python navkit.py levels                   the copy's levels, and what has been done for each
@@ -33,7 +34,7 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
 - **Steps.** *prepare* reads the level's objects and collision (`tools\levelobjects1943.py`), its height field and
   water, and sets the sea level and sector offsets. *sample* computes the collision samples offline
   (`tools\navsample1943.py`): two runs at 0.8 m (BF1943's soldier, and a 0.6 m step for stairs), the detailed
-  sectors (`tools\detailed1943.py`), then two runs at 0.2 m over them. *build* runs `tools\navbuild.py` with
+  sectors (`tools\detailed1943.py`), then two runs at 0.2 m over them. *build* runs `navbuild` (the package in `..\bf1943-auto-navkit-common\tools\navbuild\`) with
   BF1943's soldier (`tools\soldier1943.py`): 0.8 m everywhere, the detailed sectors at 0.2 m, water, spawn seeds,
   ladder links, jump links to ships' AA gun platforms (`tools\jumplinks1943.py`), and a shared node wherever the
   two grids' ground meets a mixed-pitch seam with no node joining it (`seam_gap_nodes` in `soldier1943.SETTINGS`). *check* runs `tools\hpdcheck.py` and `tools\routecheck1943.py` (new): every spawn and flag joined
@@ -456,7 +457,7 @@ DICE has none).
 3. **Builder behaviour – done.** Spec §3: stages, the sampling grid, area cuts, graph rules,
    auto-seeding, the walkability rules (§3.7), structures and doors (§3.8), and the rules found on the
    other campaign levels (§3.9).
-4. **Generator – runs on all 13 campaign levels and the Onslaught maps (`tools\navbuild.py`).**
+4. **Generator – runs on all 13 campaign levels and the Onslaught maps (`navbuild`, the shared package).**
    - Full pipeline: walkable surfaces from two in-game sampling runs (normal and high capsule) plus the
      level's objects (`levelobjects.py`), 100 m sectors (level `SectorOffsets`; without one, DICE's rule:
      one sector below the path data's lowest extent), 3 × 3 tiles of 50
@@ -586,7 +587,7 @@ DICE has none).
    - **What the game needs from the file (found in play tests on sp_004_b, 2026-10-19 to 10-20):** with
      these four rules the friendly squad's go-to requests succeed 100 % (they had stalled at the spawn, then
      at the top of the stairs), and leaving the level no longer crashes (also checked on sp_01). Each is a
-     `tools\navbuild.py` setting, on by default:
+     `navbuild` setting, on by default:
      1. **one route node per surface** (`DEDUP_GRAPH_NODES`): no two ordinary nodes at one position, as in
         DICE's files (NavKit had 377 duplicate pairs joined by zero-length edges);
      2. **each sector's nodes sorted by id** (`SORT_NODES_BY_ID`), ordinary nodes first, border nodes

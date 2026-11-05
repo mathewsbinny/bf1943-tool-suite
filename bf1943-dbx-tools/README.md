@@ -2,7 +2,8 @@
 
 Part of the BF1943 Tool Suite. **BF1943 status: ready** (2026-10-26) - DbxEdit and DbxEditGUI read, write and
 edit BF1943's binary DBX partitions. The level check uses BF1943's own rules (see [Check a level](#check-a-level)),
-and the slot fixer repairs BF1943's cull slots.
+and the slot fixer repairs BF1943's cull slots. How DbxEdit is built (its 13 sources, the reader and writer,
+SafeWrite, the level check, the builds): [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Tested on BF1943** (all 4,062 partitions of Wake Island's bundles and the shared level bundle, 2026-10-23;
 the suite's `tests\test_bf1943_tools.py dbxedit` repeats it on 1,133 of them):

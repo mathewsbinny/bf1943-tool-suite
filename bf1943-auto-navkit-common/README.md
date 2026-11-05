@@ -11,6 +11,9 @@ script got depended on the order it named the variants in (`core/suitepath.py`).
 `tools\`, a shared folder (`suitepath.SHARED`, pyproject's `dev-mode-dirs`): every script and library finds them
 without naming a variant, and no module name is in two of the suite's folders (`tests\test_repo.py` checks it).
 
+How NavKit is built, these modules among the rest: the big-endian kit's
+[ARCHITECTURE.md](../bf1943-auto-navkit-big-endian/ARCHITECTURE.md).
+
 ## What was merged, and how both kits get what they had
 
 Each fork was merged into one module that serves both kits through explicit settings. Checked 2026-10-31: the four

@@ -2,7 +2,7 @@
 
 The BF1943 counterpart of levelobjects.py, which reads an unpacked, XML-converted BFBC2 level. Here the level's
 binary DBX partitions and Havok 4.6.1 packfiles are read from the game's own .fbrb bundles (the level's folder
-and levels/levels-common-00.fbrb). It writes the same files as levelobjects.py, so navbuild.py takes them
+and levels/levels-common-00.fbrb). It writes the same files as levelobjects.py, so the navbuild package takes them
 unchanged, plus all_tris.npy (every placed object's collision, for sampling without the game):
 
   objects.json              individually placed objects (Entity.ReferenceObjectData): blueprint, flags, matrix

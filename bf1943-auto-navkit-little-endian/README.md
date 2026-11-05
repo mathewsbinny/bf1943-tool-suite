@@ -20,6 +20,9 @@ navigation-data generator of the BFBC2 suite. It measures levels through Project
 so it needs an OPFOR install, plus FbrbTool and DbxEdit (FbrbTool from OPFOR's `tools\` folder: this suite's
 `bf1943-fbrb-tool` no longer has it; DbxEdit from this suite's `bf1943-dbx-tools` or OPFOR's `tools\`).
 
+How NavKit is built, both variants and their shared modules: the big-endian kit's
+[ARCHITECTURE.md](../bf1943-auto-navkit-big-endian/ARCHITECTURE.md).
+
 **To use it, start with [QUICKSTART.md](QUICKSTART.md).** Double-click `navkitGUI_le.pyw` for the window, or
 run `python navkit_le.py` from a command prompt.
 
@@ -268,7 +271,7 @@ DICE has none).
 3. **Builder behaviour – done.** Spec §3: stages, the sampling grid, area cuts, graph rules,
    auto-seeding, the walkability rules (§3.7), structures and doors (§3.8), and the rules found on the
    other campaign levels (§3.9).
-4. **Generator – runs on all 13 campaign levels and the Onslaught maps (`tools\navbuild.py`).**
+4. **Generator – runs on all 13 campaign levels and the Onslaught maps (`navbuild`, the shared package).**
    - Full pipeline: walkable surfaces from two in-game sampling runs (normal and high capsule) plus the
      level's objects (`levelobjects.py`), 100 m sectors (level `SectorOffsets`; without one, DICE's rule:
      one sector below the path data's lowest extent), 3 × 3 tiles of 50
@@ -398,7 +401,7 @@ DICE has none).
    - **What the game needs from the file (found in play tests on sp_004_b, 2026-10-19 to 10-20):** with
      these four rules the friendly squad's go-to requests succeed 100 % (they had stalled at the spawn, then
      at the top of the stairs), and leaving the level no longer crashes (also checked on sp_01). Each is a
-     `tools\navbuild.py` setting, on by default:
+     `navbuild` setting, on by default:
      1. **one route node per surface** (`DEDUP_GRAPH_NODES`): no two ordinary nodes at one position, as in
         DICE's files (NavKit had 377 duplicate pairs joined by zero-length edges);
      2. **each sector's nodes sorted by id** (`SORT_NODES_BY_ID`), ordinary nodes first, border nodes

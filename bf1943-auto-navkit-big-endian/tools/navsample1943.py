@@ -3,7 +3,7 @@
 BFBC2's NavKit samples a level in game, through OPFOR's [dev] navsample option (DICE's physics queries). BF1943 has
 no such sampler, so this computes the same columns from the level's terrain height field and the world-space
 collision written by levelobjects1943.py (all_tris.npy), and writes them in navsample's format (version 1), which
-navbuild.py reads unchanged:
+the navbuild package reads unchanged:
 
   per column (pitch 0.8 m, j-major): every surface a downward ray meets - the terrain, and each upward-facing
   collision triangle over the column (height from its plane, normal from its winding or the terrain gradient);

@@ -1,13 +1,14 @@
 # BF1943 Xenia kit
 
 Part of the BF1943 Tool Suite. **BF1943 status: ready** - a new BF1943 tool; it reads your own BF1943 (XBLA) package and Xenia Canary.
+How the kit is built (the edits, the patch file and netfix, the bots code and its mailbox, verify and launch): [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Turns your own copy of Battlefield 1943 (XBLA) into a Xenia setup that plays offline:
 - **Local Match** opens a browser of locally hosted maps.
 - Picking a map starts a local match: the game's own server and client on your PC, with no EA servers.
 - Before your first deploy, **CHOOSE YOUR SIDE** lets you pick USMC or Imperial Japan.
 
-The kit ships no game data. Everything it makes comes from your copy and goes into `output/`, which is never committed. A build from the known package is byte-identical to the setup tested on 2026-10-22; `tests\test_xeniakit.py --game` checks this.
+The kit ships no game data. Everything it makes comes from your copy and goes into `output/`, which is never committed. A build from the known package matches the setup tested on 2026-10-22 in every file `known.json` pins (the package, each extracted file, the edited resources, the patch file and the fixed Xenia); the rebuilt bundles and `config.zz` are recorded in `title-manifest.json` but not pinned, and `--experiment-team` and the bots patch have no reference hashes ([ARCHITECTURE.md](ARCHITECTURE.md), "Key invariants"). `tests\test_xeniakit.py --game` checks this.
 
 ## What you need
 

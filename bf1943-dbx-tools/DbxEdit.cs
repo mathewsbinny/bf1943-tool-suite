@@ -1,5 +1,5 @@
-// DbxEdit - reads, converts and edits Battlefield: Bad Company 2 binary .dbx files (Frostbite 1 data as a
-// tokenised XML tree). Written from FORMAT.md, which describes the format and everything this tool outputs.
+// DbxEdit - reads, converts and edits Frostbite 1 binary .dbx files, Battlefield 1943's and Bad Company 2's (data as a tokenised
+// XML tree). Written from FORMAT.md, which describes the format and everything this tool outputs.
 // Anything an edit does not change is written back byte for byte.
 //
 // usage: DbxEdit xml <file.dbx|folder> [...]               write <name>.xml next to every binary .dbx
