@@ -180,6 +180,10 @@ reason = "an equal cost pushes the node again with the same distance; a node is 
 key = "rsnvtrip.py:dijkstra:compare:d + c < dist[v] -> d + c <= dist[v] #2"
 reason = "the reverse search's same test: an equal cost changes nothing but a duplicate heap entry"
 
+[[equivalent]]
+key = "rsnvtrip.py:dijkstra:constant:1 -> 2"
+reason = "np.arange(n + 2) for np.arange(n + 1) in the reverse index: one more entry at the end (the edge count again); the search reads rfirst[u] and rfirst[u + 1] for nodes u < n only, entries 0 .. n, which are the same"
+
 # --- core/bfbc2core/materialmap1943.py ---
 
 [[equivalent]]
@@ -259,6 +263,46 @@ reason = "an edge kind past 31 is skipped by edge_cost too (it returns None), so
 [[equivalent]]
 key = "rsnv.py:search:constant:31 -> 32"
 reason = "kind 32 newly let through to edge_cost, which closes any kind past 31 (None)"
+
+[[equivalent]]
+key = "rsnv.py:World._compatible:drop:gy is None or not LOS_FOLLOWED -> gy is None"
+reason = "LOS_FOLLOWED is the module's constant True, so `not LOS_FOLLOWED` is always False and the test is gy is None either way"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:constant:1 -> 2 #4"
+reason = "one more row looked at (min(cj + n, height - 1) + 2): past the last row walkable() is false, and inside the area a row n + 1 from the point's nearest is more than (n + 0.5) pitches >= max_dist + pitch / 2 away, so no cell there is kept"
+
+[[equivalent]]
+key = "rsnv.py:World.locate:constant:1 -> 2 #6"
+reason = "one more column looked at: past the last column walkable() is false, and a column n + 1 away is farther than max_dist, as for the rows"
+
+[[equivalent]]
+key = "rsnv.py:load:constant:0 -> 1 #4"
+reason = "the default offset of an absent section: every absent one is read with its count, 0 (no records), or not at all (LADR, OFFM, ISLD, PORT, OBJT, CEDG, META only when present; OREF only when its count is non-zero)"
+
+[[equivalent]]
+key = "rsnv.py:load:constant:0 -> 1 #6"
+reason = "the default stride of an absent section is never read (only offset and count are)"
+
+[[equivalent]]
+key = "rsnv.py:edge_cost:drop:tight_extra and int(w.edge_flags[k]) & EDGEF_TIGHT -> int(w.edge_flags[k]) & EDGEF_TIGHT"
+reason = "with tight_extra 0 a tight edge gets c += 0: the same cost"
+
+[[equivalent]]
+key = "rsnv.py:filter_scale:arith:len(EDGE_NAMES) - len(kind_extra[:len(EDGE_NAMES)]) -> len(EDGE_NAMES) + len(kind_extra[:len(EDGE_NAMES)])"
+reason = "more zeros padded after the named kinds' extras: ke is only read at np.minimum(kind, len(EDGE_NAMES) - 1), indices 0 .. 6, which hold the same values"
+
+[[equivalent]]
+key = "rsnv.py:search:compare:(hv[n], g[n], n) < best -> (hv[n], g[n], n) <= best"
+reason = "the tuples end in the node index, and each node is expanded once: two are never equal"
+
+[[equivalent]]
+key = "rsnv.py:search:compare:n < parent[m] -> n <= parent[m]"
+reason = "n == parent[m] only when the same node reaches m again by a second edge of the same cost: g and parent are set to what they are, and nothing is pushed (ng < g[m] is false)"
+
+[[equivalent]]
+key = "rsnv.py:search:compare:ng < g[m] -> ng <= g[m] #2"
+reason = "an equal cost pushes m again with the same f; a node is expanded once (closed), so only a duplicate heap entry differs"
 
 # --- core/bfbc2core/level1943.py ---
 

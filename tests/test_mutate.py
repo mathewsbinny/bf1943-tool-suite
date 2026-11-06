@@ -300,6 +300,28 @@ def test_a_run_by_short_path(tmp_path):
     test_a_run(pathlib.Path(buffer.value))
 
 
+def test_stale_baseline_data(tmp_path):
+    """An earlier run's coverage data in the baseline folder is not read as this run's (2026-11-06: when the test list
+    changed, test k was credited with the lines an earlier run's test k had run)."""
+    import importlib.util as iu
+    if iu.find_spec('coverage') is None:
+        return
+    m = tool()
+    suite = tmp_path / 'suite'
+    suite.mkdir()
+    (suite / 'toy.py').write_text(TOY, encoding='utf-8', newline='\n')
+    (suite / 'test_toy.py').write_text(TOY_TEST, encoding='utf-8', newline='\n')
+    (tmp_path / 'empty').mkdir()
+    stale = tmp_path / 'baseline' / '0'
+    stale.mkdir(parents=True)
+    (stale / '.coverage.earlier-run').write_bytes(b'not this run\'s data')
+    lines = []
+    tests = [('toy', [sys.executable, '-B', os.path.join('{suite}', 'test_toy.py')])]
+    base = m.baseline(tests, [str(suite)], ['toy.py'], str(tmp_path), str(tmp_path / 'empty'), lines.append)
+    assert base.failed == [] and base.unknown == set(), lines
+    assert not (stale / '.coverage.earlier-run').exists()
+
+
 def test_unreadable_coverage_data(tmp_path):
     # 2026-11-05: a test whose child left a damaged data file stopped the whole run (sqlite3.DatabaseError); such a
     # test now counts as running every line

@@ -478,6 +478,9 @@ def baseline(tests: list[Test], copies: list[str], files: list[str], work: str, 
             copy_dir = free.pop()
         try:
             data = os.path.join(work, 'baseline', str(k))
+            # emptied first: an earlier run's data here was another test's when the test list changed, and was
+            # credited to this one (2026-11-06)
+            shutil.rmtree(data, ignore_errors=True)
             os.makedirs(data, exist_ok=True)
             extra = {'COVERAGE_PROCESS_START': rc, 'COVERAGE_FILE': os.path.join(data, '.coverage')} if coverage else {}
             status, took = run_test(args, copy_dir, test_env(empty, extra), None)

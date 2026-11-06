@@ -93,7 +93,7 @@ The tools need no install, and CI runs them without one.
 
 | Tier | Needs | Covers |
 |---|---|---|
-| `quick` | nothing (117 tests, three to five minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; core's readers and rules value by value (DBX values, RSNV ground heights, line of sight, costs, search and checks, trips, terrain, water, material maps, navigation data and the path test, the level loader's edge cases); the mutation testing tool; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules (the shared modules: rules, edge cases, damaged files) and the little-endian driver's steps; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
+| `quick` | nothing (128 tests, three to six minutes) | repository rules; error handling, and every command-line tool's errors; the DBX reader on damaged files; core's readers and rules value by value (DBX values, RSNV ground heights, line of sight (between areas too), the loader's limits, costs, search and checks, trips, terrain, water, material maps, navigation data and the path test, the level loader's edge cases); the mutation testing tool; the RSNV file (both byte orders, search, locate, damaged files); the STFS reader on packages it builds (names that would leave the output folder refused); NavKit's builder rules (the shared modules: rules, edge cases, damaged files) and the little-endian driver's steps; the offline sampler on a made-up level; `rsnvtool` on a made-up file; jump links to a made-up ship's gun platform; a full build of a made-up level across a 0.8 m / 0.2 m seam; vehicle navigation (ground and sea grids, trips, heading-aware planning, plane take-off lanes); the navigation reader's heights; the Xenia kit's patch file, assembler and bot code; the Xenia run reader on a log it writes; the executable tools' workspace lookup and Xenon vector p-code generator |
 | `bf1943` | your BF1943 copy, as `bf1943-xenia-kit` extracts it (`BF1943_GAME` overrides; the quick tests plus 24, about 5 minutes more) | the kit's full build; every bundle and DBX partition; terrain and water on every level; the menu movies; the spawn map; Havok 4.6.1 collision; Wake Island's objects for NavKit; the level loader on every multiplayer map; DbxEdit and LevelDiff on BF1943 partitions; DbxEdit's BF1943 level check (shipped levels pass, broken copies fail); the bundle tool's command line; `navkit.py prepare`; the hub; the 3D tools (the Navigation Studio when a Wake Island build exists); the enclosure probe on Wake Island's samples; the RSNV export of your builds (skipped without a Wake Island build); the executable tools from a research workspace, the VMX recorder's checks among them (skipped without one) |
 
 Run `quick` before every commit and `bf1943 --strict` before every push.
@@ -307,23 +307,31 @@ console and to `work\mutation\report.json` with every survivor's key and line; e
 A surviving mutant gets a test that kills it, or, when no test could (the change is invisible: a bound no file under
 2 GiB can reach, a value numpy reads the same way, a branch whose other way gives the same result), an entry in
 `tools/mutation_equivalents.toml` with its key (as `--list` prints it) and its reason. A key that matches no mutant
-any more is reported, to be removed. Scores, 2026-11-05 (killed share, equivalents left out; before, the tests at
-e534787; after, with the tests added then):
+any more is reported, to be removed. Scores (killed share, equivalents left out; before, the tests at e534787; after,
+with the tests added 2026-11-05, and for `rsnv.py`, `rsnvtrip.py`, `navdata.py` and `level1943.py` those added
+2026-11-06):
 
 | Module | Mutants | Before | After | Survived after | Equivalent |
 |---|---|---|---|---|---|
 | `dbx.py` | 273 | 64.5 % | 100.0 % | 0 | 10 |
-| `rsnv.py` | 1275 | 57.6 % | 86.4 % | 170 | 24 |
+| `rsnv.py` | 1275 | 57.6 % | 100.0 % | 0 | 34 |
 | `game1943.py` | 32 | 75.0 % | 100.0 % | 0 | 0 |
 | `terrain.py` | 142 | 69.0 % | 100.0 % | 0 | 5 |
 | `navpath.py` | 111 | 43.2 % | 100.0 % | 0 | 3 |
-| `navdata.py` | 225 | 40.9 % | 99.0 % | 2 | 19 |
-| `rsnvtrip.py` | 259 | 59.1 % | 92.1 % | 20 | 5 |
+| `navdata.py` | 225 | 40.9 % | 100.0 % | 0 | 19 |
+| `rsnvtrip.py` | 259 | 59.1 % | 100.0 % | 0 | 6 |
 | `materialmap1943.py` | 185 | 57.3 % | 100.0 % | 0 | 7 |
 | `water.py` | 144 | 76.4 % | 100.0 % | 0 | 3 |
-| `level1943.py` | 212 | 70.3 % | 99.5 % | 1 | 9 |
+| `level1943.py` | 212 | 70.3 % | 100.0 % | 0 | 9 |
 
-All ten: 2,858 mutants, 59.1 % killed before and 93.0 % after (85 equivalent). The survivors left (rsnv's line of sight between areas, a few of the trip plan's transfer filters, two area centres in the navigation reader, the level loader's mesh alias) are listed in the report; each is a test to write.
+All ten: 2,858 mutants, 59.1 % killed before and 100.0 % after (96 equivalent). The 193 survivors the 2026-11-05 run
+left (93.0 % then) were killed on 2026-11-06 by tests on made-up data, each value from the format, rsnav's README and
+loader, and the docstrings: `core/tests/test_rsnv_areas.py` (line of sight between areas: the lookup across sector
+seams, the allowances, coarse cells' neighbours, portals, the start, gaps, the grace and climb limits with exact binary
+values), `test_rsnv_load_costs.py` (the loader's directory limits, default filters, the filter's scale, the search's
+ties), `test_rsnvtrip_transfers.py` (the trip plan's transfer filters and tie rule), `test_navdata_one_cell.py` (an area
+of one cell) and `test_level1943_alias.py` (collision through a mesh alias only without the blueprint's own); 11
+equivalents were added with their reasons (rsnv 10, rsnvtrip 1).
 
 Only tests about BF1943 are kept. The tests OPFOR's tools came with ran on BFBC2 data (Project OPFOR's copy) and were
 removed; a copied tool gets BF1943 tests when it is adapted (they remain in OPFOR's `bfbc2-tool-suite` and in this
