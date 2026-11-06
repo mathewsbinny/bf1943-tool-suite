@@ -483,6 +483,9 @@ def baseline(tests: list[Test], copies: list[str], files: list[str], work: str, 
             status, took = run_test(args, copy_dir, test_env(empty, extra), None)
             ran: dict[str, set[int]] = {}
             unreadable = False
+            # coverage records the long, resolved path: compared with the copy's resolved path too, as a short
+            # (8.3) one, such as GitHub's runner temp C:\Users\RUNNER~1, never matched (2026-11-05)
+            real_copy = os.path.realpath(copy_dir)
             if coverage and status == 'pass':
                 # each process's data file read as it is: no Coverage object here, as one made in a process that
                 # coverage measures (this tool's own test under CI's coverage job) kept that process's data from
@@ -494,7 +497,7 @@ def baseline(tests: list[Test], copies: list[str], files: list[str], work: str, 
                     try:
                         measured.read()
                         for path in measured.measured_files():
-                            rel = os.path.relpath(path, copy_dir).replace(os.sep, '/')
+                            rel = os.path.relpath(os.path.realpath(path), real_copy).replace(os.sep, '/')
                             if rel in files:
                                 ran.setdefault(rel, set()).update(measured.lines(path) or [])
                     except (coverage.CoverageException, OSError):

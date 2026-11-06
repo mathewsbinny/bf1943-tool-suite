@@ -15,6 +15,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import pathlib
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -281,6 +282,22 @@ if data:                                    # a coverage data file cut short (a 
         f.write(b'SQLite format 3' + bytes(40))
 assert toy.clamp(5, 0, 10) == 5
 '''
+
+
+def test_a_run_by_short_path(tmp_path):
+    """The run in a folder named by its 8.3 short path, as GitHub's runner temp (C:\\Users\\RUNNER~1): coverage records
+    the long path, and before 2026-11-05 no measured file matched its copy ("no passing test runs it")."""
+    if os.name != 'nt':
+        return
+    import ctypes
+    long_dir = tmp_path / 'a folder with a long name'
+    long_dir.mkdir()
+    buffer = ctypes.create_unicode_buffer(1024)
+    ctypes.windll.kernel32.GetShortPathNameW(str(long_dir), buffer, 1024)
+    if not buffer.value or os.path.normcase(buffer.value) == os.path.normcase(str(long_dir)):
+        print('skip: this volume makes no 8.3 names')
+        return
+    test_a_run(pathlib.Path(buffer.value))
 
 
 def test_unreadable_coverage_data(tmp_path):
