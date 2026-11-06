@@ -2,7 +2,7 @@
 
   python -B test_run_xenia_probe.py
 
-The kit build (title folder, manifests, patch file) is made in a folder whose path holds a space, and the session
+The kit build (title folder, manifests, patch file, launch.cmd) is made in a folder whose path holds a space, and the session
 folder (BF1943_WORK) too; the stand-in "Xenia" (a .cmd) records the arguments it was given. Checked:
 - each flag reaches Xenia as one argument, its path whole (Start-Process quotes nothing: before 2026-10-30 a space
   split --log_file and the other paths in two);
@@ -18,6 +18,11 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
+if __name__ == '__main__':      # the suite's bootstrap (core/suitepath.py)
+    import pathlib
+    sys.path.insert(0, str(next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'core' / 'suitepath.py').is_file()) / 'core'))
+    import suitepath
+    suitepath.use()
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROBE = os.path.join(os.path.dirname(HERE), 'run_xenia_probe.ps1')
 failures = []
@@ -56,9 +61,12 @@ def main():
         open(fake, 'w', encoding='ascii').write(f'@"{sys.executable}" -B "{recorder}" %*\r\n')
         patch = os.path.join(xenia, 'patches', 'kit.patch.toml')
         open(patch, 'w', encoding='utf-8').write('# made up\n')
-        json.dump(dict(netfix=fake, netfix_sha256=sha(fake), patch=patch, patch_sha256=sha(patch), title=title, xenia=xenia,
-                       built='made up', bots_patch=None, bots_patch_sha256=None),
-                  open(os.path.join(base, 'kit-manifest.json'), 'w', encoding='utf-8'))
+        kit = dict(netfix=fake, netfix_sha256=sha(fake), patch=patch, patch_sha256=sha(patch), title=title, xenia=xenia,
+                   built='made up', bots_patch=None, bots_patch_sha256=None, gpu='vulkan')
+        json.dump(kit, open(os.path.join(base, 'kit-manifest.json'), 'w', encoding='utf-8'))
+        # the kit's verify checks launch.cmd too (since 2026-11-05): the one the build writes for this manifest
+        import xeniakit
+        xeniakit.write_launcher(base, kit, 'vulkan')
         work = os.path.join(tmp, 'work dir')
         out = os.path.join(tmp, 'argv.json')
 

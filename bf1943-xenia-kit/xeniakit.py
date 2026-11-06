@@ -55,6 +55,7 @@ from stfs import Package  # noqa: E402
 
 KNOWN = json.load(open(os.path.join(KIT, 'known.json'), encoding='utf-8'))
 DEFAULT_OUT = os.path.join(KIT, 'output')
+GPUS = ('vulkan', 'd3d12')     # Xenia's --gpu backends; the first is the default
 type Manifest = dict[str, Any]     # kit-manifest.json
 log = cast('logging.Logger', None)     # set when run (errors.setup) or by a test, before anything says a word
 
@@ -208,7 +209,7 @@ def build(args: argparse.Namespace) -> None:
                     xenia=os.path.abspath(args.xenia), xenia_sha256=KNOWN['xenia']['exe_sha256'],
                     netfix=fixed_path, netfix_sha256=sha256(fixed), netfix_changes=fix_log,
                     patch=patch_dst, patch_sha256=KNOWN['patch']['sha256'], title=title, edits=replaced,
-                    experiment_team=args.experiment_team,
+                    experiment_team=args.experiment_team, gpu=args.gpu,
                     bots_patch=bots_dst if bots_text else None,
                     bots_patch_sha256=sha256(bots_text.encode()) if bots_text else None)
     with open(os.path.join(out, 'kit-manifest.json'), 'w', encoding='utf-8', newline='\n') as f:
@@ -313,8 +314,24 @@ def load(out: str) -> Manifest:
     return json.load(open(path, encoding='utf-8'))
 
 
+def launcher_problem(out: str, manifest: Manifest) -> str | None:
+    """Why launch.cmd in an output folder is not what the build wrote for its manifest (None when it is): missing, or
+    other bytes than launcher_text gives for the manifest's paths and GPU backend. A manifest from before 2026-11-05
+    does not record the backend, so either one is accepted for it."""
+    path = os.path.join(os.path.abspath(out), 'launch.cmd')
+    if not os.path.isfile(path):
+        return f'{path} is missing'
+    gpu = manifest.get('gpu')
+    expected = [launcher_text(manifest, g).encode(LAUNCHER_ENCODING) for g in ([gpu] if gpu else GPUS)]
+    with open(path, 'rb') as f:
+        if f.read() not in expected:
+            return f'{path} differs from what the build wrote for kit-manifest.json'
+    return None
+
+
 def verify(args: argparse.Namespace) -> None:
-    """Every title file, the fixed Xenia and the patch files as the build left them; raises ValueError otherwise."""
+    """Every title file, the fixed Xenia, the patch files and launch.cmd as the build left them; raises ValueError
+    otherwise."""
     manifest = load(args.out)
     bad = []
     title_manifest = json.load(open(os.path.join(manifest['title'], 'title-manifest.json'), encoding='utf-8'))
@@ -330,6 +347,9 @@ def verify(args: argparse.Namespace) -> None:
             bad.append(path)
     if bad:
         raise ValueError(f'changed or missing since the build: {bad}')
+    problem = launcher_problem(args.out, manifest)
+    if problem:
+        raise ValueError(f'{problem} (an older kit or an edit: rebuild into an empty --out to write it again)')
     # the build's bot mode: Xenia applies every patch file in the folder, so a normal build must find no bots patch
     # there (another build against the same Xenia may have written one), and a bots build only its own
     extra = [path for path in kit_bots_patches(os.path.dirname(manifest['patch']))
@@ -337,7 +357,7 @@ def verify(args: argparse.Namespace) -> None:
     if extra:
         found = 'a normal build, but Xenia has' if not bots_patch else 'Xenia has another'
         raise ValueError(f'{found} bots experiment patch: {extra} (rebuild, or move it away)')
-    say(f'ok: {len(title_manifest["files"])} title files, the fixed Xenia and the patch file match the build'
+    say(f'ok: {len(title_manifest["files"])} title files, the fixed Xenia, the patch file and launch.cmd match the build'
         f'{" (with the bots experiment)" if bots_patch else "; no bots patch"}')
 
 
@@ -362,7 +382,7 @@ def main(argv: list[str]) -> int:
                               help='experiment: a second patch file with offline bots')
     for command in (build_parser, commands.add_parser('verify'), commands.add_parser('launch')):
         command.add_argument('--out', default=DEFAULT_OUT)
-        command.add_argument('--gpu', default='vulkan', choices=['vulkan', 'd3d12'])
+        command.add_argument('--gpu', default=GPUS[0], choices=GPUS)
     args = parser.parse_args(argv[1:])
     {'build': build, 'verify': verify, 'launch': launch}[args.command](args)
     return 0

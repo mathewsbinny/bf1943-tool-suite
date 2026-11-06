@@ -5,7 +5,9 @@ by one serving made-up files in 4 KB blocks with their SHA-1s), a stand-in xenia
 the three edits (menu, in-game menu, config) and the Xenia fix replaced by made-up ones, so the steps between them run
 as they do on the real release. Checked: a build extracts every file, writes the edited ones, the patch file, the fixed
 Xenia, the manifests and launch.cmd, and verify accepts it; launch verifies and starts the fixed Xenia (a recorder, not
-a process); the bots and team experiments; each refusal (an output already there, no xenia_canary.exe, another package
+a process); verify checks launch.cmd (in a normal, a d3d12 and a bots build: as written it passes, edited or missing it
+fails; a manifest from before the GPU backend was recorded passes with either one); the bots and team experiments; each
+refusal (an output already there, no xenia_canary.exe, another package
 or Xenia, a foreign bots patch, a package that is not one or holds other files, a broken block chain, a damaged block,
 a file that differs, an unsafe path, an edit or fix that differs from the verified result, a changed kit patch file, a
 patch file of other contents in Xenia) stops the build in words.
@@ -234,6 +236,44 @@ def test_build_refusals(tmp_path):
         (patches / real_patch['file']).write_text('# another patch\n', encoding='utf-8')
         assert 'pass --replace-patch' in build()
         assert build(replace_patch=True) is None
+
+
+def test_verify_launch_cmd(tmp_path):
+    """verify checks launch.cmd against the text the build writes for the manifest (before 2026-11-05 it did not look
+    at it, so an edited or deleted launch.cmd passed): in a normal, a d3d12 and a bots build, the file as written passes,
+    an edited one (another option, the other GPU backend) and a missing one fail in words."""
+    with made_up(tmp_path) as s:
+        for name, kw in (('normal', {}), ('d3d12', dict(gpu='d3d12')), ('bots', dict(experiment_bots=True))):
+            out = tmp_path / name
+            xeniakit.build(s.args(out, **kw))
+            launcher = out / 'launch.cmd'
+            written = launcher.read_bytes()
+            m = json.loads((out / 'kit-manifest.json').read_text(encoding='utf-8'))
+            assert m['gpu'] == kw.get('gpu', 'vulkan') and bool(m['bots_patch']) == (name == 'bots')
+            assert written == xeniakit.launcher_text(m, m['gpu']).encode(xeniakit.LAUNCHER_ENCODING)
+            verify = argparse.Namespace(out=str(out))
+            assert refusal(xeniakit.verify, verify) is None, name
+            launcher.write_bytes(written.replace(b'--license_mask=1', b'--license_mask=0'))
+            assert f'{launcher} differs from what the build wrote' in (refusal(xeniakit.verify, verify) or ''), name
+            other = 'vulkan' if m['gpu'] == 'd3d12' else 'd3d12'
+            launcher.write_bytes(xeniakit.launcher_text(m, other).encode(xeniakit.LAUNCHER_ENCODING))
+            assert 'differs from what the build wrote' in (refusal(xeniakit.verify, verify) or ''), f'{name}: other GPU'
+            launcher.unlink()
+            assert f'{launcher} is missing' in (refusal(xeniakit.verify, verify) or ''), name
+            launcher.write_bytes(written)
+            assert refusal(xeniakit.verify, verify) is None, name
+        # a manifest from before the GPU backend was recorded: launch.cmd for either backend passes, another text not
+        # (the last build's: the bots build left its patch in Xenia, which the normal builds' verify now refuses)
+        out = tmp_path / 'bots'
+        m = json.loads((out / 'kit-manifest.json').read_text(encoding='utf-8'))
+        del m['gpu']
+        (out / 'kit-manifest.json').write_text(json.dumps(m), encoding='utf-8')
+        verify = argparse.Namespace(out=str(out))
+        for gpu in xeniakit.GPUS:
+            (out / 'launch.cmd').write_bytes(xeniakit.launcher_text(m, gpu).encode(xeniakit.LAUNCHER_ENCODING))
+            assert refusal(xeniakit.verify, verify) is None, gpu
+        (out / 'launch.cmd').write_bytes(b'@echo off')
+        assert 'differs from what the build wrote' in (refusal(xeniakit.verify, verify) or '')
 
 
 def test_extract_and_paths(tmp_path):

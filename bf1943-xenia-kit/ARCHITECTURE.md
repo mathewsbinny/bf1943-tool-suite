@@ -182,7 +182,9 @@ project-opfor-bf1943 `TnT/Code/Engine/AI/Bots/navhost`) is the real host. Its `s
 
 **verify and launch.** `verify` compares these with their recorded SHA-256:
 - every title file, against `title-manifest.json`;
-- the fixed Xenia, the patch file and the bots patch (if one was built), against `kit-manifest.json`.
+- the fixed Xenia, the patch file and the bots patch (if one was built), against `kit-manifest.json`;
+- `launch.cmd`, against the text `launcher_text` gives for `kit-manifest.json`'s paths and GPU backend
+  (`launcher_problem`).
 
 It then checks the build's bot mode. A normal build allows no kit-made bots patch in Xenia's folder (found by its
 `bots.HEADER` first line, under any name). A bots build allows only its own. `launch` runs `verify`, then starts
@@ -205,6 +207,11 @@ lines that name paths (`launcher_text`).
 - **Bot mode is all or nothing.** `install_bots_patch` leaves exactly zero kit bots patches (a normal build) or
   exactly one, its own (a bots build). It refuses a foreign file under the kit's name before writing anything, and
   `verify` enforces the same rule.
+- **launch.cmd is what the build wrote.** `build` records its `--gpu` in `kit-manifest.json` (`gpu`), and `verify`
+  regenerates `launch.cmd` with `launcher_text` from the manifest and compares bytes: a missing or different file fails
+  it (and so `launch`). A manifest from before 2026-11-05 has no `gpu`, so either backend's text is accepted for it.
+  Before 2026-11-05 `verify` did not look at `launch.cmd` (a review found it), and a `launch.cmd` from a kit older than
+  the code-page switch (2026-10-31) now fails until you rebuild.
 - **Mailbox locks.** The state and flag records use two ticks, written in a fixed order with `lwsync`, and readers
   compare the closing tick with the opening one. Commands use an even/odd sequence with a stale-stamp limit. The
   layout and version 2 stay fixed: the guest-only copies and `HOLD` sit outside the host-visible block.
@@ -218,7 +225,7 @@ lines that name paths (`launcher_text`).
 |---|---|---|
 | `tests/test_xeniakit.py` | quick | `known.json` and the patch file, the port edit on a built ZIP, netfix on built PE files, verify's bot mode, `install_bots_patch`, `launch.cmd` under code pages 437 and 65001 |
 | `tests/test_xeniakit.py --game` | bf1943 | a full build from your package against a scratch Xenia folder; verify accepts it and notices a changed file; your Xenia folder is unchanged |
-| `tests/test_xeniakit_build.py` (pytest-style) | quick | `build`, `verify` and `launch` on a made-up package and Xenia, with every refusal |
+| `tests/test_xeniakit_build.py` (pytest-style) | quick | `build`, `verify` and `launch` on a made-up package and Xenia, with every refusal; verify's `launch.cmd` check (as written, edited, missing) in a normal, a d3d12 and a bots build |
 | `tests/test_menu_igm_edits.py` (pytest-style) | quick | both movie edits on made-up movies and bundles, and their refusals |
 | `tests/test_ppcasm.py` | quick | each encoding against capstone; `la`/`li32`; operand counts |
 | `tests/test_bots.py` | quick | the code fits and the hook branches; capstone decodes the mailbox accesses as the layout names them; an interpreter runs the command read, the record writes and the match cases against `guest_command`, `host_record` and `guest_record` |

@@ -133,8 +133,9 @@ def verify_bot_mode():
 
         def verify(bots_build):
             m = dict(made, title=title, bots_patch=bots_path if bots_build else None,
-                     bots_patch_sha256=hashlib.sha256(text).hexdigest() if bots_build else None)
+                     bots_patch_sha256=hashlib.sha256(text).hexdigest() if bots_build else None, gpu='vulkan')
             json.dump(m, open(os.path.join(d, 'kit-manifest.json'), 'w', encoding='utf-8'))
+            xeniakit.write_launcher(d, m, 'vulkan')
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
                     xeniakit.verify(argparse.Namespace(out=d))
