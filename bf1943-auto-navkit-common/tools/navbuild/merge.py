@@ -87,11 +87,12 @@ def merge_detailed(normal: 'StageResult', detailed: dict[str, Any], xoff: int, z
     detailed_graphs = {sec: graph for sec, graph in zip(sorted(fine_stage['sectors']), fine_stage['graphs'])}
     normal_view = dict(normal, info={sector: sector_info for sector, sector_info in normal['info'].items()
                                      if sector not in detailed_set})
-    # the normal stage's links between its own normal sectors are found again here with the detailed grid's pitch in
-    # the step rule (the normal stage's surfaces, the fine stage's grid): until 2026-10-31 this ran while
-    # set_pitch(DETAILED_PITCH) was in force, and the refactor kept the builds byte-identical. The 0.8 m grid
-    # (normal_level itself) is likely what was meant: to check
-    normal_links_level = normal_level.on_grid(fine_stage['level'].grid)
+    # the normal stage's links between its own normal sectors are found again here: with the settings'
+    # normal_links_own_grid by the normal grid's own step rule (normal_level), as the normal stage found them; without
+    # (NavKit's default) by the detailed grid's (the normal stage's surfaces, the fine stage's grid), which ran here
+    # while set_pitch(DETAILED_PITCH) was in force until 2026-10-31 and drops the links of sloped seams (config.py)
+    normal_links_level = (normal_level if settings.normal_links_own_grid
+                          else normal_level.on_grid(fine_stage['level'].grid))
     for here, there, mine in ((fine_stage, normal_view, detailed_graphs), (normal, fine_stage, normal_graphs)):
         for (X, Y), graph in mine.items():
             areas, mesh = here['info'][(X, Y)]['areas'], graph[2]

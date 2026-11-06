@@ -101,7 +101,9 @@ The constants in `navbuild/config.py` are documented defaults, and nothing chang
 come in as one frozen `Settings` object:
 - `navbuild.BFBC2` holds NavKit's defaults.
 - `soldier1943.SETTINGS` holds BF1943's soldier and the rules BF1943's levels needed: `area_cliff`, `border_seam_line`,
-  the seam links, `seam_gap_nodes`, and `column_sectors_cm=False`.
+  the seam links, `seam_gap_nodes`, `column_sectors_cm=True` (whole-centimetre sector lines, 2026-11-05) and
+  `normal_links_own_grid=True` (links between 0.8 m sectors use the 0.8 m slope rule in builds with detailed sectors,
+  2026-11-05; off for BFBC2 until measured with `navregress.py`).
 
 What a build collects as it runs is kept in its `BuildState`. The common README's
 [builder table](../bf1943-auto-navkit-common/README.md#the-builder-package-toolsnavbuild) gives every module in the package.

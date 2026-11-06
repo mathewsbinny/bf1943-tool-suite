@@ -28,8 +28,8 @@ Pipeline (research/KYNAPSE_SPEC.md sections 3 and 4):
 Detail features D and F are not generated (counts 0, allowed by the format). Detailed zones are built at pitch 0.2 in a
 second pass from their own sampling run and merged with the normal build. BF1943's settings (soldier1943.SETTINGS,
 passed as build(settings=...)) turn on AREA_CLIFF, BORDER_SEAM_LINE, JOIN_MARGIN, SEAM_FINE_LINKS, MIXED_OVERLAP
-(2026-10-26), SEAM_GAP_NODES (2026-10-24) and SEAM_FAR_LINKS (2026-10-29), and keep the float sector rule
-(COLUMN_SECTORS_CM; 2026-10-31).
+(2026-10-26), SEAM_GAP_NODES (2026-10-24), SEAM_FAR_LINKS (2026-10-29) and NORMAL_LINKS_OWN_GRID (2026-11);
+they took the float sector rule (COLUMN_SECTORS_CM off) until 2026-11 and NavKit's whole-centimetre one since.
 
 Configuration (2026-10-31): the constants in config.py are documented defaults, never changed at run time. What a
 build is made for comes in as a Settings (BFBC2 = NavKit's defaults); each stage's grid (pitch 0.8 or 0.2) is a Grid
@@ -66,7 +66,8 @@ from .config import (  # noqa: F401
     BORDER_OWNER, BORDER_SEAM_LINE, BRIDGE_UNION, CARRY_RADIUS, CLIP_TO_REFERENCE, COLUMN_SECTORS_CM, DEDUP_GRAPH_NODES,
     DETAILED_LINK_STEP, DETAILED_PITCH, DETOUR_LINK_ALL, DETOUR_MAX, DETOUR_PASSES, DETOUR_REPAIR, DETOUR_TRIGGER,
     DIST_EDGE_MAX, EDGE_SECTOR_RULE, EDGE_SECTOR_TILES, GABRIEL_EDGES, HEADER, JOIN_MARGIN, LADDER_ALL_GROUND,
-    LINK_RULE, LINK_STEP, MAX_AREA, MAX_WATER_DEPTH, MIXED_OVERLAP, NODE_COVER, ONE_WAY_PORTALS, ORDER_MIN_ISLAND,
+    LINK_RULE, LINK_STEP, MAX_AREA, MAX_WATER_DEPTH, MIXED_OVERLAP, NODE_COVER, NORMAL_LINKS_OWN_GRID, ONE_WAY_PORTALS,
+    ORDER_MIN_ISLAND,
     ORDER_NODE_MIN, ORDER_NODES, PITCH, RADIUS, RESOLUTION, SEAM_FAR_LINKS, SEAM_FINE_LINKS, SEAM_GAP_NODES,
     SECTOR_SAMPLES, SLOPE_MAX, SORT_NODES_BY_ID, SYMMETRIC_PORTALS, TILE, TILE_20M_SECTORS, TILES, WINDOW, Y_OFFSET,
     BuildError, BuildState, Grid, JoinScope, Settings, grid_at)

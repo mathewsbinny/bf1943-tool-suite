@@ -80,9 +80,9 @@ def stacked_columns(samples_path: str, xoff: int, zoff: int, slope_max: float = 
                     cm_sectors: bool = True) -> Counter[tuple[int, int]]:
     """{sector (X, Z): columns holding standable surfaces at least STACK_GAP apart} from 0.8 m samples. slope_max: the
     steepest standable surface (deg; BF1943's soldier: soldier1943.SLOPE_MAX). cm_sectors: a column's sector in whole
-    centimetres (navsample.column_sectors, as navbuild's default Settings); False: from its float position, as the
-    big-endian copy counted until 2026-10-31 and BF1943's builds still do (navbuild.Settings.column_sectors_cm) - on
-    Wake Island the two put a stacked column on either side of a sector line, the chosen sectors are the same."""
+    centimetres (navsample.column_sectors, as navbuild's default Settings and BF1943's since 2026-11); False: from its
+    float position, as the big-endian copy counted until 2026-10-31 and BF1943's builds until 2026-11 - on the four
+    BF1943 maps the two put stacked columns on either side of a sector line, the chosen sectors are the same."""
     s, _ = navsample.load(samples_path)
     ok = ((s.flags & 3) == 0) & (s.normal[:, 1] >= math.cos(math.radians(slope_max)) - 0.01)
     column_of = np.repeat(np.arange(s.nx * s.nz), np.diff(s.start))

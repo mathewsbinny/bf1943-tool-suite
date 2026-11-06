@@ -158,8 +158,16 @@ COLUMN_SECTORS_CM = True        # a sample column's 100 m sector from whole cent
                                 # sectors detailed.py counts stacked floors in, 2026-10-31); False: from its float
                                 # position, floor((min + i x pitch) / 100), which the float32 rounding of the header's
                                 # minimum and pitch puts on either side of a sector line (Wake Island: 17,172 of its
-                                # 2,149,362 0.8 m columns differ). BF1943's builds keep False (soldier1943.SETTINGS) so
-                                # they stay byte for byte what they were; True for them is a rebuild and an audit
+                                # 2,149,362 0.8 m columns differ). BF1943's builds took False until 2026-11 and True
+                                # since (soldier1943.SETTINGS; the rebuild dropped Guadalcanal's sliver sector 0c06)
+NORMAL_LINKS_OWN_GRID = False   # merge_detailed: the neighbour links between two normal sectors of a build with detailed
+                                # zones are found again after the merge; False (NavKit's default, every build until
+                                # 2026-11) by the detailed grid's step rule on the normal stage's surfaces - set_pitch(
+                                # DETAILED_PITCH) was still in force there until 2026-10-31, and the refactor kept it.
+                                # At 0.2 m the slope rule predicts a quarter of a 0.8 m column's rise, so sloped seams
+                                # lost their links (2026-11-03 BF1943 builds: 44 of Guadalcanal's 199 normal-to-normal
+                                # border portals, 84 of Coral Sea's 410; builds without detailed zones: none). True: the
+                                # normal grid's own rule, as the normal stage links them (soldier1943.SETTINGS, 2026-11)
 DETAILED_LINK_STEP = 0.3        # LINK_STEP in detailed zones: DICE's one-cell height steps inside its pitch-0.2 areas
                                 # (ONS_MP_002, 10,353 outline segments) p99 0.31, p99.9 0.42, max 0.49 m - about half its
                                 # pitch-0.8 values (p99 0.96, max 1.03), not a quarter: the same slope (0.15 m) cut sloped
@@ -186,6 +194,7 @@ class Settings:
     seam_gap_nodes: bool = SEAM_GAP_NODES
     mixed_overlap: float | None = MIXED_OVERLAP     # None: off
     column_sectors_cm: bool = COLUMN_SECTORS_CM     # False: the float sector rule (column_sectors)
+    normal_links_own_grid: bool = NORMAL_LINKS_OWN_GRID  # False: normal-to-normal links by the 0.2 m rule (merge)
 
 
 BFBC2 = Settings()                                  # NavKit's defaults

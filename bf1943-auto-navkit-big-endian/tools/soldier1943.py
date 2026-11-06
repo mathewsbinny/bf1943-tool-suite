@@ -95,7 +95,13 @@ SETTINGS = navbuild.Settings(
     # Wake Island's Japanese carrier, Coral Sea's islets); a module constant on in the big-endian copy until
     # 2026-10-31, a setting since the two copies were merged (the little-endian copy, BFBC2's, never had it)
     seam_gap_nodes=True,
-    # a column's sector from its float position, as every BF1943 build so far: the whole-centimetre rule NavKit now
-    # defaults to (navbuild.COLUMN_SECTORS_CM) moves columns on a sector line, so it waits for a rebuild and an audit
-    column_sectors_cm=False,
+    # a column's sector from whole centimetres, as NavKit's default (navbuild.COLUMN_SECTORS_CM; 2026-11). The float
+    # position BF1943's builds took until then put a column on a sector line in the sector before it: Guadalcanal's
+    # one row on z = -400.0 made a sector of its own (0c06: one area, 2 nodes, 12 cells 0c07 holds too). The rebuild
+    # changed nothing else on the four maps: the same detailed sectors, routes, islands, tight edges and pockets
+    column_sectors_cm=True,
+    # after the merge, the links between two normal sectors by the 0.8 m grid's own step rule, not the 0.2 m grid's
+    # (navbuild.NORMAL_LINKS_OWN_GRID; 2026-11: the 0.2 m rule left 44 of Guadalcanal's 199 and 84 of Coral Sea's 410
+    # normal-to-normal border portals without a neighbour link)
+    normal_links_own_grid=True,
 )

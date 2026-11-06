@@ -258,10 +258,12 @@ and the headroom band (0.5-1.8 m); the water depth goes in as `build(max_water_d
 BF1943's build rules (`ladder_all_ground`, and the seam and area rules of the 2026-10-26 entries above). Nothing
 rewrites NavKit's module constants at run time (`configure()` did until 2026-10-31). NavKit's other values were fitted
 to DICE's BFBC2 path data and are not checked on BF1943. Since the two variants' builders were merged (2026-10-31),
-two more settings say what this variant's copy always did: `seam_gap_nodes` on (the little-endian copy never had it),
-and `column_sectors_cm` off - a sample column's sector from its float position, as every BF1943 build so far; the
-whole-centimetre rule NavKit now defaults to moves columns on a sector line (17,172 of Wake Island's 0.8 m columns), so
-it waits for a rebuild and an audit (`detailed1943.py` counts stacked floors by the same rule).
+`seam_gap_nodes` says what this variant's copy always did (the little-endian copy never had it). Since 2026-11 BF1943
+takes NavKit's whole-centimetre sector rule (`column_sectors_cm`; until then a column's float position, which put a
+column on a sector line in the sector before it and gave Guadalcanal a one-row sector of its own; `detailed1943.py`
+counts stacked floors by the same rule, and chooses the same sectors), and `normal_links_own_grid`: after the merge
+with the detailed zones, the neighbour links between two 0.8 m sectors by the 0.8 m step rule (the 0.2 m rule NavKit
+still defaults to left 44 of Guadalcanal's 199 and 84 of Coral Sea's 410 such border portals unlinked).
 
 **Tools in this variant:** `detailed1943.py`, `levelobjects1943.py`, `navsample1943.py`, `routecheck1943.py`,
 `soldier1943.py`, `jumplinks1943.py`, `navaudit1943.py` with `navaudit1943_checks` (a package), `navexport1943.py`,

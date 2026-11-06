@@ -46,7 +46,7 @@ def choose(level_dir: str, samples_path: str, xoff: int, zoff: int, margin: floa
     """(sorted [(X, Z)], counts) - the detailed sectors of a BF1943 level."""
     flagged = flagged_sectors(level_dir, xoff, zoff, margin)
     # standable at BF1943's slope limit (45 deg), not NavKit's BFBC2 40; a column's sector by the rule BF1943's builds
-    # take (soldier1943.SETTINGS: the float position)
+    # take (soldier1943.SETTINGS: whole centimetres since 2026-11, the same chosen sectors on the four maps)
     counts = detailed.stacked_columns(samples_path, xoff, zoff, slope_max=soldier1943.SLOPE_MAX,
                                       cm_sectors=soldier1943.SETTINGS.column_sectors_cm)
     stacked = {sector for sector, columns in counts.items() if columns >= stacked_min}
