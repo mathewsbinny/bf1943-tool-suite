@@ -174,6 +174,17 @@ tests\               navkit_le.py's steps on a made-up OPFOR folder (install / r
   and 11 extra to 37 and 5 extra. The Onslaught maps were not measured (not on this PC). An `objects.json` from before
   this flag was extracted is refused: run `prepare` again; the detailed-sector cache is redone by itself. Levels need a
   new 0.2 m sampling run where their choice changed (`build` says so), and a regression run.
+- **`normal_links_own_grid` not yet measured on BFBC2 (2026-11-06).** The setting (common `navbuild.Settings`, on
+  for BF1943 since 2026-11-05) links two 0.8 m sectors of a build with detailed zones by the 0.8 m step rule. On BF1943
+  it linked every sloped seam and changed nothing else. The BFBC2 measurement (`navregress.py`'s builds and
+  measures with the setting off and on, written to a scratch folder) could not be made. Every one of the 15 levels'
+  `work\levels\<lv>\objects.json` in the OPFOR folder dates from 2026-10-15 to 10-22, before
+  `NeedsDetailedPathfinding` was extracted, so `detailed.py` refuses each build before it starts. The data comes back
+  with `navkit_le.py prepare <lv>` on each level; levels whose detailed choice changes then also need a new 0.2 m
+  sampling run. After that, a regression run with the setting off and on decides. Until then `navbuild.BFBC2` keeps
+  it off: no BFBC2 output changes untested. What to compare: normal-to-normal border portals facing a sector without
+  a link to it, nodes, edges and islands, `hpdcheck`, and every `navparity` measure. The BF1943 expectation is fewer
+  unlinked seam portals and the rest unchanged.
 
 ## Detailed zones, ladders and walkability rules (2026-10-21 / 22)
 

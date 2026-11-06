@@ -125,10 +125,25 @@ command lists, and checks each command's argument count against its `Usage` tabl
   position, then by nearest within 50 m.
 
 **SafeWrite.** `SafeWrite.Bytes` and `Text` are the only way any of the three programs writes a file.
-- `GameFolder` finds the game folder the way core `game1943.find_game` does: `BF1943_GAME`, else the Xenia kit's
-  `dist\xenon` under the suite the exe was built in. A folder counts only when it holds `levels\`.
-- `InGameFolder` resolves links and junctions and compares folder identities, so other casings, junctions and shares
-  are caught too.
+- `GameFolder` applies core `game1943.find_game`'s rule step for step (since 2026-11-06):
+  - the candidates, in order: `BF1943_GAME` when set and not empty, then the Xenia kit's `dist\xenon` under the suite
+    the exe was built in (find_game's suite is the one `game1943.py` sits in);
+  - a candidate counts when `<candidate>\levels`, joined as `os.path.join` does, opens through Windows as a folder,
+    links and junctions followed (`os.path.isdir`). The path goes to Windows as written: no .NET path function
+    rewrites it first;
+  - the first that counts is returned spelled as `os.path.abspath` spells it (`AbsPath`: `GetFullPathNameW`, then no
+    trailing separator). `\\?\`, 8.3 short names, upper case and junction names are kept as given.
+  - Before 2026-11-06 `Directory.Exists` and `Path.GetFullPath` decided. A `\\?\` spelling, which find_game takes, was
+    passed over, so the kit's folder (or none) was protected instead. A space before `\levels` was trimmed, so a folder
+    find_game passes over was protected.
+- The folder is looked up again for every write, as find_game is for every check. It was once per process, so a
+  window opened before the game folder existed never protected it.
+- `InGameFolder` resolves links and junctions and compares folder identities, so other casings, short names,
+  junctions and shares are caught too. It walks the folders above the target both as written and resolved;
+  `fbrb1943.contains` walks only the resolved ones. So a junction inside the game folder that leads out of it is
+  refused here and allowed there. That is the one deliberate difference: SafeWrite is the stricter of the two.
+- A `\\?\` target is written by its plain path (the .NET Framework 4 file functions refuse the prefix), and the guard
+  checks that very path. Before 2026-11-06 such a target failed with exit 2 wherever it lay.
 - A write goes to a `~xxxxxxx.tmp` file beside the target, is flushed, and then `MoveFileEx` replaces the target. A
   failed write deletes the temporary file and leaves the old one in place. A hard link at the target loses only its
   name.
@@ -187,8 +202,9 @@ undo depth the file on disk holds (`savedAt`, so an undo past a save marks the d
   and the BF1943 tier check it on every Wake Island partition.
 - **The C# reader and `dbx.py` agree.** They accept and refuse the same files, and `XmlExport.Convert` equals
   `dbx.to_xml`.
-- **The game folder is never written.** `SafeWrite` refuses it, whether reached directly, through a junction or under
-  another casing.
+- **The game folder is never written.** `SafeWrite` refuses it, whether reached directly, through a junction, a share,
+  an 8.3 or `\\?\` spelling or under another casing. It finds the folder by core `game1943.find_game`'s rule, so the
+  C# and Python tools protect the same folder.
 - **Writes are atomic.** A failed write leaves the old file and no temporary file behind.
 - **No stale exes.** `csbuild.ensure` refuses to hand out an exe built from other sources. Every `DbxEdit.*.cs` in this
   folder must be listed in `DbxEdit.rsp`, and the rsp must list nothing else.
@@ -201,9 +217,10 @@ undo depth the file on disk holds (`savedAt`, so an undo past a save marks the d
 | File | Tier | Guards |
 |---|---|---|
 | `tests/test_csharp_tools.py` | quick | `csbuild`'s rebuild reasons (on a fake tool); the rsp names every source and each `build.bat` compiles it; builds DbxEdit and LevelDiff; then runs `csharp_regressions.py` |
-| `tests/csharp_regressions.py` | (run by the above) | the reader against `dbx.py` (refusals, exit codes, equal XML); nesting limits; SafeWrite (a made-up `BF1943_GAME`, casing, junctions, hard links, failed writes); edit commands and their usage errors; the level check and `fixslots`; LevelDiff; DbxEditGUI through reflection |
+| `tests/csharp_regressions.py` | (run by the above) | the reader against `dbx.py` (refusals, exit codes, equal XML); nesting limits; SafeWrite (a made-up `BF1943_GAME`, casing, junctions, hard links, failed writes); the game lookup against `find_game` on every spelling of `BF1943_GAME` and of the target (`check_game_lookup`); edit commands and their usage errors; the level check and `fixslots`; LevelDiff; DbxEditGUI through reflection |
 | `tests/test_levelcheck1943.py` | bf1943 | the five shipped levels pass BF1943's rules; `--bundle` references and cull trees; 25 broken copies of Wake Island and five of its cull tree fail with their rule's message; rule detection; `fixslots` |
 | `../tests/test_bf1943_tools.py dbxedit` | bf1943 | every Wake Island partition round-trips byte for byte; the XML equals `dbx.py`'s; the level check passes; LevelDiff finds no change between a file and itself |
+| `../core/tests/test_game_folder_spellings.py` | quick | the Python side of the same rule: `find_game` and the fbrb tool's guard on every spelling of a made-up game folder |
 | `../core/tests/test_dbx_malformed.py`, `../core/tests/test_fuzz_core.py`, `../tests/test_fuzz_real.py` | quick, quick, bf1943 | `dbx.py` on damaged files, fuzzed on made-up files and on your partitions |
 
 ## Where to start

@@ -72,9 +72,9 @@ class Tools:
         self.env = {**os.environ, 'LOCALAPPDATA': tmp}
         self.env.pop('BF1943_GAME', None)
 
-    def run(self, *args, env=None, tool=None):
+    def run(self, *args, env=None, tool=None, cwd=None):
         r = subprocess.run([tool or self.exe, *args], capture_output=True, text=True, errors='replace', env=env or self.env,
-                           creationflags=NO_WINDOW, timeout=600)
+                           creationflags=NO_WINDOW, timeout=600, cwd=cwd)
         return r.returncode, r.stdout + r.stderr
 
     def folder(self, name):
@@ -597,6 +597,112 @@ def check_writes2(t):
             f'writes: 32 edits writing into one folder at once all succeed, no temporary file left ({codes.count(0)} of 32)')
 
 
+def short_name(path):
+    """Windows' 8.3 short spelling of an existing path, or None when the volume makes none (or it is the same)."""
+    import ctypes
+    buf = ctypes.create_unicode_buffer(1024)
+    n = ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024)
+    return buf.value if 0 < n < 1024 and buf.value.lower() != path.lower() else None
+
+
+def check_game_lookup(t):
+    """SafeWrite finds the game folder by core game1943.find_game's rule (2026-11-06): for each spelling of a made-up
+    BF1943_GAME, DbxEdit refuses a write into it exactly when find_game takes that spelling, and names the folder as
+    find_game returns it; a write into the folder through each spelling of its path is refused, a write outside is
+    written. Until 2026-11-06 a \\\\?\\ spelling, which find_game takes, protected the kit's folder instead (or none),
+    and the folder was looked up once per process."""
+    import re
+
+    from bfbc2core import game1943
+    root = t.folder('lookup')
+    game = os.path.join(root, 'Game Folder')
+    os.makedirs(os.path.join(game, 'levels', 'sub'))
+    outside = os.path.join(root, 'out')
+    os.makedirs(outside)
+    src = os.path.join(root, 'in.dbx')
+    open(src, 'wb').write(thing())
+    junction = os.path.join(root, 'j')
+    if subprocess.run(['cmd', '/c', 'mklink', '/J', junction, game], capture_output=True).returncode != 0:
+        junction = None
+        print('skip lookup: no junction could be made')
+    short = short_name(game)
+    if short is None:
+        print('skip lookup: the volume makes no 8.3 short names')
+    drive, rest = os.path.splitdrive(game)
+    unc = '\\\\localhost\\' + drive[0] + '$' + rest
+    if not os.path.isdir(unc):
+        unc = None
+        print('skip lookup: no administrative share \\\\localhost\\' + drive[0] + '$')
+    spellings = {'as made': game, 'a trailing separator': game + '\\', 'two trailing separators': game + '\\\\',
+                 'upper case': game.upper(), 'forward slashes': game.replace('\\', '/'), 'a trailing \\.': game + '\\.',
+                 'a ..': os.path.join(game, 'levels', '..'), '\\\\?\\': '\\\\?\\' + game,
+                 'relative (to the current folder)': 'Game Folder',
+                 # not game folders to Windows (find_game takes the next candidate): a space before \levels, quotes
+                 'a trailing space': game + ' ', 'quotes': '"' + game + '"'}
+    if short:
+        spellings['8.3 short name'] = short
+    if junction:
+        spellings['a junction'] = junction
+    if unc:
+        spellings['\\\\localhost\\' + drive[0] + '$'] = unc
+    target = os.path.join(game, 'levels', 'o.dbx')
+    saved = os.environ.get('BF1943_GAME')
+    cwd = os.getcwd()
+    try:
+        for what, spelling in spellings.items():
+            os.environ['BF1943_GAME'] = spelling
+            os.chdir(root)
+            try:
+                found = game1943.find_game()
+            except FileNotFoundError:
+                found = None
+            finally:
+                os.chdir(cwd)
+            takes = found is not None and os.path.samefile(found, game)
+            code, out = t.run('edit', src, target, 'partguid=' + G3, env={**t.env, 'BF1943_GAME': spelling}, cwd=root)
+            named = re.search(r'in the game folder \((.*), also through', out)
+            if takes:
+                t.check(code == 2 and named is not None and named.group(1) == found and not os.path.exists(target),
+                        f'lookup: BF1943_GAME spelled with {what}: refused, naming the folder as find_game does '
+                        f'(exit {code}, {named.group(1) if named else out.strip()[-160:]!r} / {found!r})')
+            else:
+                t.check(code == 0 and os.path.isfile(target),
+                        f'lookup: BF1943_GAME spelled with {what}: find_game does not take it ({found!r}), and DbxEdit '
+                        f'does not protect it either (exit {code}: {out.strip()[-160:]})')
+            if os.path.exists(target):
+                os.remove(target)
+    finally:
+        if saved is None:
+            os.environ.pop('BF1943_GAME', None)
+        else:
+            os.environ['BF1943_GAME'] = saved
+    env = {**t.env, 'BF1943_GAME': game}
+    paths = {'as made': target, 'upper case': target.upper(), 'forward slashes': target.replace('\\', '/'),
+             'a ..': os.path.join(game, 'levels', 'sub', '..', 'o.dbx'), '\\\\?\\': '\\\\?\\' + target,
+             'relative (to the current folder)': os.path.join('Game Folder', 'levels', 'o.dbx')}
+    if short:
+        paths['8.3 short name'] = os.path.join(short, 'levels', 'o.dbx')
+    if junction:
+        paths['a junction'] = os.path.join(junction, 'levels', 'o.dbx')
+    if unc:
+        paths['\\\\localhost\\' + drive[0] + '$'] = os.path.join(unc, 'levels', 'o.dbx')
+    for what, path in paths.items():
+        code, out = t.run('edit', src, path, 'partguid=' + G3, env=env, cwd=root)
+        t.check(code == 2 and 'game folder' in out and not os.path.exists(target),
+                f'lookup: a write into the game folder spelled with {what} is refused (exit {code})'
+                + ('' if 'game folder' in out else ': ' + out.strip()[-160:]))
+    for what, path in (('as made', os.path.join(outside, 'o.dbx')), ('\\\\?\\', '\\\\?\\' + os.path.join(outside, 'p.dbx')),
+                       ('relative', os.path.join('out', 'q.dbx'))):
+        code, out = t.run('edit', src, path, 'partguid=' + G3, env=env, cwd=root)
+        written = os.path.join(outside, os.path.basename(path))
+        t.check(code == 0 and os.path.isfile(written), f'lookup: a write outside the game folder spelled {what} is written '
+                                                      f'(exit {code}: {out.strip()[-160:]})')
+    t.check(os.listdir(os.path.join(game, 'levels')) == ['sub'], 'lookup: the made-up game folder is unchanged')
+    # (looked up for every write within one process: check_gui's late-game-refused)
+    if junction:
+        os.rmdir(junction)          # the junction only, not its target
+
+
 def check_level2(t):
     """BF1943's check: a null entry in a model group's MemberDatas is an error."""
     folder = t.folder('level2')
@@ -660,6 +766,19 @@ static class Harness
         notices.Clear();
         call("Save", new object[] { Path.Combine(game, "levels", "saved.dbx") });
         Console.WriteLine("save-game-refused=" + (!File.Exists(Path.Combine(game, "levels", "saved.dbx")) && notices.Count == 1));
+
+        // the game folder is looked up for every save, as find_game is for every check: a folder that becomes a game
+        // folder (gets levels\) while the window is open is protected from then on (it was looked up once per process)
+        string late = game + "-late";
+        Directory.CreateDirectory(late);
+        Environment.SetEnvironmentVariable("BF1943_GAME", late);
+        notices.Clear();
+        call("Save", new object[] { Path.Combine(late, "before.dbx") });
+        bool lateBefore = File.Exists(Path.Combine(late, "before.dbx")) && notices.Count == 0;
+        Directory.CreateDirectory(Path.Combine(late, "levels"));
+        call("Save", new object[] { Path.Combine(late, "after.dbx") });
+        Console.WriteLine("late-game-refused=" + (lateBefore && !File.Exists(Path.Combine(late, "after.dbx")) && notices.Count == 1));
+        Environment.SetEnvironmentVariable("BF1943_GAME", game);
 
         // the edit script's commands for a decimal value, a reference and a two-line text
         var doc2 = get("doc");
@@ -771,7 +890,9 @@ def check_gui(t):
                       ('bak-other-spelling', 'saving over the opened file under another spelling of its path keeps a .bak'),
                       ('saved-clean', 'a saved document is not modified'),
                       ('undo-past-save-modified', 'an undo past a save marks the document modified'),
-                      ('save-game-refused', 'saving into the game folder is refused, with a message')):
+                      ('save-game-refused', 'saving into the game folder is refused, with a message'),
+                      ('late-game-refused', 'a folder that becomes the game folder while the window is open is refused '
+                                            'from then on (looked up for every save, as find_game is)')):
         t.check(got.get(key) == 'True', f'gui: {what}' + ('' if key in got else ': ' + (r.stdout + r.stderr).strip()[-300:]))
     want = {'cmd-value': f'setfield={G1}|Scale|2', 'cmd-ref': f'setfield={G1}|Target|{G2}', 'cmd-bool': f'setfield={G1}|On|true'}
     t.check(all(got.get(k) == v for k, v in want.items()), f'gui: the edit script records setfield for a value, a reference and a bool {[got.get(k) for k in want]}')
@@ -796,4 +917,4 @@ def check_gui(t):
 
 
 ALL = (check_reader, check_nesting, check_writes, check_edit, check_level, check_leveldiff, check_values, check_import_xml,
-       check_writes2, check_level2, check_gui)
+       check_writes2, check_game_lookup, check_level2, check_gui)

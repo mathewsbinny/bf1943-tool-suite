@@ -32,9 +32,11 @@ level unlike every shipped one.
    The game folder is only read; the copy goes elsewhere.
 
 **The game folder is never written.** DbxEdit, DbxEditGUI and LevelDiff refuse to write into the BF1943 game folder
-(`BF1943_GAME`, else the Xenia kit's `dist\xenon`, as core `game1943.find_game` finds it), however the path is cased
-and through any link, junction or share (`\\localhost\C$\...`: since 2026-10-31 the folders are compared by identity -
-volume serial number and file index - not only by name): `xml` of a partition still in the game folder fails (its
+(`BF1943_GAME`, else the Xenia kit's `dist\xenon`, found by core `game1943.find_game`'s rule and spelled as it
+returns it - since 2026-11-06 step for step, `\\?\` and 8.3 spellings included, and looked up again for every write;
+ARCHITECTURE.md "SafeWrite"), however the path is cased or spelled and through any link, junction or share
+(`\\localhost\C$\...`: since 2026-10-31 the folders are compared by identity - volume serial number and file index -
+not only by name): `xml` of a partition still in the game folder fails (its
 `.xml` would go beside it), and an output there is refused. Every file is written beside its target (as
 `~<7 hex digits>.tmp`, short so that a target within the 260-character limit fits) and moved into place, so a failed
 write leaves the old file and a hard link at the output is replaced, never written through (writing over the input is
@@ -411,6 +413,13 @@ checks of `tests\csharp_regressions.py` (its docstring lists them; each failed o
   deep nesting;
 - the write guards with a made-up game folder (`BF1943_GAME`): cased otherwise, through a junction, a hard link, a
   failed write, `.dbxold`;
+- the game lookup (`check_game_lookup`, 2026-11-06): for each spelling of `BF1943_GAME` (trailing separators, upper
+  case, forward slashes, `\.`, `..`, `\\?\`, relative, 8.3 short name, junction, `\\localhost\C$`, a trailing space,
+  quotes) a write into the folder is refused exactly when core `find_game` takes that spelling, and the refusal names
+  the folder as find_game returns it. A write through each spelling of the target is refused, and one outside is
+  written. In the window (`late-game-refused`), a folder that becomes the game folder while it is open is refused from
+  then on. Core's `tests/test_game_folder_spellings.py` checks the Python side (find_game and the fbrb tool's guard)
+  on the same spellings;
 - the edit commands (`setfield` types, empty or missing arguments, `drop`);
 - the level check (a 100,000-node cull tree, the tiling without `ReferencedObject`, `--slots-from`) and `fixslots`;
 - LevelDiff (partition and instance attributes, an integer turned decimal, exit codes, GUID pairing, a linear `--all`);
