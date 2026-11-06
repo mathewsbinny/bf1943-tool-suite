@@ -49,6 +49,13 @@ Option: `--game <dist\xenon folder>` (default: `BF1943_GAME`, else `bf1943-xenia
   preparation's is refused, and so is a `--pitch` other than 0.8 or 0.2. Levels prepared before 2026-10-30 have no
   digest: prepare and sample them again. The audit and the RSNV export read the game copy the level was prepared
   from.
+  Since 2026-11-06 these rules are one stage table (`STAGES` in `tools
+avkitjson1943.py`, listed in its docstring and
+  in [ARCHITECTURE.md](ARCHITECTURE.md#the-stamps-in-navkitjson)). For each stage it gives the stages it needs, the
+  stages it drops with, the keys it owns and how it is checked. Every step asks `nj.stale` and writes through
+  `nj.record_stage` or `nj.drop_stage`, so recording a stage drops every stage after it. Recording the build drops
+  the check, the export and every vehicle world. The refusals are worded as before, and the levels' existing
+  `navkit.json` files are still accepted.
 - **The window** (`navkitGUI.pyw`): a level list, the steps Prepare, Sample, Build and Check with a mark for each
   step done, **Run all (1-4)**, **Cancel** (ends the running step and its samplers), **Show in 3D** (opens the
   Navigation Studio on the build) and **Open output folder**.

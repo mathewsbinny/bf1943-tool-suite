@@ -32,7 +32,8 @@ with another --game than the preparation's (another folder, not another spelling
 only a build of the current preparation that was checked, and stamps the export at <level>.rsnv ('exported', with the
 build's hpd_sha256); the vehicle steps stamp theirs under 'vehicles' (vehicleclasses1943.py: collision, samples per
 class, worlds per class). A new preparation drops every stamp; a new sampling or build drops the export's and the
-vehicle worlds'. Every step writes navkit.json by a fresh read-modify-write of its own keys (navkitjson1943.update,
+vehicle worlds'. These rules are one table, navkitjson1943.STAGES: a step asks nj.stale() and writes through
+nj.record_stage() / nj.drop_stage(), which drop every stage after the one recorded. Every step writes navkit.json by a fresh read-modify-write of its own keys (navkitjson1943.update,
 under navkit.json.lock, replacing the file whole), so the stamps another step wrote while it ran stay (those it
 invalidates go again when it finishes); a step whose inputs changed while it ran (prepared again, a sampling pass it
 read made again) is not stamped. prepare empties objects\\ first, so no file of an earlier preparation is read as this
@@ -119,19 +120,19 @@ def same_game(s, game, lv):
 
 def preparation(s, lv):
     """The current preparation's digest; a level prepared before the stamps were kept has none."""
-    if not s.get('preparation'):
+    if nj.stale(s, 'prepared'):
         raise NavKitError(f'{lv}: prepared without a preparation stamp (an older NavKit): prepare again (navkit.py prepare {lv})')
     return s['preparation']
 
 
 def invalidate(s, *stages):
-    for k in stages:
-        s.pop(k, None)
-    if 'built' in stages:
-        # the export of the build, and the vehicle worlds built on it, go with it (vehicleclasses1943's stamps)
-        s.pop('build_from', None)
-        s.pop('exported', None)
-        (s.get('vehicles') or {}).pop('worlds', None)
+    """Drops stages of the stage table (navkitjson1943.drop_stage: each with every stage after it). Kept for callers
+    from before the table (2026-11-06); the steps call drop_stage / record_stage. A name that is no stage is a key."""
+    for stage in stages:
+        if stage in nj.STAGES:
+            nj.drop_stage(s, stage)
+        else:
+            s.pop(stage, None)
 
 
 def level_of(game, name):
@@ -181,10 +182,11 @@ def prepare(game, lv, log=print):
     files = {n: sha256_file(os.path.join(p['objects'], n)) for n in sorted(os.listdir(p['objects']))
              if os.path.isfile(os.path.join(p['objects'], n))}
     # a new settings file: the samples, build and check of an earlier preparation lose their stamps (their files
-    # stay, and the steps refuse them: their stamps carry another preparation)
-    s = dict(level=lv, game=game, prepared=time.strftime('%Y-%m-%d %H:%M'), sea_level=sea, sector_offsets=offsets,
-             objects_sha256=files)
-    s['preparation'] = preparation_id(s)
+    # stay, and the steps refuse them: their stamps carry another preparation). The 'prepared' stage of the table.
+    values = dict(level=lv, game=game, prepared=time.strftime('%Y-%m-%d %H:%M'), sea_level=sea,
+                  sector_offsets=offsets, objects_sha256=files)
+    values['preparation'] = preparation_id(values)
+    s = nj.record_stage({}, 'prepared', values)
     save_settings(lv, s)
     log(f'{lv}: prepared in {time.time() - t0:.0f} s: sea level {sea} m, sector offsets {offsets[0]} / {offsets[1]}')
     return s
@@ -254,10 +256,9 @@ def sample(game, lv, pitch=None, log=print):
     t0 = time.time()
     if pitch in (None, 0.8):
         def start(st):
-            # stamps dropped before the run: an interrupted run leaves none (the 0.2 m pass's sectors come from this one)
-            invalidate(st, 'sampled', 'built', 'checked', 'detailed_sectors', 'detailed_counts')
-            for k in ('0.8', '0.2'):
-                (st.get('samples') or {}).pop(k, None)
+            # stamps dropped before the run: an interrupted run leaves none (the 0.2 m pass's sectors come from this
+            # one: it drops with it, and so do the build, the check, the export and the vehicle worlds)
+            nj.drop_stage(st, 'sampled')
         stamp(lv, prep, 'sample', start)
         log(f'{lv}: sampling at 0.8 m (BF1943\'s soldier, and a 0.6 m step)')
         run_parallel([('0.8 m', base + [os.path.join(sm, 'samples.bin')] + sea, os.path.join(sm, 'sample.log')),
@@ -266,27 +267,20 @@ def sample(game, lv, pitch=None, log=print):
         chosen, counts = detailed1943.choose(o, os.path.join(sm, 'samples.bin'), xoff, zoff)
 
         def done(st):
-            # a build or check stamped meanwhile read the samples as they were rewritten: theirs go again
-            invalidate(st, 'sampled', 'built', 'checked')
-            st['detailed_sectors'] = [f'{x:02x}{z:02x}' for x, z in chosen]
-            st['detailed_counts'] = counts
-            passes = st.setdefault('samples', {})
-            passes.pop('0.2', None)
-            passes['0.8'] = dict(preparation=prep, game=st['game'], id=uuid.uuid4().hex,
-                                 time=time.strftime('%Y-%m-%d %H:%M'))
-            st['sampled'] = passes['0.8']['time']
+            # a build or check stamped meanwhile read the samples as they were rewritten: theirs go again (recording
+            # the stage drops every stage after it)
+            pass_08 = dict(preparation=prep, game=st['game'], id=uuid.uuid4().hex, time=time.strftime('%Y-%m-%d %H:%M'))
+            nj.record_stage(st, 'sampled', {'detailed_sectors': [f'{x:02x}{z:02x}' for x, z in chosen],
+                                            'detailed_counts': counts, 'samples/0.8': pass_08,
+                                            'sampled': pass_08['time']})
         s = stamp(lv, prep, 'sample', done)
         log(f'{lv}: {len(chosen)} detailed sectors ({counts})')
     if pitch in (None, 0.2):
         sectors = s.get('detailed_sectors')
         s8 = (s.get('samples') or {}).get('0.8')
-        if sectors is None or (s8 or {}).get('preparation') != prep:
+        if sectors is None or nj.stale(s, 'sampled'):        # the pass and the sectors it chose
             raise NavKitError(f'{lv}: the 0.8 m pass first (navkit.py sample {lv} --pitch 0.8)')
-
-        def start(st):
-            invalidate(st, 'built', 'checked')
-            (st.get('samples') or {}).pop('0.2', None)
-        stamp(lv, prep, 'sample', start)
+        stamp(lv, prep, 'sample', lambda st: nj.drop_stage(st, 'detailed'))
         if sectors:
             arg = f'--sectors={xoff},{zoff}:' + ','.join(sectors)
             log(f'{lv}: sampling the {len(sectors)} detailed sectors at 0.2 m')
@@ -301,11 +295,10 @@ def sample(game, lv, pitch=None, log=print):
             if (st.get('samples') or {}).get('0.8') != s8 or st.get('detailed_sectors') != sectors:
                 raise NavKitError(f'{lv}: sampled at 0.8 m again while the 0.2 m pass ran: its samples are not stamped '
                                   f'(navkit.py sample {lv} --pitch 0.2)')
-            invalidate(st, 'built', 'checked')
-            passes = st.setdefault('samples', {})
-            passes['0.2'] = dict(preparation=prep, game=st['game'], sectors=list(sectors), id=uuid.uuid4().hex,
-                                 time=time.strftime('%Y-%m-%d %H:%M'))
-            st['sampled'] = passes['0.2']['time']
+            pass_02 = dict(preparation=prep, game=st['game'], sectors=list(sectors), id=uuid.uuid4().hex,
+                           time=time.strftime('%Y-%m-%d %H:%M'))
+            nj.record_stage(st, 'detailed', {'samples/0.2': pass_02})
+            st['sampled'] = pass_02['time']         # the time of the last pass ('sampled' is the 0.8 m stage's key)
         stamp(lv, prep, 'sample', done)
     log(f'{lv}: sampled in {(time.time() - t0) / 60:.0f} min')
 
@@ -321,22 +314,23 @@ def build(game, lv, log=print):
     o, sm = p['objects'], p['samples']
     passes = s.get('samples') or {}
     s8, s2 = passes.get('0.8'), passes.get('0.2')
-    if s8 is None or not os.path.isfile(os.path.join(sm, 'samples.bin')):
+    why = nj.stale(s, 'sampled', files={'samples': os.path.join(sm, 'samples.bin')})
+    if why and why.reason == 'missing':
         raise NavKitError(f'{lv}: not sampled yet (navkit.py sample {lv})')
-    if s8.get('preparation') != prep or s8.get('game') != s['game']:
+    if why:
         raise NavKitError(f'{lv}: the samples are from another preparation: sample again (navkit.py sample {lv})')
     xoff, zoff = s['sector_offsets']
     sectors = {(int(k[:2], 16), int(k[2:], 16)) for k in s.get('detailed_sectors') or ()}
     sectors_key = s.get('detailed_sectors')
     detailed = None
-    current02 = s2 is not None and s2.get('preparation') == prep and s2.get('sectors') == s.get('detailed_sectors')
+    current02 = nj.is_current(s, 'detailed')
     if sectors and current02 and os.path.isfile(os.path.join(sm, 'samples_02.bin')):
         detailed = {'samples': os.path.join(sm, 'samples_02.bin'), 'high': os.path.join(sm, 'samples_02_high.bin'),
                     'sectors': sectors}
     elif sectors:
         log(f'{lv}: no 0.2 m samples of this preparation: the detailed sectors are built at 0.8 m (navkit.py sample '
             f'{lv} --pitch 0.2)')
-    stamp(lv, prep, 'build', lambda st: invalidate(st, 'built', 'checked'))
+    stamp(lv, prep, 'build', lambda st: nj.drop_stage(st, 'built'))      # with the check, export and vehicle worlds
     wpath = os.path.join(o, 'water_mesh.res')
     # the water of this preparation only: none when it found no water (sea_level None)
     mesh = water.read_mesh(wpath) if soldier1943.has_water(s) and os.path.isfile(wpath) else None
@@ -380,12 +374,13 @@ def build(game, lv, log=print):
         if now.get('0.8') != s8 or (detailed is not None and (now.get('0.2') != s2
                                                                or st.get('detailed_sectors') != sectors_key)):
             raise NavKitError(f'{lv}: sampled again while the build ran: it is not stamped (navkit.py build {lv})')
-        invalidate(st, 'built', 'checked')          # a check, export or vehicle world stamped meanwhile is of the old build
-        st['built'] = time.strftime('%Y-%m-%d %H:%M')
-        st['build_from'] = dict(preparation=prep, game=st['game'], samples_08=s8['time'], samples_08_id=s8.get('id'),
-                                samples_02=s2['time'] if detailed else None,
-                                samples_02_id=s2.get('id') if detailed else None, hpd_sha256=hpd_sha256,
-                                jump_links_sha256=jump_sha256)
+        # recorded: a check, export or vehicle world stamped meanwhile is of the old build, and goes
+        nj.record_stage(st, 'built', {
+            'built': time.strftime('%Y-%m-%d %H:%M'),
+            'build_from': dict(preparation=prep, game=st['game'], samples_08=s8['time'], samples_08_id=s8.get('id'),
+                               samples_02=s2['time'] if detailed else None,
+                               samples_02_id=s2.get('id') if detailed else None, hpd_sha256=hpd_sha256,
+                               jump_links_sha256=jump_sha256)})
     stamp(lv, prep, 'build', done)
     log(f'{lv}: built {p["hpd"]} in {(time.time() - t0) / 60:.0f} min')
 
@@ -397,15 +392,16 @@ def check(game, lv, log=print):
     s = settings(lv)
     same_game(s, game, lv)
     prep = preparation(s, lv)
-    if not os.path.isfile(p['hpd']) or 'built' not in s:
+    why = nj.stale(s, 'built', files={'hpd': p['hpd']})
+    if why and why.reason == 'missing':
         raise NavKitError(f'{lv}: not built yet (navkit.py build {lv})')
-    built = s.get('build_from') or {}
-    if built.get('preparation') != prep:
+    if why and why.reason == 'stale':
         raise NavKitError(f'{lv}: the build is from another preparation: build again (navkit.py build {lv})')
-    if not built.get('hpd_sha256') or nj.sha256(p['hpd']) != built['hpd_sha256']:
+    if why:                                 # no .hpd SHA-256 stamped, or another .hpd
         raise NavKitError(f'{lv}: {os.path.basename(p["hpd"])} is not the build stamped in navkit.json (built by an older '
                           f'NavKit, or replaced): build again (navkit.py build {lv})')
-    stamp(lv, prep, 'check', lambda st: invalidate(st, 'checked'))
+    built = s['build_from']
+    stamp(lv, prep, 'check', lambda st: nj.drop_stage(st, 'checked'))
     structure = hpdcheck.check(p['hpd'])
     bad = {k: v for k, v in structure.items() if v}
     r = routecheck1943.check(p['hpd'], lv, game)
@@ -422,7 +418,7 @@ def check(game, lv, log=print):
     def done(st):
         if 'built' not in st or (st.get('build_from') or {}).get('hpd_sha256') != built['hpd_sha256']:
             raise NavKitError(f'{lv}: built again while the check ran: it is not stamped (navkit.py check {lv})')
-        st['checked'] = time.strftime('%Y-%m-%d %H:%M') + (' ok' if ok else ' FAILED')
+        nj.record_stage(st, 'checked', {'checked': time.strftime('%Y-%m-%d %H:%M') + (' ok' if ok else ' FAILED')})
     stamp(lv, prep, 'check', done)
     return ok
 

@@ -170,7 +170,10 @@ def check(lv: str, classes: Sequence[str] = CLASSES, log: Log = print,
             else:
                 report.setdefault('notes', []).append(f'{cls}: not built')
             continue
-        if not vc.current(st, 'worlds', dict(want, soldier=report['soldier world']['sha256']), cls):
+        # the stage table's vehicle_worlds: the stamp of these inputs and soldier world, and the file the stamped one
+        world_stale = nj.stale(st, 'vehicle_worlds', cls, want=dict(want, soldier=report['soldier world']['sha256']),
+                               files={'world': path})
+        if world_stale and world_stale.reason != 'file':
             stale = (f'{cls}: {os.path.basename(path)} is not built from the current preparation, {cls} parameters and '
                      f'soldier world: build it again (navexport_vehicles1943.py {lv} --classes {cls})')
             # as a missing world: a problem when asked for, else a note (2026-10-30: a world a soldier rebuild left
@@ -180,8 +183,7 @@ def check(lv: str, classes: Sequence[str] = CLASSES, log: Log = print,
             else:
                 report.setdefault('notes', []).append(stale)
             continue
-        digest = sha256(path)
-        if stamp.get('sha256') != digest:
+        if world_stale:
             # 2026-10-30 second review: the stamp named the inputs only, so another file put in the world's place (a
             # valid world of another level, radius 99) passed with no problem
             why = (f'{cls}: {os.path.basename(path)} is not the world its builder wrote (its SHA-256 is not the stamped '
@@ -191,6 +193,7 @@ def check(lv: str, classes: Sequence[str] = CLASSES, log: Log = print,
             else:
                 report.setdefault('notes', []).append(why)
             continue
+        digest = sha256(path)
         vehicle = rsnv.load(path)
         problems += [f'{cls}: {x}' for x in world_identity(vehicle, lv, cls)]
         invalid = vehicle.validate()

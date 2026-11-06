@@ -64,8 +64,8 @@ def load(lv: str, log: 'navaudit1943.Log' = print) -> 'AuditContext':
     import spawnmap
     from bfbc2core import level1943, navdata
     from bfbc2core import water as water_mod
-    paths = navaudit1943.level_paths(lv)
-    st = navaudit1943.current_build(lv)     # the checked build of the current preparation only (2026-10-30 review)
+    level = navaudit1943.open_level(lv)     # the checked build of the current preparation only (2026-10-30 review)
+    paths, st = level.paths, level.st
     game = game1943.find_game(st.get('game'))         # the copy the level was prepared from (2026-10-30: the default)
     level_game = game1943.Game(game, lv)
     hf_name = f'terrains/{lv}/{lv}.heightfield-000.res'
@@ -87,12 +87,11 @@ def load(lv: str, log: 'navaudit1943.Log' = print) -> 'AuditContext':
     water = water_mod.read_mesh(water_path) if has_mesh else None
     masks = os.path.join(paths['audit'], 'masks')
     grids = {}
-    hashes = navaudit1943.Hashes(lv)
+    hashes = level.hashes
     # every mask must be of the samples and build on disk (their SHA-256, stored in it): 2026-10-30 review, a base mask
     # was checked only by its surface count and the rule-off masks not at all
-    for which, src in (('normal', 'samples.bin'), ('detailed', 'samples_02.bin')):
-        if which == 'detailed' and not navaudit1943.detailed_current(st):
-            log(f'{lv}: the build has no 0.2 m samples of this preparation: no detailed grid')
+    for which, (src, _high) in navaudit1943.STAGE_SAMPLES.items():
+        if not level.built_from(which, ': no detailed grid', log):
             continue
         path = os.path.join(masks, f'{which}_base.npz')
         if not os.path.isfile(path):
@@ -102,7 +101,7 @@ def load(lv: str, log: 'navaudit1943.Log' = print) -> 'AuditContext':
         if why:
             raise nj.NavKitError(f'{why}: make the masks again (navaudit1943.py masks {lv})')
         base_mask = np.load(path)
-        s = navaudit1943.load_samples(os.path.join(paths['samples'], src))
+        s = navaudit1943.load_samples(level.samples(which))
         if int(base_mask['surfaces']) != len(s.y):
             raise nj.NavKitError(f'{path}: made from another sampling run ({int(base_mask["surfaces"])} surfaces, '
                                  f'now {len(s.y)})')

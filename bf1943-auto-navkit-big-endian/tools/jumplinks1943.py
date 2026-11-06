@@ -512,10 +512,9 @@ def ship_ledge_links(s: 'Samples', ships: Iterable[Box], terrain: Terrain,
 
 def current_detailed(st: Mapping[str, Any]) -> bool:
     """Whether navkit.json stamps a 0.2 m pass of the current preparation over the current detailed sectors (what
-    navkit.py build builds the detailed sectors from)."""
-    pass_02 = (st.get('samples') or {}).get('0.2') or {}
-    return (bool(st.get('preparation')) and pass_02.get('preparation') == st['preparation']
-            and pass_02.get('sectors') == st.get('detailed_sectors'))
+    navkit.py build builds the detailed sectors from): the stage table's 'detailed'."""
+    import navkitjson1943 as nj
+    return nj.is_current(st, 'detailed')
 
 
 def level_links(lv: str, log: Log = print, game: str | None = None, detailed: bool | None = None) -> list[Link]:

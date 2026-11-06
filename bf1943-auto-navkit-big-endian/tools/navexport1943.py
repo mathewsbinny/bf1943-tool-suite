@@ -596,14 +596,15 @@ def stamp_export(lv: str, st: Mapping[str, Any], path: str) -> bool:
     stamped = []
 
     def change(now: dict[str, Any]) -> None:
-        if not build or now.get('preparation') != st['preparation'] \
-                or (now.get('build_from') or {}).get('hpd_sha256') != build:
+        # the stage table's 'exported': it needs the build, the one exported (not one made since), and a passed check
+        if not build or now.get('preparation') != st['preparation'] or nj.stale(now, 'built') \
+                or now['build_from']['hpd_sha256'] != build:
             return
         if not nj.check_passed(now):
             return
-        now['exported'] = {'preparation': st['preparation'], 'built': now.get('built'), 'hpd_sha256': build,
-                           'sha256': digest,
-                           'exporter': EXPORTER_VERSION.split(' ')[0]}
+        nj.record_stage(now, 'exported', {'exported': {
+            'preparation': st['preparation'], 'built': now.get('built'), 'hpd_sha256': build, 'sha256': digest,
+            'exporter': EXPORTER_VERSION.split(' ')[0]}})
         stamped.append(True)
     nj.update(lv, change)
     return bool(stamped)

@@ -135,7 +135,8 @@ def value(cls: str, key: str) -> Any:
 # ('params': for the samples only those the sampler reads, SAMPLING_PARAMS; for a world every one), a world's also the
 # SHA-256 of the soldier world it was built on ('soldier'), or 'absent' with why when the level has no such world (no
 # spawns of the class, no water). navkit.py prepare writes a new navkit.json (every stamp goes); a soldier sampling or
-# build drops the worlds' stamps (navkit.invalidate); the next step needs its input's stamp to be current, and refuses
+# build drops the worlds' stamps, a class's samples its world's (the stage table: navkitjson1943.STAGES,
+# vehicle_collision, vehicle_samples, vehicle_worlds); the next step needs its input's stamp to be current, and refuses
 # or makes it again. Every write is a fresh read-modify-write (navkitjson1943.update).
 
 class StaleError(RuntimeError):
@@ -162,7 +163,7 @@ def sampling_params_id(cls: str) -> str:
 def inputs(st: 'nj.Settings', lv: str, cls: str | None = None, sampling: bool = False, **extra: Any) -> Stamp:
     """The stamp a vehicle step of the current preparation makes (and the one its next step needs); sampling: the
     class's samples' (their parameters only those the sampler reads)."""
-    if not st.get('preparation'):
+    if nj.stale(st, 'prepared'):
         raise StaleError(f'{lv}: prepared without a preparation stamp (an older NavKit): prepare again '
                          f'(navkit.py prepare {lv})')
     out = {'preparation': st['preparation'], 'game': st.get('game')}
@@ -178,19 +179,22 @@ def stamp(st: Mapping[str, Any], kind: str, cls: str | None = None) -> Any:
     return (of_kind or {}).get(cls) if cls is not None else of_kind
 
 
-def current(st: Mapping[str, Any], kind: str, want: Mapping[str, Any], cls: str | None = None) -> bool:
-    """Whether the step's stamp in st is want (its time and what it found aside)."""
-    have = stamp(st, kind, cls)
-    return have is not None and all(have.get(key) == wanted for key, wanted in want.items())
+STAGE_OF = {'collision': 'vehicle_collision', 'samples': 'vehicle_samples', 'worlds': 'vehicle_worlds'}
+"""Each vehicle step's stage in navkitjson1943.STAGES."""
+
+
+def current(st: Mapping[str, Any], kind: str, want: Mapping[str, Any], cls: str | None = None,
+            file: str | None = None) -> bool:
+    """Whether the step's stamp in st is want (its time and what it found aside): the stage table's pull
+    (navkitjson1943.is_current). file: the step's file (the samples: there; a world: the one stamped)."""
+    files = {} if file is None else {'vehicle_samples' if kind == 'samples' else 'world': file}
+    return nj.is_current(st, STAGE_OF[kind], cls, want=want, files=files)
 
 
 def soldier_changed(st: Mapping[str, Any], lv: str, soldier: str) -> str | None:
     """Why a world built on the soldier world whose SHA-256 is soldier may not be stamped now (None when it may): that
-    file must still be the export of the current, passed build (navkit.json 'exported' and 'build_from')."""
-    built = st.get('build_from') or {}
-    exported = st.get('exported') or {}
-    if 'built' not in st or not built.get('hpd_sha256') or exported.get('hpd_sha256') != built['hpd_sha256'] \
-            or exported.get('sha256') != soldier or not nj.check_passed(st):
+    file must still be the export of the current, passed build (the stage table's 'exported')."""
+    if nj.stale(st, 'exported', digests={'rsnv': soldier}):
         return (f'{lv}: the soldier world changed while the vehicle world was built (built, checked or exported again): '
                 f'it is not stamped; build it again (navexport_vehicles1943.py {lv})')
     return None
@@ -217,11 +221,8 @@ def record(lv: str, kind: str, value: Mapping[str, Any], cls: str | None = None,
             if why:
                 refused.append(why)
                 return
-        vehicles = st.setdefault('vehicles', {})
-        if cls is None:
-            vehicles[kind] = value
-        else:
-            vehicles.setdefault(kind, {})[cls] = value
+        stage = nj.STAGES[STAGE_OF[kind]]
+        nj.record_stage(st, stage.name, {stage.keys[0]: value}, cls)   # a class's samples: its world goes
     st = nj.update(lv, change)
     if refused:
         raise StaleError(refused[0])
@@ -229,15 +230,10 @@ def record(lv: str, kind: str, value: Mapping[str, Any], cls: str | None = None,
 
 
 def drop(lv: str, kind: str, cls: str | None = None) -> None:
-    """Removes a step's stamp before it runs: an interrupted run leaves none."""
-    def change(st: 'nj.Settings') -> None:
-        vehicles = st.get('vehicles') or {}
-        if cls is None:
-            vehicles.pop(kind, None)
-        else:
-            (vehicles.get(kind) or {}).pop(cls, None)
+    """Removes a step's stamp before it runs (and the stamps after it: a class's samples, its world): an interrupted
+    run leaves none."""
     if os.path.isfile(nj.paths(lv)['settings']):
-        nj.update(lv, change)
+        nj.update(lv, lambda st: nj.drop_stage(st, STAGE_OF[kind], cls))
 
 
 def absent(lv: str, cls: str, want: Mapping[str, Any], path: str, why: str,
@@ -268,18 +264,15 @@ def soldier_world(st: Mapping[str, Any], lv: str, path: str) -> str:
     'hpd_sha256'; 2026-10-30: by its 'built' minute, which a quick rebuild repeats)."""
     if not os.path.isfile(path):
         raise FileNotFoundError(f'{lv}: no soldier world (missing {path}): export it (navexport1943.py {lv})')
-    built = st.get('build_from') or {}
-    if built.get('preparation') != st.get('preparation') or 'built' not in st or not built.get('hpd_sha256'):
+    if nj.stale(st, 'built'):
         raise StaleError(f'{lv}: the soldier build is not of the current preparation: build and export it again '
                          f'(navkit.py build {lv}; navexport1943.py {lv})')
     if not nj.check_passed(st):              # 2026-10-30 review: a build whose check failed was exported and stamped
         raise StaleError(f'{lv}: the soldier build\'s check did not pass ({st.get("checked") or "not checked"}): no '
                          f'vehicle world is built on it (navkit.py check {lv})')
     digest = nj.sha256(path)
-    exported = st.get('exported') or {}
     default = os.path.join(nj.paths(lv)['navkit'], f'{lv}.rsnv')
-    if nj.same_file(path, default) and (exported.get('sha256') != digest
-                                        or exported.get('hpd_sha256') != built['hpd_sha256']):
+    if nj.same_file(path, default) and nj.stale(st, 'exported', digests={'rsnv': digest}):
         raise StaleError(f'{lv}: {path} is not the export of the current build: export again (navexport1943.py {lv})')
     return digest
 

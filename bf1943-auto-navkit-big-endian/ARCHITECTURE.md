@@ -112,9 +112,9 @@ What a build collects as it runs is kept in its `BuildState`. The common README'
 
 | File | Responsibility | Key entry points |
 |---|---|---|
-| `navkit.py` | the BF1943 driver: the steps and their stamps | `prepare`, `sample`, `build`, `check`, `stamp`, `invalidate`, `preparation_id`, `main` |
+| `navkit.py` | the BF1943 driver: the steps and their stamps | `prepare`, `sample`, `build`, `check`, `stamp`, `preparation_id`, `main` |
 | `navkitGUI.pyw` | the window; runs `navkit.py <step>` as a child process | `App` |
-| `tools/navkitjson1943.py` | `navkit.json`: the lock, atomic writes, hashes, which build may be read | `paths`, `read`, `update`, `write`, `build_refusal`, `prepared_heightfield`, `same_file` |
+| `tools/navkitjson1943.py` | `navkit.json`: the stage table, the lock, atomic writes, hashes, which build may be read | `STAGES`, `stale`, `is_current`, `record_stage`, `drop_stage`, `paths`, `read`, `update`, `write`, `build_refusal`, `prepared_heightfield`, `same_file` |
 | `tools/soldier1943.py` | BF1943's soldier and its builder `Settings` | `SETTINGS`, `STEP`, `WATER_DEPTH`, `sea_level` |
 | `tools/levelobjects1943.py` | object placements and collision from the bundles | `main` |
 | `tools/navsample1943.py` | the offline sampler (writes navsample format v1) | command line |
@@ -124,7 +124,7 @@ What a build collects as it runs is kept in its `BuildState`. The common README'
 | `tools/navexport1943.py` | `.hpd` to RSNV, and the `exported` stamp | `stamp_export`, `check`, `EXPORTER_VERSION` |
 | `tools/navexport_vehicles1943.py`, `groundnav1943.py`, `seanav1943.py`, `airnav1943.py`, `rsnvgrid1943.py` | the vehicle worlds and their writer | `write_world` (rsnvgrid1943) |
 | `tools/vehicleclasses1943.py` | the vehicle classes and the `vehicles` stamps | `CLASSES`, `inputs`, `record`, `soldier_world` |
-| `tools/navaudit1943.py`, `tools/navaudit1943_checks/` | the audit, one module per check | `run` |
+| `tools/navaudit1943.py`, `tools/navaudit1943_checks/` | the audit, one module per check | `open_level` (both subcommands), `parser`, `run` |
 | `tools/rsnvtool.py`, `tools/enclosure_probe1943.py` | inspection only: never write a build or an export | command lines |
 | `../bf1943-auto-navkit-common/tools/navbuild/` | the builder | `build`, `Settings`, `BFBC2`, `BuildError`, `read_cells` |
 | `../bf1943-auto-navkit-common/tools/` | `navwalk`, `navsample`, `hpdtool`, `kymesh`, `hpdcheck`, `hkpack`, `havok461`, `levelobjects`, `detailed`, `navdiff`, `navedits`, `hpdview` | see [its README](../bf1943-auto-navkit-common/README.md#layout) |
@@ -136,21 +136,44 @@ A script finds these folders through the suite's bootstrap. The BF1943 tools cal
 
 ## The stamps in `navkit.json`
 
-| Key | Written by | Holds |
-|---|---|---|
-| `preparation` and its inputs (`level`, `game`, `sea_level`, `sector_offsets`, `objects_sha256`) | prepare (a new file each time) | the digest of the preparation; every later stamp carries it |
-| `samples` `0.8` and `0.2`, `detailed_sectors`, `sampled` | sample | the preparation, the game copy and a random `id` for each pass; the 0.2 m pass also holds its sectors |
-| `built`, `build_from` | build | the preparation, the ids of the passes it read, `hpd_sha256`, `jump_links_sha256` |
-| `checked` | check | the time, then `ok` or `FAILED` |
-| `exported` | navexport1943, for `<level>.rsnv` only | the build's `hpd_sha256` and the export's own `sha256` |
-| `vehicles` `collision`, `samples`, `worlds` | vehicleclasses1943 `record` | the preparation, the class's parameter digest, the soldier world's SHA-256, or `absent` with a reason |
+Since 2026-11-06 the stamps are one declared stage table, `STAGES` in `tools/navkitjson1943.py` (its docstring has
+the same table). Each stage names the stages it **needs**, the stages it **drops with**, the keys it owns and how it
+is validated. Two functions read it and two write it:
+
+- `stale(st, stage, cls, want, files, digests)` is the pull. It asks the stages a stage needs first, starting at the
+  preparation, then the stage's own stamp, and returns the first `Stale(stage, reason)`, or `None` when the stage is
+  current. `is_current` is `stale(...) is None`. Each step maps the reason to the refusal words it always had.
+- `record_stage(st, stage, values, cls)` drops the stage and every stage after it, then sets the stage's own keys.
+  `drop_stage(st, stage, cls)` drops the stage and every stage after it (`after(stage)`: the stages that need it or drop
+  with it, directly or through another). Both change the dict; the steps call them inside `update`, so the OS lock and
+  the atomic replace are unchanged.
+
+| Stage | Needs | Drops with | Keys | Holds when | Recorded by |
+|---|---|---|---|---|---|
+| `prepared` | - | - | `level`, `game`, `prepared`, `sea_level`, `sector_offsets`, `objects_sha256`, `preparation` | `preparation` is set | prepare (a new file each time) |
+| `sampled` | `prepared` | - | `samples` `0.8`, `sampled`, `detailed_sectors`, `detailed_counts` | the 0.8 m pass is there, of this preparation and game (with `files`: `samples.bin` exists); sample `--pitch 0.2` also needs `detailed_sectors` | sample (0.8 m) |
+| `detailed` | `prepared` | `sampled` | `samples` `0.2` | the 0.2 m pass is of this preparation and covers the current detailed sectors | sample (0.2 m; also sets `sampled` to its time) |
+| `built` | `prepared` | `sampled`, `detailed` | `built`, `build_from` | `built` is set, of this preparation, `hpd_sha256` stamped (with `files`: the `.hpd` matches, and `jump_links.json` is stamped and unchanged) | build |
+| `checked` | `built` | - | `checked` | `checked` is set (`check_passed` says whether it passed) | check |
+| `exported` | `built` | - | `exported` | the check passed and the stamp names this build's `hpd_sha256` (with a file or digest: the export is the stamped one) | navexport1943, for `<level>.rsnv` only |
+| `vehicle_collision` | `prepared` | - | `vehicles` `collision` | the stamp holds `want` (`vehicleclasses1943.inputs`) | groundnav1943 |
+| `vehicle_samples` (per class) | `prepared` | - | `vehicles` `samples` `<class>` | the stamp holds `want` (with `files`: the samples file exists) | groundnav1943 |
+| `vehicle_worlds` (per class) | `prepared` | `built`, `vehicle_samples` | `vehicles` `worlds` `<class>` | the stamp holds `want`, with the soldier world's SHA-256 (with `files`: the world is the stamped file) | the vehicle builders, or `absent` |
+
+"Drops with" holds the edges that the steps dropped but never checked. The 0.2 m pass records its sectors in its own
+stamp. The build uses the 0.2 m pass only when it is current. A vehicle world names the soldier world only by its
+SHA-256. So a new pass or build drops these stages, but `stale` does not ask about them. Running check again keeps the
+export, because the export needs only the build and its own rule checks that the check passed. A per-class stage that
+is dropped for one class drops only that class's later per-class stages. A level-wide stage drops the stages of every
+class (the whole `worlds` object, as before). The audit writes no stamp to `navkit.json`. Its masks carry the SHA-256
+of their samples and build (`navaudit1943.mask_stale`).
 
 ## Key invariants
 
 - **One preparation.** prepare deletes `navkit.json` and empties `objects\`, so no file from an earlier preparation
   is hashed into the new one. Every later stamp names `preparation`. Steps run before the new preparation stay on disk,
-  but nothing reads them. `navkit.invalidate` drops the stamps that follow a step. A new build also drops `exported`
-  and the vehicle `worlds`.
+  but nothing reads them. `nj.record_stage` and `nj.drop_stage` drop the stamps that follow a step (the stage
+  table). A new build also drops `exported` and the vehicle `worlds`.
 - **Identity by content, not time.** The `built` and `time` fields keep only the minute. Builds are told apart by
   `hpd_sha256`, sampling passes by `id`, and the soldier world by its file's SHA-256. The game folder is compared as a
   file (`navkitjson1943.same_file`), so another spelling of the same path still matches.
@@ -192,11 +215,11 @@ They run with `python -B run_tests.py quick` or `bf1943`. Most use made-up data.
 
 | Guards | Files |
 |---|---|
-| the steps' stamps and refusals | `tests/test_navkit_stages.py`, `test_vehicle_stages.py`, `test_navkit_review.py`, `test_navkit_review2.py`, `test_navkit_review3.py`, `test_vehicleclasses_stamps.py` |
+| the steps' stamps and refusals | `tests/test_navkit_stages.py`, `test_vehicle_stages.py`, `test_navkit_review.py`, `test_navkit_review2.py`, `test_navkit_review3.py`, `test_vehicleclasses_stamps.py`, `test_navkit_stage_table.py` (the stage table) |
 | the sampler, objects, jump links, route check | `test_sampler1943.py`, `test_levelobjects_made_up.py`, `test_jumplinks1943.py`, `test_jumplinks_made_up.py`, `test_routecheck1943.py`, `test_enclosure_probe.py` |
 | 0.8 m / 0.2 m seams under BF1943's settings | `test_mixed_seam.py` |
 | export and vehicle worlds | `test_navexport_made_up.py`, `test_navexport_vehicles_made_up.py`, `test_vehicle_builders_made_up.py`, `test_vehicles_nav1943.py`, `test_rsnvgrid_world.py`, `test_rsnvtool.py`, `test_rsnvtool_inprocess.py` |
-| the audit | `test_navaudit_checks.py`, `test_fuzz_samples1943.py` |
+| the audit | `test_navaudit_checks.py`, `test_fuzz_samples1943.py`, `test_navaudit_cli.py` (its command line) |
 | shared rules and readers | `../bf1943-auto-navkit-common/tests/` (water, headroom, lips, portals, bridges, `test_navbuild_edges.py` under `BFBC2`, `test_formats.py`, `test_fuzz_navkit.py`) |
 | core formats | `../core/tests/test_rsnv.py`, `test_navdata_offset.py`, `test_water_mesh.py`, `test_level1943_made_up.py`, `test_game1943_bundles.py`, `test_fuzz_core.py` |
 | your copy (bf1943 tier) | `test_levelobjects1943.py`, `test_navexport1943.py`, `../bf1943-auto-navkit-common/tests/test_havok461.py`, `../tests/test_bf1943_tools.py navkit` and `probe` |
@@ -213,8 +236,10 @@ They run with `python -B run_tests.py quick` or `bf1943`. Most use made-up data.
 
 **Add a step or an output that depends on a build.**
 1. Read `navkitjson1943.py` first.
-2. Refuse stale inputs with `build_refusal` (or a check like it), and stamp through `update` with a guarded change.
-3. If an earlier step must drop the new stamp, add it to `navkit.invalidate`.
+2. Add the step's stage to `STAGES` in `navkitjson1943.py`, with the stages it needs or drops with, its keys and its
+   rule. Then add it to the docstring table and to `tests/test_navkit_stage_table.py`.
+3. Refuse stale inputs with `nj.stale` (or `build_refusal`), and stamp through `update` with a guarded change that
+   calls `nj.record_stage`. The stages after it are dropped for you.
 4. Copy the style of `test_navkit_stages.py` and `test_navkit_review2.py`: they replace the long steps with stand-ins
    and check every refusal.
 

@@ -25,6 +25,7 @@ import os
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -135,11 +136,15 @@ def detailed_current(st: dict[str, Any]) -> bool:
     return bool(build_from.get('samples_02_id') or build_from.get('samples_02'))
 
 
+STAGE_SAMPLES = {'normal': ('samples.bin', 'samples_high.bin'), 'detailed': ('samples_02.bin', 'samples_02_high.bin')}
+"""Each stage of a build: its samples file and its 0.6 m step run's, in the level's samples folder."""
+
+
 class Hashes:
     """The SHA-256 of a level's samples and build, each read once."""
 
-    def __init__(self, lv: str) -> None:
-        self.p: dict[str, str] = level_paths(lv)
+    def __init__(self, lv: str, paths: dict[str, str] | None = None) -> None:
+        self.p: dict[str, str] = paths or level_paths(lv)
         self.done: dict[str, str] = {}      # path -> its SHA-256
 
     def __call__(self, name: str) -> str:
@@ -172,27 +177,58 @@ def level_paths(lv: str) -> dict[str, str]:
             'hpd': os.path.join(root, 'navkit', f'{lv}.hpd'), 'settings': os.path.join(root, 'navkit', 'navkit.json')}
 
 
+@dataclass
+class AuditLevel:
+    """A level as both subcommands open it (open_level): its paths (level_paths), navkit.json and the hashes of its
+    samples and build. 2026-11-06: masks, the audit's load and stage_keep each found the paths, read and refused
+    navkit.json, hashed and named the samples files themselves."""
+    lv: str
+    paths: dict[str, str]
+    st: dict[str, Any]
+    hashes: Hashes
+
+    def samples(self, which: str, high: bool = False) -> str:
+        """The path of a stage's samples ('normal' or 'detailed'; high: its 0.6 m step run's)."""
+        return os.path.join(self.paths['samples'], STAGE_SAMPLES[which][1 if high else 0])
+
+    def built_from(self, which: str, why: str, log: Log) -> bool:
+        """Whether the build has the stage: the detailed one only when it was made from a current 0.2 m pass (when
+        not, logged with why)."""
+        if which == 'detailed' and not detailed_current(self.st):
+            log(f'{self.lv}: the build has no 0.2 m samples of this preparation{why}')
+            return False
+        return True
+
+
+def open_level(lv: str, checked: bool = True) -> AuditLevel:
+    """The level's paths, navkit.json and hashes; checked: refused (NavKitError) unless the build on disk is the
+    checked build of the current preparation (current_build), else navkit.json as it is."""
+    paths = level_paths(lv)
+    return AuditLevel(lv, paths, current_build(lv) if checked else nj.read(lv), Hashes(lv, paths))
+
+
 def stage_keep(lv: str, which: str, variant: str = 'base',
-               normal_keep: 'tuple[Samples, BoolArray] | None' = None, log: Log = print
-               ) -> 'tuple[Samples, BoolArray]':
+               normal_keep: 'tuple[Samples, BoolArray] | None' = None, log: Log = print,
+               level: AuditLevel | None = None) -> 'tuple[Samples, BoolArray]':
     """The kept walkable surfaces (bool per surface) of one stage of a build, as navbuild.stage computes them for
     navkit.py build: which = 'normal' (the 0.8 m run) or 'detailed' (the 0.2 m run, seeded from the normal stage's
     kept ground in the detailed sectors - normal_keep). Mirrors navbuild.build / merge_detailed / stage up to
-    navwalk.walkable, with the variant's rule turned off. Returns (samples, keep)."""
+    navwalk.walkable, with the variant's rule turned off. Returns (samples, keep). level: the level masks() opened
+    (None: opened here, navkit.json as it is)."""
     import navbuild
     import navwalk
     from bfbc2core import water as water_mod
-    paths = level_paths(lv)
-    st = nj.read(lv)
-    objects, samples_dir = paths['objects'], paths['samples']
+    level = level or open_level(lv, checked=False)
+    paths, st = level.paths, level.st
+    objects = paths['objects']
     settings = soldier1943.SETTINGS                 # what navkit.py build passes
     opts = dict(VARIANTS[variant])
     # navwalk's rules as the build has them, the variant's turned off (until 2026-10-31 the module constants were
     # rewritten for the run and restored after it)
     rules: dict[str, Any] = {'headroom_band': settings.headroom_band, 'lip_width': navwalk.LIP_WIDTH}
     rules.update((k, opts.pop(k)) for k in WALKABLE_ARGS if k in opts)
-    s = load_samples(os.path.join(samples_dir, 'samples.bin' if which == 'normal' else 'samples_02.bin'))
-    high = load_samples(os.path.join(samples_dir, 'samples_high.bin' if which == 'normal' else 'samples_02_high.bin'))
+    s = load_samples(level.samples(which))
+    high = load_samples(level.samples(which, high=True))
     with open(os.path.join(objects, 'soldier_spawns.json'), encoding='utf-8') as f:
         seeds = json.load(f)
     with open(os.path.join(objects, 'ladders.json'), encoding='utf-8') as f:
@@ -242,19 +278,15 @@ def stage_keep(lv: str, which: str, variant: str = 'base',
 def masks(lv: str, variants: Sequence[str], stages: Sequence[str], log: Log = print) -> None:
     """The masks of the checked build of the current preparation; a mask file there of other samples or another build
     is made again (2026-10-30 review: any file there was kept)."""
-    st = current_build(lv)
-    paths = level_paths(lv)
-    out = os.path.join(paths['audit'], 'masks')
+    level = open_level(lv)
+    out = os.path.join(level.paths['audit'], 'masks')
     os.makedirs(out, exist_ok=True)
-    samples_dir = paths['samples']
-    hashes = Hashes(lv)
-    if 'detailed' in stages and not detailed_current(st):
-        log(f'{lv}: the build has no 0.2 m samples of this preparation (its detailed sectors are built at 0.8 m): no '
-            f'detailed masks')
-        stages = [stage for stage in stages if stage != 'detailed']
+    hashes = level.hashes
+    stages = [which for which in stages
+              if level.built_from(which, ' (its detailed sectors are built at 0.8 m): no detailed masks', log)]
     normal_base = None                              # (samples, keep) of the normal stage's base run
     for which in stages:
-        src = 'samples.bin' if which == 'normal' else 'samples_02.bin'
+        src = STAGE_SAMPLES[which][0]
         for variant in variants:
             path = os.path.join(out, f'{which}_{variant}.npz')
             if os.path.isfile(path):
@@ -267,16 +299,17 @@ def masks(lv: str, variants: Sequence[str], stages: Sequence[str], log: Log = pr
             if which == 'detailed':
                 if normal_base is None:
                     base_path = os.path.join(out, 'normal_base.npz')
-                    base_current = os.path.isfile(base_path) and mask_stale(base_path, 'samples.bin', hashes) is None
+                    base_current = (os.path.isfile(base_path)
+                                    and mask_stale(base_path, STAGE_SAMPLES['normal'][0], hashes) is None)
                     base_file = np.load(base_path) if base_current else None
-                    normal_s = load_samples(os.path.join(samples_dir, 'samples.bin'))
+                    normal_s = load_samples(level.samples('normal'))
                     if base_file is not None:
                         normal_kept = base_file['keep']
                     else:
-                        normal_kept = stage_keep(lv, 'normal', 'base', log=log)[1]
+                        normal_kept = stage_keep(lv, 'normal', 'base', log=log, level=level)[1]
                     normal_base = (normal_s, normal_kept)
                 normal = normal_base
-            s, keep = stage_keep(lv, which, variant, normal_keep=normal, log=log)
+            s, keep = stage_keep(lv, which, variant, normal_keep=normal, log=log, level=level)
             if which == 'normal' and variant == 'base':
                 normal_base = (s, keep)
             np.savez_compressed(path, keep=keep, surfaces=len(s.y), samples=src,
@@ -285,27 +318,43 @@ def masks(lv: str, variants: Sequence[str], stages: Sequence[str], log: Log = pr
             del s, keep
 
 
+def _masks_command(args: argparse.Namespace) -> None:
+    chosen = [v for v in args.variants.split(',') if v]
+    bad = [v for v in chosen if v not in VARIANTS]
+    if bad:
+        raise SystemExit(f'unknown variant(s) {bad}; known: {", ".join(VARIANTS)}')
+    masks(args.level, chosen, list(STAGE_SAMPLES) if args.stage == 'both' else [args.stage])
+
+
+def _audit_command(args: argparse.Namespace) -> None:
+    import navaudit1943_checks
+    navaudit1943_checks.run(args.level, json_out=args.json)
+
+
+# each subcommand: its options after the shared <level> (parser()), and what runs it
+COMMANDS: dict[str, tuple[list[tuple[str, dict[str, Any]]], Callable[[argparse.Namespace], None]]] = {
+    'masks': ([('--variants', {'default': ','.join(VARIANTS)}),
+               ('--stage', {'default': 'both', 'choices': [*STAGE_SAMPLES, 'both']})], _masks_command),
+    'audit': ([('--json', {})], _audit_command),
+}
+
+
+def parser() -> argparse.ArgumentParser:
+    """The command line: every subcommand takes the level first (one definition), then its own options."""
+    out = argparse.ArgumentParser(prog='navaudit1943.py', description=__doc__,
+                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = out.add_subparsers(dest='cmd', required=True)
+    for name, (options, _run) in COMMANDS.items():
+        command = sub.add_parser(name)
+        command.add_argument('level')
+        for flag, kwargs in options:
+            command.add_argument(flag, **kwargs)
+    return out
+
+
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog='navaudit1943.py', description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest='cmd', required=True)
-    masks_cmd = sub.add_parser('masks')
-    masks_cmd.add_argument('level')
-    masks_cmd.add_argument('--variants', default=','.join(VARIANTS))
-    masks_cmd.add_argument('--stage', default='both', choices=['normal', 'detailed', 'both'])
-    audit_cmd = sub.add_parser('audit')
-    audit_cmd.add_argument('level')
-    audit_cmd.add_argument('--json')
-    args = parser.parse_args(argv[1:])
-    if args.cmd == 'masks':
-        chosen = [v for v in args.variants.split(',') if v]
-        bad = [v for v in chosen if v not in VARIANTS]
-        if bad:
-            raise SystemExit(f'unknown variant(s) {bad}; known: {", ".join(VARIANTS)}')
-        masks(args.level, chosen, ['normal', 'detailed'] if args.stage == 'both' else [args.stage])
-    else:
-        import navaudit1943_checks
-        navaudit1943_checks.run(args.level, json_out=args.json)
+    args = parser().parse_args(argv[1:])
+    COMMANDS[args.cmd][1](args)
     return 0
 
 
