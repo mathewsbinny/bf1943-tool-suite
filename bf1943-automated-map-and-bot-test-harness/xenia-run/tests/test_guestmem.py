@@ -137,6 +137,15 @@ def main():
           and s['flags'][0]['radius'] == 20.0, 'snapshot: the capture points\' owners, control and radius')
     code, text = run(g, 'bots')
     check(code == 0 and 'slot  1' in text and '(torn)' in text and 'flag 1  owner 1' in text, 'bots prints them')
+    # the bots' lifecycle by name (bots.lifecycle) from the data area's STATE and HOLD words
+    seen = [s['lifecycle'], 'lifecycle made' in text]
+    g.write_u32(bots.DATA + bots.STATE, 0)
+    g.write_u32(bots.DATA + bots.HOLD, 1)
+    seen.append(gm.snapshot(g)['lifecycle'])
+    g.write_u32(bots.DATA + bots.HOLD, 0)
+    seen.append(gm.snapshot(g)['lifecycle'])
+    g.write_u32(bots.DATA + bots.STATE, 1)
+    check(seen == ['made', True, 'held', 'none'], f'snapshot and bots: the bots\' lifecycle by name ({seen})')
     # the header's flag count is not locked with the records: a record left from a tick that found more capture
     # points (its tick older than the newest read) is marked stale, the current ones are not
     f1 = BLOCK + bots.FLAG0 + bots.FLAG_SIZE

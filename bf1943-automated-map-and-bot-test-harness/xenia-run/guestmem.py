@@ -326,7 +326,9 @@ def bot_entry(guest: GuestMemory, record: Record, slot: int, tick: int) -> dict[
 def snapshot(guest: GuestMemory) -> Snapshot:
     data = bots.DATA
     block = block_of(guest)
-    snap: Snapshot = dict(time=time.strftime('%I:%M:%S %p'), clock=time.time(), state=guest.u32(data + bots.STATE),
+    # the bots' lifecycle by name (bots.lifecycle: none, made, held), from its two data-area words
+    snap: Snapshot = dict(time=time.strftime('%I:%M:%S %p'), clock=time.time(),
+                          lifecycle=bots.lifecycle(guest.u32(data + bots.STATE), guest.u32(data + bots.HOLD)),
                           manager=guest.u32(data + bots.MANAGER), tick=guest.u32(data + bots.TICK),
                           mailbox=f'{block:08x}' if block else None, bots=[], flags=[])
     if not block:
@@ -341,8 +343,8 @@ def snapshot(guest: GuestMemory) -> Snapshot:
 
 
 def show(snap: Snapshot, only: int | None = None) -> None:
-    print(f'{snap["time"]}  tick {snap["tick"]}  mailbox {snap["mailbox"] or "none"}  bots {len(snap["bots"])}  '
-          f'capture points {len(snap["flags"])}')
+    print(f'{snap["time"]}  tick {snap["tick"]}  lifecycle {snap["lifecycle"]}  mailbox {snap["mailbox"] or "none"}  '
+          f'bots {len(snap["bots"])}  capture points {len(snap["flags"])}')
     for flag in snap['flags'] if only is None else []:
         x, y, z = flag['position']
         state = '  (torn)' if flag['torn'] else '  (stale)' if flag.get('stale') else ''

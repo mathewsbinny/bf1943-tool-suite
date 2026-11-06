@@ -121,6 +121,31 @@ MAILBOX_END = MBOX + 4
 HOST_PLAYER = MAILBOX_END
 HOLD = HOST_PLAYER + 4
 DATA_USED = HOLD + 4
+# The bots' lifecycle: one named state (lifecycle(), its table) kept in the two data-area words above, STATE and HOLD,
+# which the code reads and writes separately (2026-11-05: named host-side; the code and its bytes are unchanged).
+LIFE_NONE, LIFE_MADE, LIFE_HELD = 'none', 'made', 'held'
+LIFECYCLE_WORDS = {LIFE_NONE: (0, 0), LIFE_MADE: (1, 0), LIFE_HELD: (0, 1)}     # state: (STATE word, HOLD word)
+LIFE_ANY = 'any'
+# (key, from, to, path: the code's decision label then where the tick ends, when); every tick, after the server's own
+# player update. tests/test_bots.py runs each row on the code.
+LIFECYCLE_TRANSITIONS = (
+    ('no-manager', LIFE_ANY, LIFE_NONE, ('forget', 'out'), 'no player manager (between matches)'),
+    ('empty-list', LIFE_ANY, LIFE_NONE, ('forget', 'out'), 'nobody in the match (it ended)'),
+    ('other-manager', LIFE_ANY, LIFE_NONE, ('forget', 'out'), 'another player manager than the one recorded'),
+    ('same-match', LIFE_MADE, LIFE_MADE, ('respawn', 'respawn'),
+     'the recorded host is the first player and a bot is still in the list (or none was made): the bots are stepped'),
+    ('new-match', LIFE_MADE, LIFE_NONE, ('forget', 'out'),
+     'the host is the first player but none of the bots is in the list: a new match at the old addresses'),
+    ('host-reused', LIFE_MADE, LIFE_NONE, ('forget', 'out'),
+     'another first player and none of the bots in the list: another match at the old manager\'s address'),
+    ('host-left', LIFE_MADE, LIFE_HELD, ('forget_held', 'out'),
+     'another first player while bots are still in the list: the host left; the bots are forgotten'),
+    ('make', LIFE_NONE, LIFE_MADE, ('make', 'create'),
+     'the first player (the host) has a soldier and the mailbox block is allocated: the bots are made'),
+    ('host-no-soldier', LIFE_NONE, LIFE_NONE, ('make', 'out'), 'the first player has no soldier yet'),
+    ('no-block', LIFE_NONE, LIFE_NONE, ('make', 'out'), 'the allocator gave no block (tried again next tick)'),
+    ('held', LIFE_HELD, LIFE_HELD, ('make', 'out'), 'held: nothing is made while the list keeps players and the manager'),
+)
 MAGIC = 0x52534D32           # 'RSM2', in the data area and the block's header
 VERSION = 2
 STALE = 10                   # ticks: an older command gives a neutral frame; a stamp of 0 (never answered) gives one too
@@ -236,7 +261,7 @@ host_changed:
     cmpwi r9, 0
     beq forget               # another match (the manager's address reused by it)
     b forget_held            # the host left and the bots are still in the match: no new bots until it ends
-make:
+make:                        # lifecycle none or held
     lwz r3, HOLD(r31)        # held (the host left this match): no bots until the list empties or the manager changes
     cmpwi r3, 0
     bne out
@@ -287,7 +312,8 @@ clear_mailbox:               # the allocator need not clear it
     mr r5, r6
     bl 0x829fa7ec
     li r3, 1
-    stw r3, STATE(r31)       # create once per match (the data area is per game session: see AGENT_PROGRESS)
+    stw r3, STATE(r31)       # lifecycle none -> made: create once per match (the data area is per game session: see
+                             # AGENT_PROGRESS)
     la r29, BOTS
     la r28, SLOTS_ADDR
 create:
@@ -612,13 +638,13 @@ flags_done:
     lwz r5, TICK(r31)
     stw r5, H_TICK(r3)
     b out
-forget_held:                 # the host left, its bots still in the match: forget them and hold (make nothing more)
-    li r3, 1                 # until the list empties or the manager changes (before 2026-10-30 the next tick made a
-    b forget_hold            # new set with a bot as the host, beside the orphaned old one)
-forget:                      # no bots this match yet: clear the state, mailbox, key, hold and slots, remember this
+forget_held:                 # lifecycle made -> held: the host left, its bots still in the match: forget them and
+    li r3, 1                 # hold (make nothing more) until the list empties or the manager changes (before
+    b forget_hold            # 2026-10-30 the next tick made a new set with a bot as the host, beside the old one)
+forget:                      # lifecycle -> none: clear the state, mailbox, key, hold and slots, remember this
     li r3, 0                 # manager (0 when there is none)
 forget_hold:
-    stw r3, HOLD(r31)
+    stw r3, HOLD(r31)        # the lifecycle's HOLD word, then its STATE word below
     li r3, 0
     stw r3, MBOX_MAGIC(r31)
     stw r3, MBOX(r31)
@@ -667,6 +693,37 @@ type Side = int                         # FRIENDLY or ENEMY
 type Bot = tuple[Side, str]             # (side, class: a KITS key)
 type PatchWord = tuple[int, int, str]   # (guest address, big-endian word, comment)
 type WordReader = Callable[[int], int]  # a record's word at an offset
+
+
+def lifecycle(state: int, hold: int) -> str:
+    """The bots' lifecycle from the data area's STATE and HOLD words: one named state per game session. The code keeps
+    it in the two words and reads and writes them separately (forget_hold writes HOLD and then STATE; make reads HOLD,
+    then writes STATE 1); each path that sets one clears the other, so (1, 1) never occurs: 'invalid (state, hold)'.
+
+        state   STATE HOLD  meaning
+        none      0    0    no bots this match: they are made once the first player (the host) has a soldier
+        made      1    0    bots made for this match (its MANAGER and HOST_PLAYER recorded); stepped every tick
+        held      0    1    the host left a match its bots are still in: nothing is made until the player list
+                            empties or the manager changes
+
+        from   to     path (label in CODE_SOURCE)  when (LIFECYCLE_TRANSITIONS, in the order the code tests)
+        any    none   forget                       no player manager; an empty player list; another manager
+        made   made   respawn                      the recorded host first and a bot still in the list (or none made)
+        made   none   forget                       none of the bots in the list (a new match at the old addresses,
+                                                   the host's player the same or another)
+        made   held   forget_held                  another first player while bots are still in the list (the host
+                                                   left)
+        none   made   make -> create               the host has a soldier and the block is allocated
+        none   none   make -> out                  the host has no soldier yet, or no block was allocated
+        held   held   make -> out                  still held
+
+    Forgetting also clears the mailbox address and magic, the match key and every bot slot, and records the manager
+    (0 when there is none). Before 2026-11-05 the two words had no shared name; navhost does not read them (they are
+    outside the mailbox block), guestmem.py shows the name."""
+    for name, words in LIFECYCLE_WORDS.items():
+        if words == (state, hold):
+            return name
+    return f'invalid ({state}, {hold})'
 
 
 def string_record(text: str, at: int) -> bytes:

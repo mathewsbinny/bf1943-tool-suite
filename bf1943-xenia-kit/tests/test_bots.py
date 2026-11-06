@@ -114,6 +114,7 @@ def mailbox():
     torn_read_keeps_last()
     match_key()
     host_left_hold()
+    lifecycle_table()
     flag_radius_and_header()
 
 
@@ -226,6 +227,62 @@ def host_left_hold():
     got = run(mem)
     check(got == 'out' and mem.get(d + bots.HOLD) == 0 and mem.get(d + bots.MANAGER) == MANAGER,
           f'another manager: the hold is cleared ({got})')
+
+
+def lifecycle_table():
+    """bots.lifecycle's table, row by row on the code (bots.LIFECYCLE_TRANSITIONS): from each row's state (every
+    state for 'any') under its condition, one tick takes the row's path (the decision label, then where the tick
+    ends) and leaves the data area's STATE and HOLD words in the row's state. Every row is checked, the code writes the
+    two words only where the table says (make: STATE; forget_hold: HOLD, then STATE), and a tick never leaves both set."""
+    d = bots.DATA
+    soldier = lambda mem: mem.__setitem__(HOST + 0x120, 0x47000000) or mem
+    # each row's guest memory, from a state (its STATE and HOLD words), and the allocator's answer
+    cases = {
+        'no-manager': lambda s, h: (match(state=s, hold=h, manager=0), 0x48000000),
+        'empty-list': lambda s, h: (match(state=s, hold=h, players=()), 0x48000000),
+        'other-manager': lambda s, h: (match(state=s, hold=h, manager=0x41100000), 0x48000000),
+        'same-match': lambda s, h: (match(), 0x48000000),
+        'new-match': lambda s, h: (match(players=(HOST,)), 0x48000000),
+        'host-reused': lambda s, h: (match(players=(OTHER, HOST)), 0x48000000),
+        'host-left': lambda s, h: (match(players=(BOT,)), 0x48000000),
+        'make': lambda s, h: (soldier(match(state=0)), 0x48000000),
+        'host-no-soldier': lambda s, h: (match(state=0), 0x48000000),
+        'no-block': lambda s, h: (soldier(match(state=0)), 0),
+        'held': lambda s, h: (soldier(match(state=0, hold=1)), 0x48000000),
+    }
+    keys = [row[0] for row in bots.LIFECYCLE_TRANSITIONS]
+    check(sorted(keys) == sorted(cases) and len(set(keys)) == len(keys),
+          f'lifecycle: every row of the table has a case here ({len(keys)} rows)')
+    states = (bots.LIFE_NONE, bots.LIFE_MADE, bots.LIFE_HELD)
+    bad = []
+    for key, start, end, path, _when in bots.LIFECYCLE_TRANSITIONS:
+        for begin in states if start == bots.LIFE_ANY else (start,):
+            state, hold = bots.LIFECYCLE_WORDS[begin]
+            mem, block = cases[key](state, hold)
+            if bots.lifecycle(mem.get(d + bots.STATE, 0), mem.get(d + bots.HOLD, 0)) != begin:
+                bad.append((key, begin, 'the case does not start there'))
+                continue
+            alloc = {0x82627d10: lambda r, block=block: block}
+            first, _ = run_entry(dict(mem), alloc, limit=20000)
+            last, _ = run_entry(mem, alloc, limit=20000, until=('respawn', 'out', 'create'))
+            now = bots.lifecycle(mem.get(d + bots.STATE, 0), mem.get(d + bots.HOLD, 0))
+            if (first, last) != path or now != end:
+                bad.append((key, begin, (first, last), now))
+    check(not bad, f'lifecycle: each transition of the table takes its path and ends in its state on the code '
+                   f'({sum(3 if r[1] == bots.LIFE_ANY else 1 for r in bots.LIFECYCLE_TRANSITIONS)} cases; wrong: {bad})')
+    check(bots.lifecycle(1, 1).startswith('invalid') and [bots.lifecycle(*w) for w in bots.LIFECYCLE_WORDS.values()]
+          == list(bots.LIFECYCLE_WORDS), 'lifecycle: the three states read back by name; (1, 1) is invalid')
+    names = decoded().names
+    labels = sorted((a, n) for n, a in names.items() if n in ('make', 'create', 'forget_held', 'forget', 'forget_hold',
+                                                               'out'))
+    stores = {}
+    for at, (m, o) in decoded().ins.items():
+        if m == 'stw' and o[1] in (f'{bots.STATE}(r31)', f'{bots.HOLD:#x}(r31)'):
+            label = max((a, n) for a, n in labels if a <= at)[1]
+            stores.setdefault('STATE' if o[1].startswith(f'{bots.STATE}(') else 'HOLD', []).append(label)
+    check(stores == {'STATE': ['make', 'forget_hold'], 'HOLD': ['forget_hold']},
+          f'lifecycle: STATE is written only where the bots are made and forgotten, HOLD only where they are forgotten '
+          f'({stores})')
 
 
 def flag_radius_and_header():

@@ -122,13 +122,35 @@ Xenia may be running it.
 
   | Offset | Holds |
   |---|---|
-  | `STATE`, `MANAGER`, `TICK` | the code's state, the match's player manager, the tick |
+  | `STATE`, `MANAGER`, `TICK` | the bots' lifecycle (with `HOLD`), the match's player manager, the tick |
   | `SLOTS` | one player slot per bot |
   | `HANDLE` | the kit lookup's handle |
   | `MBOX_MAGIC`, `MBOX` | the mailbox's magic and address |
-  | `HOST_PLAYER`, `HOLD` | which match the bots belong to; not part of the mailbox |
+  | `HOST_PLAYER`, `HOLD` | which match the bots belong to; the lifecycle's hold word; not part of the mailbox |
 
   The data area uses 0x90 bytes in all.
+- **The bots' lifecycle.** One named state per game session, `bots.lifecycle(STATE, HOLD)`, kept in two data-area
+  words that the code reads and writes separately (`make` writes `STATE`; `forget_hold` writes `HOLD`, then `STATE`).
+  Each path that sets one word clears the other, so both set never occurs. The names, the word pairs and the
+  transitions are `LIFE_*`, `LIFECYCLE_WORDS` and `LIFECYCLE_TRANSITIONS`; `test_bots.py` runs every transition on
+  the code. (2026-11-05: named on the host side only. Folding them into one guest word would change the code's bytes;
+  the code, the patch and the mailbox are unchanged.)
+
+  | State | `STATE` `HOLD` | Meaning |
+  |---|---|---|
+  | `none` | 0 0 | no bots this match; made once the first player (the host) has a soldier |
+  | `made` | 1 0 | bots made for this match (`MANAGER` and `HOST_PLAYER` recorded); stepped every tick |
+  | `held` | 0 1 | the host left a match its bots are still in; nothing is made until the player list empties or the manager changes |
+
+  | From | To | Path (`CODE_SOURCE` label) | When (each tick, after the server's own player update) |
+  |---|---|---|---|
+  | any | `none` | `forget` | no player manager; an empty player list; another manager |
+  | `made` | `made` | `respawn` | the recorded host is the first player and a bot is still in the list (or none was made) |
+  | `made` | `none` | `forget` | none of the bots is in the list (a new match at the old addresses) |
+  | `made` | `held` | `forget_held` | another first player while bots are still in the list (the host left) |
+  | `none` | `made` | `make`, then `create` | the host has a soldier and the block is allocated |
+  | `none` | `none` | `make`, then `out` | the host has no soldier yet, or no block was allocated |
+  | `held` | `held` | `make`, then `out` | still held |
 - **The mailbox.** It is allocated once per match with the game's allocator, `ALLOC_SIZE` 0xD40 bytes, laid out as
   big-endian words:
 
@@ -148,8 +170,8 @@ Xenia may be running it.
     so the bots stand still when the host stops.
   - **Matching the match.** Each tick the code compares the match with the one it recorded: the player manager, the
     first player (`HOST_PLAYER`), and each bot still in the player list. When the match has changed, it forgets the
-    bots, `MBOX` and its magic. When the host has left, `HOLD` stops it from making new bots until the player list
-    empties or the manager changes.
+    bots, `MBOX` and its magic (lifecycle `none`). When the host has left, the lifecycle is `held`, which stops it
+    from making new bots until the player list empties or the manager changes.
 
 **The host programs.** `guestmem.py` finds Xenia's guest memory. It accepts a base address only where guest
 `0x82000000` starts with `MZ`. It then checks that the bot code is in place and that the hook branches to it. It
