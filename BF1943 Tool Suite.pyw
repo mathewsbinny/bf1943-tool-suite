@@ -245,12 +245,14 @@ class Hub:
 
     def ended(self, label: str, code: int | None, main: bool, ok: Sequence[int], pid: int) -> None:
         """A tool's end: a line in the pane, and a failure told unless it was an accepted code or the user stopped
-        that very process (2026-10-30: one flag for all, so another tool's end could take it)."""
+        that very process (2026-10-30: one flag for all, so another tool's end could take it). The window is freed
+        (Ready, Stop off) only by the end of the tab's current tool, pid == self.proc.pid (2026-11-05: the end of an
+        earlier run, queued while the next one started, freed the window under the new run)."""
         stopped = pid in self.stopped_pids
         self.stopped_pids.discard(pid)
         self.write(f'{"done" if code in ok else f"finished with exit code {code}"}: {label}\n')
         errors.logger().info(f'exit {code}: {label}')
-        if main:
+        if main and self.proc is not None and pid == self.proc.pid:
             self.status.set('Ready.')
             self.stop_btn.configure(state='disabled')
         if code not in ok and code is not None and not stopped:

@@ -69,6 +69,7 @@ def step(app, pid_file=None):
                             stderr=subprocess.STDOUT, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     app.proc = proc
     app.set_busy(True, 'Running test step ...')
+    app.state = gui.transition(app.state, 'start')
     threading.Thread(target=app.reader, args=(proc, 'sample'), daemon=True).start()
     return proc
 
@@ -115,7 +116,7 @@ def main():
         app.stop()
         took = time.time() - t0
         check(took < 0.5, f'Cancel returns at once ({took:.2f} s; the clean-up takes 2 s)')
-        check(pump_until(root, lambda: not getattr(app, 'cleaning', True)), 'the clean-up finishes')
+        check(pump_until(root, lambda: app.state is gui.RunState.IDLE), 'the clean-up finishes')
         check(proc.poll() is not None, 'the step\'s process has ended')
         check(not alive(started), 'so has the process the step started (the game launcher)')
         check(('close_game', False) in calls and ('recover_ini',) in calls,

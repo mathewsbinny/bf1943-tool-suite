@@ -43,17 +43,62 @@ namespace Bfbc2Dbx.Gui
         }
     }
 
+    // The window's edits: each one's undo state (the document before it) and its line of the edit script (a DbxEdit
+    // command, or a comment), always pushed and popped together, so the script replays exactly the edits the undo
+    // stack holds. Run is an edit as a transaction: snapshot, apply, then record both or roll the document back
+    // (2026-11-05: Drop or Graft throwing after the snapshot left an undo state with no script line, and every later
+    // undo then dropped another edit's line).
+    sealed class EditHistory
+    {
+        readonly Stack<byte[]> undo = new Stack<byte[]>();
+        readonly List<string> script = new List<string>();
+        // the undo depth the file on disk holds (0 when opened, the depth at the last save; -1 when no undo state
+        // holds it any more): the document is modified whenever it is at another depth, an undo past a save included
+        int savedAt;
+
+        internal int Depth { get { return undo.Count; } }
+        internal bool Modified { get { return undo.Count != savedAt; } }
+        internal IList<string> Script { get { return script.AsReadOnly(); } }
+
+        internal void MarkSaved() { savedAt = undo.Count; }
+
+        // One edit of doc: apply changes the document (in place, or through the window's doc) and returns the edit's
+        // script line, or null when it changed nothing. Kept (true) only with a line: the state before it and the line
+        // are recorded together. Null: nothing recorded, the document as apply left it (unchanged). An exception:
+        // nothing recorded, rollback given the document as it was before, and the exception passed on.
+        internal bool Run(DbxFile doc, Func<string> apply, Action<DbxFile> rollback)
+        {
+            byte[] before = doc.Serialize();
+            string line;
+            try { line = apply(); }
+            catch (Exception)
+            {
+                rollback(new DbxFile(before));
+                throw;
+            }
+            if (line == null) return false;
+            if (undo.Count < savedAt) savedAt = -1;          // the saved state was undone: no undo state holds it now
+            undo.Push(before);
+            script.Add(line);
+            return true;
+        }
+
+        // The document before the last edit, its script line dropped with it; null when there is no edit to undo.
+        internal byte[] Undo()
+        {
+            if (undo.Count == 0) return null;
+            script.RemoveAt(script.Count - 1);
+            return undo.Pop();
+        }
+    }
+
     sealed class MainWindow : Form
     {
         DbxFile doc;
         string path;
         bool backedUp;
-        readonly Stack<byte[]> undo = new Stack<byte[]>();
-        // the undo depth the file on disk holds (0 when opened, the depth at the last save; -1 when no undo state
-        // holds it any more): the document is modified whenever it is at another depth, an undo past a save included
-        int savedAt;
-        bool modified { get { return doc != null && undo.Count != savedAt; } }
-        readonly List<string> script = new List<string>();   // the edits as DbxEdit commands
+        EditHistory history = new EditHistory();             // a new one per opened file
+        bool modified { get { return doc != null && history.Modified; } }
 
         readonly TreeView tree = new TreeView();
         readonly Label heading = new Label();
@@ -382,19 +427,24 @@ namespace Bfbc2Dbx.Gui
 
         // ---------------------------------------------------------------------------------------------- editing
 
-        void Snapshot() { PushUndo(doc.Serialize()); }
-
-        void PushUndo(byte[] state)
+        // Every edit goes through here (EditHistory.Run): kept with its undo state and script line, or, when apply
+        // throws, the document rolled back, the tree rebuilt from it and the exception passed on to the caller (or
+        // the window's error report). False: apply changed nothing, nothing recorded.
+        bool Edit(Func<string> apply)
         {
-            if (undo.Count < savedAt) savedAt = -1;          // the saved state was undone: no undo state holds it now
-            undo.Push(state);
+            try { return history.Run(doc, apply, restored => doc = restored); }
+            catch (Exception)
+            {
+                try { Rebuild(null); } catch (Exception) { }
+                throw;
+            }
         }
 
         void Undo()
         {
-            if (undo.Count == 0) { Log("Nothing to undo."); return; }
-            doc = new DbxFile(undo.Pop());
-            if (script.Count > 0) script.RemoveAt(script.Count - 1);
+            var state = history.Undo();
+            if (state == null) { Log("Nothing to undo."); return; }
+            doc = new DbxFile(state);
             Rebuild(null);
             Log("Undone.");
         }
@@ -403,42 +453,43 @@ namespace Bfbc2Dbx.Gui
         {
             var e = Selected;
             if (e == null) return;
-            var before = doc.Serialize();
+            var node = tree.SelectedNode;
             try
             {
-                var changedAttributes = new List<string>();
-                bool valueChanged = false;
-                for (int i = 0; i < e.Attributes.Count && i < attributes.Rows.Count; i++)
+                bool kept = Edit(() =>
                 {
-                    string v = Convert.ToString(attributes.Rows[i].Cells[1].Value) ?? "";
-                    if (v != doc.Table[e.Attributes[i].Value])
+                    var changedAttributes = new List<string>();
+                    bool valueChanged = false;
+                    for (int i = 0; i < e.Attributes.Count && i < attributes.Rows.Count; i++)
                     {
-                        changedAttributes.Add(doc.Table[e.Attributes[i].Name]);
-                        e.Attributes[i].Value = doc.Intern(v);
+                        string v = Convert.ToString(attributes.Rows[i].Cells[1].Value) ?? "";
+                        if (v != doc.Table[e.Attributes[i].Value])
+                        {
+                            changedAttributes.Add(doc.Table[e.Attributes[i].Name]);
+                            e.Attributes[i].Value = doc.Intern(v);
+                        }
                     }
-                }
-                if (!e.IsContainer && value.Text != XmlExport.ValueText(doc, e))
-                {
-                    string note;
-                    e.Payload = XmlImport.EncodeValue(doc, e, value.Text, out note);
-                    valueChanged = true;
-                    if (note != null) Log("Value written: " + XmlExport.ValueText(doc, e) + " (" + note + ")");
-                }
-                if (!valueChanged && changedAttributes.Count == 0) return;
-                PushUndo(before);
-                var inst = InstanceOf(tree.SelectedNode);
-                script.Add(EditCommand(doc, inst, e, changedAttributes, valueChanged, Label(e)));
-                tree.SelectedNode.Text = Label(e);
-                ShowElement(tree.SelectedNode);
-                UpdateState();
+                    if (!e.IsContainer && value.Text != XmlExport.ValueText(doc, e))
+                    {
+                        string note;
+                        e.Payload = XmlImport.EncodeValue(doc, e, value.Text, out note);
+                        valueChanged = true;
+                        if (note != null) Log("Value written: " + XmlExport.ValueText(doc, e) + " (" + note + ")");
+                    }
+                    if (!valueChanged && changedAttributes.Count == 0) return null;
+                    return EditCommand(doc, InstanceOf(node), e, changedAttributes, valueChanged, Label(e));
+                });
+                if (!kept) return;
             }
             catch (Exception ex)
             {
-                doc = new DbxFile(before);
-                Rebuild(null);
                 ToolLog.Warn("value not accepted: " + ex.Message);
                 MessageBox.Show(this, ex.Message, "Value not accepted", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
+            node.Text = Label(e);
+            ShowElement(node);
+            UpdateState();
         }
 
         // The DbxEdit command that replays an edit of element e (of instance inst): setfield for a value, or a
@@ -509,10 +560,8 @@ namespace Bfbc2Dbx.Gui
             }
             if (MessageBox.Show(this, "Remove instance " + Label(inst) + "?\n\nList entries pointing to it are removed, other references to it become null.",
                                 "Remove instance", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
-            Snapshot();
-            int refs;
-            int n = new Editor(doc).Drop(guid, out refs);
-            script.Add("drop=" + guid);
+            int n = 0, refs = 0;
+            Edit(() => { n = new Editor(doc).Drop(guid, out refs); return "drop=" + guid; });
             Log("drop " + guid + ": " + n + " instance(s), " + refs + " reference(s)");
             Rebuild(null);
         }
@@ -542,9 +591,12 @@ namespace Bfbc2Dbx.Gui
             if (choice == null) return;
             var before = InstanceOf(tree.SelectedNode);
             string beforeGuid = before == null ? null : doc.Get(before, "guid");
-            Snapshot();
-            int n = new Editor(doc).Graft(src, choice, beforeGuid);
-            script.Add("graft=" + srcPath + "|" + choice + (beforeGuid != null ? "|" + beforeGuid : ""));
+            int n = 0;
+            Edit(() =>
+            {
+                n = new Editor(doc).Graft(src, choice, beforeGuid);
+                return "graft=" + srcPath + "|" + choice + (beforeGuid != null ? "|" + beforeGuid : "");
+            });
             Log("graft " + choice + " from " + Path.GetFileName(srcPath) + ": " + n + " instance(s)" + (beforeGuid != null ? " (inserted before the selected instance)" : ""));
             Rebuild(doc.Instance(choice));
         }
@@ -570,11 +622,12 @@ namespace Bfbc2Dbx.Gui
                             .Select(x => new KeyValuePair<string, string>(x, x)).ToList();
             var field = Chooser.Pick(this, "Which field?", fields);
             if (field == null) return;
-            Snapshot();
             string guid = doc.Get(target, "guid");
-            bool ok = new Editor(doc).CopyField(src, srcGuid, field, guid);
-            if (!ok) { undo.Pop(); Log("copyfield " + field + ": NOT FOUND"); return; }
-            script.Add("copyfield=" + srcPath + "|" + srcGuid + "|" + field + "|" + guid);
+            if (!Edit(() => new Editor(doc).CopyField(src, srcGuid, field, guid) ? "copyfield=" + srcPath + "|" + srcGuid + "|" + field + "|" + guid : null))
+            {
+                Log("copyfield " + field + ": NOT FOUND");
+                return;
+            }
             Log("copyfield " + field + ": copied into " + guid);
             Rebuild(target);
         }
@@ -590,10 +643,12 @@ namespace Bfbc2Dbx.Gui
             }
             string r = Prompt.Ask(this, "Add array item", "Reference of the new item (an instance GUID, or partition/GUID):", "");
             if (string.IsNullOrEmpty(r)) return;
-            Snapshot();
             string guid = doc.Get(inst, "guid"), array = doc.Get(e, "name");
-            if (!new Editor(doc).AddItem(guid, array, r, null)) { undo.Pop(); Log("additem: the array has no item to copy the shape from"); return; }
-            script.Add(ScriptCommand("additem=", guid, array, r));
+            if (!Edit(() => new Editor(doc).AddItem(guid, array, r, null) ? ScriptCommand("additem=", guid, array, r) : null))
+            {
+                Log("additem: the array has no item to copy the shape from");
+                return;
+            }
             Log("additem " + r + " -> " + array);
             Rebuild(e);
         }
@@ -604,10 +659,12 @@ namespace Bfbc2Dbx.Gui
             if (string.IsNullOrEmpty(from)) return;
             string to = Prompt.Ask(this, "Replace string", "becomes:", from);
             if (to == null) return;
-            Snapshot();
-            int n = new Editor(doc).Replace(from, to);
-            if (n == 0) { undo.Pop(); Log("replace: not found: " + from); return; }
-            script.Add(ScriptCommand("replace=", from, to));
+            int n = 0;
+            if (!Edit(() => (n = new Editor(doc).Replace(from, to)) == 0 ? null : ScriptCommand("replace=", from, to)))
+            {
+                Log("replace: not found: " + from);
+                return;
+            }
             Log("replace " + from + " -> " + to + ": " + n + " string(s)");
             Rebuild(Selected);
         }
@@ -620,11 +677,14 @@ namespace Bfbc2Dbx.Gui
             if (to == null) return;
             string except = Prompt.Ask(this, "Replace prefix", "Except strings starting with (separate several with |; may be empty):", "");
             if (except == null) return;
-            Snapshot();
             var list = except.Split('|').Where(x => x.Length > 0).ToList();
-            int n = new Editor(doc).ReplacePrefix(from, to, list);
-            if (n == 0) { undo.Pop(); Log("replaceprefix: no string starts with " + from); return; }
-            script.Add(ScriptCommand("replaceprefix=", new[] { from, to }.Concat(list).ToArray()));
+            int n = 0;
+            if (!Edit(() => (n = new Editor(doc).ReplacePrefix(from, to, list)) == 0 ? null
+                            : ScriptCommand("replaceprefix=", new[] { from, to }.Concat(list).ToArray())))
+            {
+                Log("replaceprefix: no string starts with " + from);
+                return;
+            }
             Log("replaceprefix " + from + " -> " + to + ": " + n + " string(s)");
             Rebuild(Selected);
         }
@@ -633,9 +693,8 @@ namespace Bfbc2Dbx.Gui
         {
             string name = Prompt.Ask(this, "Remove field everywhere", "Remove every field, array or complex named:", Selected == null ? "" : doc.Get(Selected, "name") ?? "");
             if (string.IsNullOrEmpty(name)) return;
-            Snapshot();
-            int n = new Editor(doc).DropField(name);
-            script.Add(ScriptCommand("dropfield=", name));
+            int n = 0;
+            Edit(() => { n = new Editor(doc).DropField(name); return ScriptCommand("dropfield=", name); });
             Log("dropfield " + name + ": " + n + " element(s)");
             Rebuild(null);
         }
@@ -648,10 +707,12 @@ namespace Bfbc2Dbx.Gui
             if (v == null) return;
             byte b;
             if (!SetValue(v, out b)) { Log("set: not true, false or 0-255"); return; }
-            Snapshot();
-            int n = new Editor(doc).SetByte(name, b);
-            if (n == 0) { undo.Pop(); Log("set: no bool/byte field " + name); return; }
-            script.Add(SetCommand(name, v, b));
+            int n = 0;
+            if (!Edit(() => (n = new Editor(doc).SetByte(name, b)) == 0 ? null : SetCommand(name, v, b)))
+            {
+                Log("set: no bool/byte field " + name);
+                return;
+            }
             Log("set " + name + " = " + v + ": " + n + " field(s)");
             Rebuild(Selected);
         }
@@ -661,9 +722,7 @@ namespace Bfbc2Dbx.Gui
             string current = doc.Get(doc.TopLevel[0], "guid") ?? "";
             string g = Prompt.Ask(this, "Partition GUID", "The file's own GUID (a copy under a new name needs a new one):", current);
             if (string.IsNullOrEmpty(g) || g == current) return;
-            Snapshot();
-            new Editor(doc).SetPartitionGuid(g);
-            script.Add(ScriptCommand("partguid=", g));
+            Edit(() => { new Editor(doc).SetPartitionGuid(g); return ScriptCommand("partguid=", g); });
             Log("partguid " + g);
             Rebuild(null);
         }
@@ -694,10 +753,8 @@ namespace Bfbc2Dbx.Gui
             string fromPath;
             var from = PickFile("Level whose cull trees this file uses (the slots are taken from it)", out fromPath);
             if (from == null) return;
-            Snapshot();
-            var r = SlotFixer.Fix(doc, from);
-            if (r.Changed == 0) undo.Pop();
-            else script.Add("# fixslots --from " + fromPath + " (DbxEdit fixslots)");
+            SlotFixer.Result r = null;
+            Edit(() => { r = SlotFixer.Fix(doc, from); return r.Changed == 0 ? null : "# fixslots --from " + fromPath + " (DbxEdit fixslots)"; });
             Log("fixslots: " + r.Changed + " slot(s) changed; by guid " + r.ByGuid + ", by blueprint and position " + r.ByPosition
                 + ", nearest within 50 m " + r.ByNearest + ", no counterpart (slot 0) " + r.NoCounterpart);
             foreach (string u in r.Unmatched.Take(30)) Log("  no counterpart: " + u);
@@ -772,18 +829,14 @@ namespace Bfbc2Dbx.Gui
             }
             DbxFile oldDoc = doc;
             string oldPath = path;
-            int oldSaved = savedAt;
             bool oldBackedUp = backedUp;
-            var oldUndo = undo.ToArray();
-            var oldScript = script.ToList();
+            var oldHistory = history;
             try
             {
                 doc = f;
                 path = file;
                 backedUp = false;
-                undo.Clear();
-                savedAt = 0;
-                script.Clear();
+                history = new EditHistory();
                 found.Clear();
                 Rebuild(null);
                 Log("opened " + file);
@@ -792,12 +845,8 @@ namespace Bfbc2Dbx.Gui
             {
                 doc = oldDoc;
                 path = oldPath;
-                savedAt = oldSaved;
                 backedUp = oldBackedUp;
-                undo.Clear();
-                foreach (var u in oldUndo.Reverse()) undo.Push(u);
-                script.Clear();
-                script.AddRange(oldScript);
+                history = oldHistory;
                 try { if (doc != null) Rebuild(null); else { tree.Nodes.Clear(); UpdateState(); } } catch (Exception) { }
                 ToolLog.Error(ex, "opening " + file);
                 GuiProgram.Notice(this, ToolLog.Report(ex), "Cannot open " + Path.GetFileName(file), true);
@@ -821,7 +870,7 @@ namespace Bfbc2Dbx.Gui
                 SafeWrite.Bytes(target, doc.Serialize());
                 backedUp = true;                                  // the file at path is now one this window wrote
                 path = target;
-                savedAt = undo.Count;
+                history.MarkSaved();
                 Log("saved " + target);
                 UpdateState();
             }
@@ -865,9 +914,7 @@ namespace Bfbc2Dbx.Gui
                 {
                     XmlImport report;
                     var result = XmlImport.Import(d.FileName, new DbxFile(doc.Serialize()), new DbxFile[0], out report);
-                    Snapshot();
-                    doc = new DbxFile(result.Serialize());
-                    script.Add("# imported " + d.FileName);
+                    Edit(() => { doc = new DbxFile(result.Serialize()); return "# imported " + d.FileName; });
                     Log("import " + d.FileName + ": " + report.Kept + " unchanged, " + report.Changed + " changed, " + report.Added + " new, " + report.Removed + " removed"
                         + (report.Rounded > 0 ? "; " + report.Rounded + " decimal(s) rounded" : ""));
                     foreach (string g in report.Guesses.Take(50)) Log("  guess: " + g);
@@ -884,6 +931,7 @@ namespace Bfbc2Dbx.Gui
 
         void SaveScript()
         {
+            var script = history.Script;
             if (script.Count == 0) { Log("No edits to save as a script yet."); return; }
             using (var d = new SaveFileDialog { Filter = "DbxEdit commands (*.cmd)|*.cmd|Text (*.txt)|*.txt", FileName = Path.GetFileNameWithoutExtension(path) + "_edits.cmd" })
             {

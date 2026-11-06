@@ -68,8 +68,8 @@ SAMPLE_DONE = re.compile(r'navsample: (done|no physics|cannot create|empty box|n
 
 # the project layer (navkit_le_project.py since 2026-10-31), every name of it navkit_le.<name> as before
 from navkit_le_project import (  # noqa: E402,F401
-    BACKUP_SUFFIX, HERE, NO_WINDOW, NONE_SUFFIX, UNPACKED, NavKitError, Project, find_opfor, find_tool, read_json,
-    shown, unpack_complete, write_json, write_text)
+    BACKUP_SUFFIX, HERE, NO_WINDOW, NONE_SUFFIX, UNPACKED, InstallState, NavKitError, Project, find_opfor, find_tool,
+    install_state, read_json, shown, unpack_complete, write_json, write_text)
 
 type Log = Callable[[str], object]
 type Confirm = Callable[[str], bool]          # asks the user a yes/no question
@@ -652,9 +652,10 @@ def install(project: Project, lv: str, log: Log = print, src: str | None = None)
         raise NavKitError(f'{lv}: {ours} is the installed file itself')
     data = read_back(ours)                       # never put a file the game cannot read into it
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    if os.path.isfile(dest + BACKUP_SUFFIX) or os.path.isfile(dest + NONE_SUFFIX):
+    state = install_state(dest)
+    if state.installed:
         pass                                     # already installed: the original (or its absence) is recorded
-    elif os.path.isfile(dest):
+    elif state is InstallState.ORIGINAL:
         shutil.copyfile(dest, dest + BACKUP_SUFFIX)
         log(f'  original kept as {os.path.basename(dest)}{BACKUP_SUFFIX}')
     else:
@@ -682,18 +683,21 @@ def install(project: Project, lv: str, log: Log = print, src: str | None = None)
 def restore(project: Project, lv: str, log: Log = print) -> None:
     """Puts the level's original path data back (or removes NavKit's file where the level had none)."""
     dest = project.pathdata(lv)
-    backup, none = os.path.isfile(dest + BACKUP_SUFFIX), os.path.isfile(dest + NONE_SUFFIX)
-    if not backup and not none:
+    state = install_state(dest)
+    if not state.installed:
         log(f'{lv}: nothing to restore (no NavKit file installed)')
         return
     if game_running():
         raise NavKitError('the game is running - close it first')
+    backup = state is InstallState.OVER_ORIGINAL
     if backup:
         shutil.move(dest + BACKUP_SUFFIX, dest)
     elif os.path.isfile(dest):
         os.remove(dest)                          # the level had no path data: back to none
-    if none:
-        os.remove(dest + NONE_SUFFIX)
+    try:
+        os.remove(dest + NONE_SUFFIX)            # its marker, or a stray one beside a kept original
+    except FileNotFoundError:
+        pass
     traversal = traversal_path(os.path.dirname(dest), lv)
     if os.path.isfile(traversal):
         os.remove(traversal)

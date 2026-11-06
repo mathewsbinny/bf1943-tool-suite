@@ -4,6 +4,7 @@ only once written whole).
 
 History: moved out of navkit_le.py on 2026-10-31, verbatim; navkit_le.py imports every name back, so
 navkit_le.<name> works as before (tests replace navkit_le.Project, which navkit_le's own code calls)."""
+import enum
 import json
 import os
 import shutil
@@ -22,6 +23,30 @@ type Log = Callable[[str], object]
 
 class NavKitError(Exception):
     pass
+
+
+class InstallState(enum.Enum):
+    """What the game holds at a level's path-data place, read from its files by install_state() (the one place the
+    install markers are read, since 2026-11-05)."""
+    NO_PATHDATA = 'no path data'                        # no file, no marker: the level has no AI path data
+    ORIGINAL = 'original'                               # the game's own file; NavKit's is not installed
+    OVER_ORIGINAL = 'installed over the original'       # NavKit's file; DICE's kept as <file>BACKUP_SUFFIX
+    WHERE_NONE = 'installed where the level had none'   # NavKit's file; <file>NONE_SUFFIX records there was none
+
+    @property
+    def installed(self) -> bool:
+        """Whether NavKit's file is installed (restore has something to undo)."""
+        return self in (InstallState.OVER_ORIGINAL, InstallState.WHERE_NONE)
+
+
+def install_state(path: str) -> InstallState:
+    """The install state of the path data the game reads at path (Project.pathdata). The kept original wins over a
+    NONE_SUFFIX marker beside it: with both, DICE's file is the backup and restore puts it back."""
+    if os.path.isfile(path + BACKUP_SUFFIX):
+        return InstallState.OVER_ORIGINAL
+    if os.path.isfile(path + NONE_SUFFIX):
+        return InstallState.WHERE_NONE
+    return InstallState.ORIGINAL if os.path.isfile(path) else InstallState.NO_PATHDATA
 
 
 def write_json(path: str, value: Any, **json_options: Any) -> None:
@@ -124,17 +149,18 @@ class Project:
         """The level's original path data (the backup if NavKit's file is installed), or None - also while a NavKit file
         is installed on a level that had none (its NONE_SUFFIX marker): that file is not an original."""
         path = self.pathdata(lv)
-        if os.path.isfile(path + NONE_SUFFIX) and not os.path.isfile(path + BACKUP_SUFFIX):
-            return None
-        for candidate in (path + BACKUP_SUFFIX, path):
-            if os.path.isfile(candidate):
-                return candidate
-        return None
+        state = install_state(path)
+        if state is InstallState.OVER_ORIGINAL:
+            return path + BACKUP_SUFFIX
+        return path if state is InstallState.ORIGINAL else None
+
+    def install_state(self, lv: str) -> InstallState:
+        """The level's install state (module install_state at its pathdata)."""
+        return install_state(self.pathdata(lv))
 
     def installed(self, lv: str) -> bool:
         # whether NavKit's file is installed (over an original, or where the level had none)
-        path = self.pathdata(lv)
-        return os.path.isfile(path + BACKUP_SUFFIX) or os.path.isfile(path + NONE_SUFFIX)
+        return self.install_state(lv).installed
 
     def level(self, name: str) -> str:
         """The level of a name or path (its last part, in lower case); NavKitError when the game has no such level."""

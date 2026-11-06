@@ -2,6 +2,7 @@
 
 Every button runs the matching navkit_le.py step for the chosen level and shows its output; see QUICKSTART.md.
 """
+import enum
 import json
 import os
 import queue
@@ -38,12 +39,44 @@ AREA_FIELDS = ('minx', 'minz', 'maxx', 'maxz', 'ybot', 'ytop')     # the samplin
 type Message = str | tuple[str, str, int] | tuple[str]
 
 
+class RunState(enum.Enum):
+    """Where the window's step is (one step at a time). A cancelled step is over once two things have happened, in
+    either order: its process ended ('done') and the clean-up finished ('cleaned') (2026-11-05: a clean-up's end
+    handled before the step's freed the window while the step's process was still recorded, so the buttons did
+    nothing, and the step's late end then said 'failed')."""
+    IDLE = 'idle'                  # no step: the buttons work
+    RUNNING = 'running'            # a step runs: Cancel works
+    CANCELLING = 'cancelling'      # cancelled: the clean-up runs, the step's end not handled yet
+    CLEANING = 'cleaning'          # cancelled: the step's end handled, the clean-up still runs
+    ENDING = 'ending'              # cancelled: the clean-up finished, the step's end not handled yet
+
+
+# (state, event) -> the next state. Events: 'start' (a step started), 'cancel' (Cancel, or closing the window during
+# a step), 'done' (the step's process ended), 'cleaned' (a cancelled step's clean-up finished)
+TRANSITIONS: dict[tuple[RunState, str], RunState] = {
+    (RunState.IDLE, 'start'): RunState.RUNNING,
+    (RunState.RUNNING, 'done'): RunState.IDLE,
+    (RunState.RUNNING, 'cancel'): RunState.CANCELLING,
+    (RunState.CANCELLING, 'done'): RunState.CLEANING,
+    (RunState.CANCELLING, 'cleaned'): RunState.ENDING,
+    (RunState.CLEANING, 'cleaned'): RunState.IDLE,
+    (RunState.ENDING, 'done'): RunState.IDLE,
+}
+
+
+def transition(state: RunState, event: str) -> RunState:
+    """The state after event; ValueError for an event that cannot happen in state."""
+    try:
+        return TRANSITIONS[(state, event)]
+    except KeyError:
+        raise ValueError(f'{event!r} cannot happen while the window is {state.value}') from None
+
+
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.proc: subprocess.Popen[str] | None = None
-        self.cleaning = False          # a cancelled step's clean-up (game, opfor.ini) still running
-        self.cancelled = False         # the step that ends next was cancelled (no failure message for it)
+        self.state = RunState.IDLE     # the step's run state: changed only through transition()
         self.after_cleanup: Callable[[], object] | None = None
         self.saved: list[str] = []
         self.tail: list[str] = []      # the running step's last output lines, for its failure message
@@ -186,7 +219,7 @@ class App:
     def run_step(self, cmd: str) -> None:
         """Starts navkit_le.py <cmd> on the chosen level (after a confirmation where the step needs one)."""
         lv = self.level.get()
-        if not lv or self.proc or self.cleaning:
+        if not lv or self.state is not RunState.IDLE:
             return
         args = [PYTHON, '-u', os.path.join(HERE, 'navkit_le.py'), cmd, lv]
         try:
@@ -214,6 +247,7 @@ class App:
         self.proc = subprocess.Popen(args, cwd=self.project.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, errors='replace',
                                      creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.state = transition(self.state, 'start')
         threading.Thread(target=self.reader, args=(self.proc, cmd), daemon=True).start()
 
     def reader(self, proc: 'subprocess.Popen[str]', cmd: str) -> None:
@@ -231,11 +265,7 @@ class App:
             while True:
                 item = self.lines.get_nowait()
                 if isinstance(item, tuple) and item[0] == 'cleaned':
-                    self.cleaning = False
-                    self.set_busy(False, 'cancelled')
-                    self.refresh()
-                    if self.after_cleanup:
-                        self.after_cleanup()
+                    if self.cleaned():
                         return                   # the window is gone
                 elif isinstance(item, tuple) and len(item) == 3:
                     _, cmd, returncode = item
@@ -247,16 +277,21 @@ class App:
         self.root.after(100, self.pump)
 
     def step_ended(self, cmd: str, returncode: int) -> None:
-        """A step's process ended: the window is free again (unless a clean-up still runs), and a failure that was not
-        a cancel is shown with the step's last lines."""
-        cancelled, self.cancelled = self.cancelled, False
+        """A step's process ended: the window is free again (a cancelled step's once its clean-up has finished too),
+        and a failure that was not a cancel is shown with the step's last lines."""
+        was = self.state
+        self.state = transition(was, 'done')
         self.proc = None
-        if self.cleaning:            # stays busy until the clean-up has finished
+        if was is RunState.CANCELLING:   # stays busy until the clean-up has finished
+            return
+        if was is RunState.ENDING:       # cancelled, and its clean-up has finished: over
+            self.set_busy(False, 'cancelled')
+            self.refresh()
             return
         self.set_busy(False, f'{cmd}: ' + ('finished' if returncode == 0 else 'failed - see the log above'))
         self.refresh()
         errors.logger().info(f'{cmd} {self.level.get()}: exit {returncode}')
-        if returncode != 0 and not cancelled:
+        if returncode != 0:
             said = '\n'.join(line for line in self.tail if line.strip())[-1500:]
             errors.logger().warning(f'{cmd} failed; last lines:\n{said}')
             log_path = errors._state.get("path")     # the log's path (errors has no public name for it)
@@ -267,9 +302,10 @@ class App:
     def stop(self, then: Callable[[], object] | None = None) -> None:
         # Cancels the running step without blocking the window: the step and everything it started (the game
         # launcher, the game) are ended and opfor.ini restored in a worker thread; then (if given) runs after that
-        if not self.proc or self.cleaning:
+        if self.state is not RunState.RUNNING or self.proc is None:
             return
-        self.cancelled, self.cleaning, self.after_cleanup = True, True, then
+        self.state = transition(self.state, 'cancel')
+        self.after_cleanup = then
         self.set_busy(True, 'Cancelling ...')
         self.cancel['state'] = 'disabled'
         self.write('\ncancelling ...\n')
@@ -286,6 +322,18 @@ class App:
             self.lines.put(f'cancelling failed: {e}\n')
         finally:
             self.lines.put(('cleaned',))
+
+    def cleaned(self) -> bool:
+        """A cancelled step's clean-up finished (on the window's thread): the window is free again once the step's end
+        has been handled too; a close waiting for the clean-up now happens. True when the window is gone."""
+        self.state = transition(self.state, 'cleaned')
+        if self.state is RunState.IDLE:
+            self.set_busy(False, 'cancelled')
+            self.refresh()
+        if self.after_cleanup:
+            self.after_cleanup()
+            return True
+        return False
 
     def set_busy(self, busy: bool, text: str) -> None:
         for button in self.buttons:
@@ -307,10 +355,10 @@ class App:
         os.startfile(folder)
 
     def close(self) -> None:
-        if self.cleaning:
-            self.after_cleanup = self.root.destroy
+        if self.state in (RunState.CANCELLING, RunState.CLEANING):
+            self.after_cleanup = self.root.destroy   # the window closes once the clean-up has finished
             return
-        if self.proc:
+        if self.state is RunState.RUNNING:
             if not messagebox.askyesno('NavKit', 'A step is still running. Cancel it and quit?'):
                 return
             self.stop(then=self.root.destroy)    # the window closes once the clean-up has finished

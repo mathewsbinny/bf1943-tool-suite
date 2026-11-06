@@ -73,7 +73,8 @@ tools\               this variant's own NavKit tools (Python 3.13 + numpy / matp
   graphstats.py      route-graph statistics of .hpd files (no docstring; imports hpdtool from OPFOR's navkit\tools)
 src\                 (reserved for the generator proper)
 tests\               navkit_le.py's steps on a made-up OPFOR folder (install / restore, apply, caches, unpack, game
-                     log, options), its apply / install / sampling guards, and the window's Cancel
+                     log, options), its apply / install / sampling guards, the install states, and the window's
+                     Cancel and run states
 ..\bf1943-auto-navkit-common\   the modules both variants use (one copy since 2026-10-31; its README):
   research\           specification (KYNAPSE_SPEC.md) and images (img\)
   tools\hpdtool.py    pathdata.hpd: info / sector / roundtrip / coverage / meshtrip
@@ -103,7 +104,12 @@ tests\               navkit_le.py's steps on a made-up OPFOR folder (install / r
 ## Robustness rules (2026-10-30)
 
 - `install` on a level that had no path data leaves `pathdata.hpd.opfor-none`: the installed file is then never taken
-  for DICE's (`dice_pathdata`, `navparity.reference_of`, the level list), and `restore` removes it.
+  for DICE's (`dice_pathdata`, `navparity.reference_of`, the level list), and `restore` removes it. Since 2026-11-05
+  the markers are read in one place, `navkit_le_project.install_state(path)` (`Project.install_state(lv)`), which names
+  the state: `NO_PATHDATA`, `ORIGINAL`, `OVER_ORIGINAL` (DICE's file kept as `.opfor-orig`; it wins over a stray
+  `.opfor-none` beside it) or `WHERE_NONE` (the `.opfor-none` marker). `dice_pathdata`, `installed`, `install` and
+  `restore` decide from it. (`tools\navparity.py`'s `reference_of` still reads the two files itself: the common
+  folder's `detailed.py --score` imports it.)
 - `apply` builds with the same inputs as `build` (detailed zones and ladders included); `--out` cannot name the game's
   own path data.
 - A pitch-0.2 run leaves `<level>_navkit_p02.sectors.json` (the sectors it covered, the sector offsets); `build` and
@@ -119,6 +125,14 @@ tests\               navkit_le.py's steps on a made-up OPFOR folder (install / r
 - `navkit_le.py`: an option without its value, or a malformed `--box` / `--y` / `--pitch`, is exit code 2; a declined
   sampling run exit code 1. The window's Cancel and close end the step and what it started (`taskkill /T`), close the
   game and restore `opfor.ini` without freezing the window.
+- The window's step is one of five run states (`navkitGUI_le.RunState`), changed only by `transition(state, event)`:
+  `IDLE` -start-> `RUNNING` -done-> `IDLE`; `RUNNING` -cancel-> `CANCELLING`, then the step's end ('done') and the
+  clean-up's end ('cleaned') in either order, through `CLEANING` (step ended, clean-up running) or `ENDING` (clean-up
+  finished, step's end not handled yet), to `IDLE`. Any other event is a `ValueError`. A step starts only from `IDLE`
+  and Cancel works only in `RUNNING`; a cancelled step frees the window, as "cancelled", only once both ends are
+  handled (2026-11-05: the clean-up's end handled first freed the buttons while the step's process was still
+  recorded, so they did nothing, and the step's late end then said "failed"). Closing the window waits for a clean-up
+  that still runs, and no longer.
 
 ## Second review (2026-10-31)
 

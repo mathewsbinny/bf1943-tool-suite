@@ -23,7 +23,11 @@ folder, check()); a scratch copy of older exes can be passed to see the checks f
   in order and instances without a GUID pair with none; --all on 12,000 instances only in A is fast (linear);
 - DbxEditGUI (through reflection, no window shown): opening a damaged file keeps the open document; an undo past a
   save marks the document modified; saving over the opened file under another spelling of its path keeps a .bak;
-  saving into the game folder is refused; the edit script's commands replay to the window's own bytes.
+  saving into the game folder is refused; the edit script's commands replay to the window's own bytes; an edit is one
+  transaction (MainWindow.Edit, EditHistory): one that throws after changing the document (as Drop or Graft could)
+  leaves the document, the undo stack and the script as they were, one that changes nothing records nothing, and an
+  undo after a failed edit goes back to the state before the last kept edit with the script one line shorter
+  (2026-11-05: the failed edit's undo state stayed, with no script line).
 
 Second review (each failed on the code of ff18792, 2026-10-30):
 - values: setfield and import write a decimal into a decimal field holding 0 (not the integer, a denormal); setfield
@@ -631,21 +635,22 @@ static class Harness
         object w = Activator.CreateInstance(mw, Any, null, new object[] { null }, null);
         Func<string, object[], object> call = (n, args) => mw.GetMethod(n, Any).Invoke(w, args);
         Func<string, object> get = n => { var f = mw.GetField(n, Any); return f != null ? f.GetValue(w) : mw.GetProperty(n, Any).GetValue(w, null); };
-        Action edit = () =>
+        // the window's partition GUID set to g (an edit's work, as PartitionGuid does it)
+        Action<string> setGuid = g =>
         {
-            call("Snapshot", new object[0]);
-            var doc = get("doc");
             var ed = asm.GetType("Bfbc2Dbx.Editor");
-            object editor = Activator.CreateInstance(ed, Any, null, new[] { doc }, null);
-            ed.GetMethod("SetPartitionGuid", Any).Invoke(editor, new object[] { "PEEEEEEE-0000-0000-0000-000000000000" });
+            object editor = Activator.CreateInstance(ed, Any, null, new[] { get("doc") }, null);
+            ed.GetMethod("SetPartitionGuid", Any).Invoke(editor, new object[] { g });
         };
+        // an edit through the window's transaction (MainWindow.Edit); false when it was not kept
+        Func<Func<string>, bool> edit = apply => (bool)call("Edit", new object[] { apply });
 
         call("Open", new object[] { good });
         object before = get("doc");
         call("Open", new object[] { bad });
         Console.WriteLine("open-damaged-keeps=" + (get("doc") == before && (string)get("path") == good && notices.Count == 1));
 
-        edit();
+        edit(() => { setGuid("PEEEEEEE-0000-0000-0000-000000000000"); return "partguid=PEEEEEEE-0000-0000-0000-000000000000"; });
         call("Save", new object[] { good.ToUpperInvariant() });
         Console.WriteLine("bak-other-spelling=" + File.Exists(good + ".bak"));
         Console.WriteLine("saved-clean=" + !(bool)get("modified"));
@@ -700,6 +705,33 @@ static class Harness
             var payload = (byte[])asm.GetType("Bfbc2Dbx.XmlImport").GetMethod("EncodeValue", Any).Invoke(null, args);
             return BitConverter.ToString(payload) == "01-04-40-00-00-00";
         });
+
+        // the edit transaction: undo stack, script and document always agree
+        Func<string> bytes = () => BitConverter.ToString((byte[])dbxType.GetMethod("Serialize", Any).Invoke(get("doc"), null));
+        Func<int> depth = () => { var h = get("history"); return (int)h.GetType().GetProperty("Depth", Any).GetValue(h, null); };
+        Func<List<string>> script = () =>
+        {
+            var h = get("history");
+            return new List<string>((IEnumerable<string>)h.GetType().GetProperty("Script", Any).GetValue(h, null));
+        };
+        call("Open", new object[] { good });
+        string opened = bytes();
+        say("edit-kept", () => edit(() => { setGuid("P1111111-0000-0000-0000-000000000000"); return "partguid=P1111111-0000-0000-0000-000000000000"; })
+                               && depth() == 1 && script().Count == 1 && bytes() != opened);
+        string kept = bytes();
+        say("edit-throws-rolls-back", () =>
+        {
+            bool threw = false;
+            try { edit(() => { setGuid("P2222222-0000-0000-0000-000000000000"); throw new InvalidOperationException("made-up failure after a change"); }); }
+            catch (TargetInvocationException) { threw = true; }
+            return threw && depth() == 1 && script().Count == 1 && bytes() == kept;
+        });
+        say("edit-nothing-unrecorded", () => !edit(() => null) && depth() == 1 && script().Count == 1 && bytes() == kept);
+        say("undo-after-failed-edit", () =>
+        {
+            call("Undo", new object[0]);
+            return depth() == 0 && script().Count == 0 && bytes() == opened;
+        });
         return 0;
     }
 }
@@ -753,7 +785,13 @@ def check_gui(t):
                       ('script-plain', 'a plain replace is recorded as the command'),
                       ('script-set', 'set everywhere with "+7" records set=On|7, which DbxEdit reads (it refuses "+7")'),
                       ('drop-null', 'drop of an instance without a GUID removes nothing (it took every GUID-less instance)'),
-                      ('zero-decimal', 'a decimal field holding 0.0 edited to "2" in the window becomes 2.0, not the integer 2')):
+                      ('zero-decimal', 'a decimal field holding 0.0 edited to "2" in the window becomes 2.0, not the integer 2'),
+                      ('edit-kept', 'an edit that changes the document is kept with one undo state and one script line'),
+                      ('edit-throws-rolls-back', 'an edit that throws after changing the document (Drop, Graft) leaves '
+                                                 'the document, the undo stack and the script as they were'),
+                      ('edit-nothing-unrecorded', 'an edit that changes nothing records nothing'),
+                      ('undo-after-failed-edit', 'an undo after a failed edit undoes the last kept edit and its script '
+                                                 'line, back to the opened document')):
         t.check(got.get(key) == 'True', f'gui: {what}' + ('' if key in got else ': ' + (r.stdout + r.stderr).strip()[-300:]))
 
 

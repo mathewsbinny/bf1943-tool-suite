@@ -75,7 +75,7 @@ flowchart TD
 | `DbxEdit.Schema1943.cs` | generated data: classes, structs, enums and members, as strings | `Bf1943Schema.Types` |
 | `DbxEdit.SafeWrite.cs` | every file write | `SafeWrite.Bytes`, `Text`, `GameFolder`, `InGameFolder`, `WriteRefusedException` |
 | `DbxEdit.ToolLog.cs` | the log and error reports, as core `errors.py` keeps them | `ToolLog.Start`, `Info`, `Warn`, `Fail`, `Explain` |
-| `DbxEditGUI.cs` (not in the list) | the window; calls the classes above | `Bfbc2Dbx.Gui.GuiProgram` |
+| `DbxEditGUI.cs` (not in the list) | the window; calls the classes above | `Bfbc2Dbx.Gui.GuiProgram`, `MainWindow.Edit`, `EditHistory` |
 | `schema1943.py` | rewrites the generated block in `DbxEdit.Schema1943.cs` | `main` |
 
 ## How the parts fit
@@ -146,6 +146,19 @@ command lists, and checks each command's argument count against its `Usage` tabl
   | 3 | `import` had to guess some types |
 
 - `ToolLog` writes `%LOCALAPPDATA%\bf1943-tool-suite\logs\<tool>-<date>.log` and keeps the 20 newest.
+
+**Window (`DbxEditGUI.cs`).** `MainWindow` holds the open `DbxFile` and an `EditHistory`: the undo stack (each edit's
+document before it, as bytes), the edit script (each edit's DbxEdit command, or a `#` comment when it has none) and the
+undo depth the file on disk holds (`savedAt`, so an undo past a save marks the document modified).
+- Every edit goes through `MainWindow.Edit(apply)`, one transaction (`EditHistory.Run`): the document is serialized,
+  `apply` changes it (in place through `Editor`, or by replacing it, as an XML import does) and returns the edit's
+  script line, or null when it changed nothing. With a line, the snapshot and the line are recorded together. With
+  null, nothing is recorded. When `apply` throws, the document becomes the snapshot again, the tree is rebuilt from it,
+  nothing is recorded and the exception goes on (to "Value not accepted", "Import failed" or the window's error
+  report). So the undo stack and the script always hold the same edits (2026-11-05: Drop or Graft throwing after the
+  snapshot left an undo state without a script line).
+- `Undo` pops a state and its script line together (`EditHistory.Undo`). Opening a file starts a new `EditHistory`;
+  a file that cannot be opened leaves the old document and its history.
 
 ## Building: build.bat, LevelDiff and csbuild
 

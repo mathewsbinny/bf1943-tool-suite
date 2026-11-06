@@ -132,6 +132,10 @@ Start `DbxEditGUI.exe` and open a `.dbx` file (File > Open, drop it on the windo
   writes your edits as DbxEdit commands to replay on another file: a value or a reference of an instance's own field
   becomes `setfield`, any other edit a `#` comment saying it has no command form.
 - **Undo** past a save marks the document modified again, so closing asks to save it.
+- Each edit is kept whole or not at all: its undo state and its line of the edit script are recorded together, and an
+  edit that fails part-way (a remove or graft that throws, a value not accepted) puts the document back as it was and
+  records neither, so the undo stack and the script always hold the same edits (2026-11-05: a failed remove or graft
+  left an undo state without its script line, and later undos dropped the wrong lines).
 
 ## Convert to XML and back
 
@@ -410,7 +414,9 @@ checks of `tests\csharp_regressions.py` (its docstring lists them; each failed o
 - the edit commands (`setfield` types, empty or missing arguments, `drop`);
 - the level check (a 100,000-node cull tree, the tiling without `ReferencedObject`, `--slots-from`) and `fixslots`;
 - LevelDiff (partition and instance attributes, an integer turned decimal, exit codes, GUID pairing, a linear `--all`);
-- DbxEditGUI through reflection (no window is shown): open, save, undo, the game folder, the edit script's commands.
+- DbxEditGUI through reflection (no window is shown): open, save, undo, the game folder, the edit script's commands,
+  and the edit transaction (an edit that throws after changing the document leaves the document, the undo stack and
+  the script as they were; one that changes nothing records nothing).
 
 The second review's checks (each failed on the code of 2026-10-30, ff18792): 4-byte values by their field's kind
 (a stored 0, integers, hashes, NaN, `-0`, import notes), import's refusals (16 attributes, NUL, content after the
