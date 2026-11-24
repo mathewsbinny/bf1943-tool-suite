@@ -41,7 +41,7 @@ Repository = "https://github.com/mathewsbinny/bf1943-tool-suite"
 # what CI installs (`pip install --group ci`): every library the tests import, at the versions this PC runs, and
 # the check tools
 ci = [
-    "numpy==2.5.4",
+    "numpy==2.5.5",
     "matplotlib==3.11.2",
     "moderngl==5.13.0",
     "glfw==2.11.0",
